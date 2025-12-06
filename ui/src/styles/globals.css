@@ -1,0 +1,47 @@
+@import 'tailwindcss';
+
+/* Ensure Tailwind v4 scans LlamaIndex Chat UI components for class usage */
+@source '../../node_modules/@llamaindex/chat-ui/**/*.{ts,tsx}';
+
+:root {
+  /* Theme variables - see sample file for complete configuration */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.14 0 285.86);
+  /* ... other theme variables ... */
+}
+.dark {
+  /* Dark mode theme variables */
+  --background: oklch(0.14 0 285.86);
+  --foreground: oklch(0.99 0 0);
+  /* ... other dark theme variables ... */
+}
+@theme inline {
+  /* Theme mapping for Tailwind CSS */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  /* ... other color mappings ... */
+}
+
+/* Fix chat input field height to prevent height changes after sending messages */
+/* Target the ChatInput.Field component's textarea/input elements */
+@layer components {
+  /* Select textarea and input elements within ChatInput.Form */
+  [class*="ChatInput"] textarea,
+  [class*="ChatInput"] input[type="text"],
+  [class*="chat-input"] textarea,
+  [class*="chat-input"] input[type="text"],
+  form[class*="ChatInput"] textarea,
+  form[class*="ChatInput"] input[type="text"],
+  /* More specific selectors for @llamaindex/chat-ui */
+  div[class*="chat-input"] textarea,
+  div[class*="chat-input"] input,
+  section[class*="chat"] textarea,
+  section[class*="chat"] input[type="text"] {
+    min-height: 40px !important;
+    max-height: 40px !important;
+    height: 40px !important;
+    resize: none !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+}

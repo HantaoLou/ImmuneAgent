@@ -1,0 +1,55 @@
+{
+  "base_dir": "D:\\PartTimeJob\\hd\\antibody_gen\\mcp_r_scrna",
+  "output_dir": "output",
+  "default_timeout": 3600,
+  "server": {
+    "name": "scRNA-seq Analysis Server",
+    "version": "1.0.0",
+    "port": 8090,
+    "transport": "stdio"
+  },
+  "r_scripts": {
+    "qc_filtering": "scripts/qc_filtering.R",
+    "normalization_sct": "scripts/normalization_sct.R",
+    "integration_harmony": "scripts/integration_harmony.R",
+    "clustering_analysis": "scripts/clustering_analysis.R",
+    "doublet_detection": "scripts/doublet_detection.R",
+    "deg_analysis": "scripts/deg_analysis.R",
+    "marker_detection": "scripts/marker_detection.R",
+    "pathway_enrichment": "scripts/pathway_enrichment.R",
+    "dim_reduction": "scripts/dim_reduction.R",
+    "subset_cells": "scripts/subset_cells.R"
+  },
+  "dependencies": {
+    "r_packages": [
+      "Seurat",
+      "harmony",
+      "DoubletFinder",
+      "clusterProfiler",
+      "org.Hs.eg.db",
+      "org.Mm.eg.db",
+      "enrichplot",
+      "ggplot2",
+      "dplyr",
+      "patchwork",
+      "viridis",
+      "jsonlite"
+    ],
+    "python_packages": [
+      "fastmcp>=2.12.4",
+      "mcp"
+    ]
+  },
+  "tool_descriptions": {
+    "run_qc_filtering": "Quality control and cell filtering based on gene counts, UMI counts, and mitochondrial percentage",
+    "run_normalization_sct": "SCTransform normalization with variance stabilization and feature selection",
+    "run_integration_harmony": "Harmony batch correction and integration for multi-sample datasets",
+    "run_clustering_analysis": "Graph-based clustering using Leiden or Louvain algorithms",
+    "run_doublet_detection": "DoubletFinder-based doublet detection and removal",
+    "run_deg_analysis": "Differential expression gene analysis between groups",
+    "run_marker_detection": "Marker gene detection for all clusters using FindAllMarkers",
+    "run_pathway_enrichment": "GO and KEGG pathway enrichment analysis using clusterProfiler",
+    "run_dim_reduction": "Dimensionality reduction (PCA, UMAP, tSNE) for visualization",
+    "run_subset_cells": "Subset cells based on metadata criteria"
+  }
+}

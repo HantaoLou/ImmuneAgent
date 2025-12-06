@@ -1,0 +1,19 @@
+# AIRR Data Commons MCP Server Dependencies
+
+# HTTP requests and retry logic
+requests>=2.31.0
+tenacity>=8.2.3
+
+# Data processing
+pandas>=2.1.0
+
+# Validation
+pydantic>=2.5.0
+
+# Logging
+python-json-logger>=2.0.7
+
+responses>=0.24.1  # Mock HTTP responses
+
+# Type hints
+typing-extensions>=4.8.0

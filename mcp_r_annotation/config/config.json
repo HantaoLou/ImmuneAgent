@@ -1,0 +1,196 @@
+{
+  "server_name": "Cell Type Annotation MCP Server",
+  "version": "1.0.0",
+  "port": 8095,
+  "transport": "stdio",
+  "timeout": 3600,
+  "base_dir": "../",
+  "scripts_dir": "scripts",
+  "output_dir": "output",
+  "reference_data_dir": "reference_data",
+  "reference_datasets": {
+    "HumanPrimaryCellAtlasData": {
+      "description": "General human cell types from primary cells",
+      "source": "celldex",
+      "species": "human",
+      "label_types": ["label.main", "label.fine"],
+      "size_mb": 113,
+      "cell_types": "Broad range including epithelial, immune, stromal",
+      "recommended_for": "General purpose annotation"
+    },
+    "BlueprintEncodeData": {
+      "description": "Pure stroma and immune cells from Blueprint and ENCODE",
+      "source": "celldex",
+      "species": "human",
+      "label_types": ["label.main", "label.fine"],
+      "size_mb": 95,
+      "cell_types": "Immune cells, stromal cells, various differentiation states",
+      "recommended_for": "Immune and stromal cell annotation"
+    },
+    "MonacoImmuneData": {
+      "description": "Detailed immune cell types from Monaco et al.",
+      "source": "celldex",
+      "species": "human",
+      "label_types": ["label.main", "label.fine"],
+      "size_mb": 87,
+      "cell_types": "29 immune cell types including T, B, NK, monocytes, dendritic",
+      "recommended_for": "Detailed immune cell annotation (RECOMMENDED)"
+    },
+    "DatabaseImmuneCellExpressionData": {
+      "description": "Immune cells from DICE project",
+      "source": "celldex",
+      "species": "human",
+      "label_types": ["label.main", "label.fine"],
+      "size_mb": 72,
+      "cell_types": "Sorted immune cell populations",
+      "recommended_for": "Immune cell validation"
+    },
+    "NovershternHematopoieticData": {
+      "description": "Hematopoietic differentiation from Novershtern et al.",
+      "source": "celldex",
+      "species": "human",
+      "label_types": ["label.main", "label.fine"],
+      "size_mb": 68,
+      "cell_types": "Hematopoietic progenitors and mature blood cells",
+      "recommended_for": "Hematopoietic differentiation studies"
+    },
+    "MouseRNAseqData": {
+      "description": "Mouse cell types from various tissues",
+      "source": "celldex",
+      "species": "mouse",
+      "label_types": ["label.main", "label.fine"],
+      "size_mb": 105,
+      "cell_types": "Broad mouse cell types",
+      "recommended_for": "Mouse scRNA-seq annotation"
+    }
+  },
+  "statistical_tests": {
+    "wilcox": {
+      "name": "Wilcoxon Rank Sum Test",
+      "description": "Non-parametric test, default for Seurat",
+      "recommended": true,
+      "speed": "fast"
+    },
+    "bimod": {
+      "name": "Likelihood-ratio test",
+      "description": "Bimodal test for differential expression",
+      "recommended": false,
+      "speed": "medium"
+    },
+    "roc": {
+      "name": "ROC analysis",
+      "description": "Returns classification power",
+      "recommended": false,
+      "speed": "fast"
+    },
+    "t": {
+      "name": "Student's t-test",
+      "description": "Parametric test",
+      "recommended": false,
+      "speed": "fast"
+    },
+    "MAST": {
+      "name": "MAST framework",
+      "description": "Model-based analysis, accounts for zero inflation",
+      "recommended": false,
+      "speed": "slow"
+    }
+  },
+  "default_parameters": {
+    "run_singler_annotation": {
+      "reference_dataset": "HumanPrimaryCellAtlasData",
+      "label_type": "label.main",
+      "cluster_column": "seurat_clusters"
+    },
+    "detect_cluster_markers": {
+      "test_use": "wilcox",
+      "only_pos": true,
+      "min_pct": 0.25,
+      "logfc_threshold": 0.5,
+      "top_n": 10
+    },
+    "annotate_by_markers": {
+      "cluster_column": "seurat_clusters",
+      "new_column": "manual_celltype"
+    },
+    "validate_annotation": {
+      "reference_dataset": "MonacoImmuneData"
+    },
+    "score_annotation_confidence": {
+      "marker_genes": null
+    },
+    "export_annotations": {
+      "export_format": "csv",
+      "include_umap": true
+    }
+  },
+  "known_marker_genes": {
+    "T_cells": ["CD3D", "CD3E", "CD3G", "IL7R"],
+    "CD4_T_cells": ["CD4", "IL7R"],
+    "CD8_T_cells": ["CD8A", "CD8B"],
+    "B_cells": ["CD79A", "CD79B", "MS4A1", "CD19"],
+    "Naive_B_cells": ["IGHD", "TCL1A"],
+    "Memory_B_cells": ["CD27", "TNFRSF13B"],
+    "Plasma_cells": ["MZB1", "SDC1", "JCHAIN", "IGKC"],
+    "NK_cells": ["GNLY", "NKG7", "NCAM1"],
+    "Monocytes": ["CD14", "FCGR3A", "LYZ"],
+    "Classical_Monocytes": ["CD14", "S100A8", "S100A9"],
+    "Non_Classical_Monocytes": ["FCGR3A", "MS4A7"],
+    "Macrophages": ["CD68", "CD163", "MSR1"],
+    "Dendritic_cells": ["FCER1A", "CD1C", "CLEC10A"],
+    "pDC": ["LILRA4", "IRF7", "CLEC4C"],
+    "Endothelial_cells": ["PECAM1", "VWF", "CLDN5"],
+    "Fibroblasts": ["COL1A1", "COL3A1", "DCN"],
+    "Epithelial_cells": ["EPCAM", "KRT8", "KRT18"]
+  },
+  "output_structure": {
+    "run_singler_annotation": [
+      "singler_annotation.csv",
+      "annotation_summary.csv",
+      "seurat_with_singler.rds",
+      "result.json",
+      "plots/singler_umap.pdf"
+    ],
+    "detect_cluster_markers": [
+      "all_markers.csv",
+      "top_markers.csv",
+      "marker_summary.csv",
+      "result.json",
+      "plots/marker_heatmap.pdf",
+      "plots/marker_dotplot.pdf",
+      "plots/top_marker_violins.pdf",
+      "plots/marker_featureplots.pdf"
+    ],
+    "annotate_by_markers": [
+      "annotation_mapping.csv",
+      "annotation_summary.csv",
+      "seurat_with_manual_annotation.rds",
+      "result.json",
+      "plots/manual_annotation_umap.pdf",
+      "plots/cluster_composition.pdf"
+    ],
+    "validate_annotation": [
+      "confusion_matrix.csv",
+      "discrepancies.csv",
+      "celltype_agreement.csv",
+      "result.json",
+      "plots/confusion_heatmap.pdf",
+      "plots/celltype_agreement.pdf",
+      "plots/umap_comparison.pdf"
+    ],
+    "score_annotation_confidence": [
+      "confidence_scores.csv",
+      "seurat_with_confidence.rds",
+      "result.json",
+      "plots/confidence_scores.pdf",
+      "plots/confidence_heatmap.pdf",
+      "plots/umap_confidence.pdf"
+    ],
+    "export_annotations": [
+      "annotations.csv",
+      "export_summary.csv",
+      "*_distribution.csv",
+      "result.json"
+    ]
+  }
+}

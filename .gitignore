@@ -1,0 +1,10 @@
+.venv/
+*.egg-info/
+__pycache__/
+output/
+.vscode/
+.gitignore
+.DS_Store
+.ruff_cache/
+node_modules/
+dist/

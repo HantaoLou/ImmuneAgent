@@ -1,0 +1,72 @@
+services:  
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant-server
+    # 端口映射：6333用于HTTP API，6334用于GRPC
+    ports:
+      - "${QDRANT_HTTP_PORT}:${QDRANT_HTTP_PORT}"
+      - "${QDRANT_GRPC_PORT}:${QDRANT_GRPC_PORT}"
+    volumes:
+      - ${DATA_ROOT}/qdrant_data:/qdrant/storage
+    networks:
+      - antibody_gen_network
+    environment:
+      - QDRANT_ALLOW_RECOVERY=true
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18.0
+    container_name: postgres-server
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - ${DATA_ROOT}/postgres_data:/var/lib/postgresql/data
+    networks:
+      - antibody_gen_network
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    # 健康检查
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.2.2
+    container_name: redis-server
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - ${DATA_ROOT}/redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    networks:
+      - antibody_gen_network
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    command: redis-server /usr/local/etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+networks:
+  antibody_gen_network:
+    name: antibody_gen_network
+    driver: bridge
