@@ -54,12 +54,12 @@ async def health_check():
 @app.get("/")
 async def serve_index():
     """Serve the main index.html file"""
-    return FileResponse("/opt/antibody_gen/dist/index.html")
+    return FileResponse("C:/opt/antibody_gen/dist/index.html")
 
 
 # Mount static files from the frontend build directory
 app.mount(
-    "/assets", StaticFiles(directory="/opt/antibody_gen/dist/assets"), name="assets"
+    "/assets", StaticFiles(directory="C:/opt/antibody_gen/dist/assets"), name="assets"
 )
 
 # Include API routes first
@@ -72,20 +72,20 @@ app.include_router(tools_router)
 if __name__ == "__main__":
     # Beautiful startup banner
     print("\n" + "=" * 80)
-    print("🚀 ANTIBODY GENETICS AGENT SERVER")
+    print("ANTIBODY GENETICS AGENT SERVER")
     print("=" * 80)
-    print(f"📍 Server URL: http://127.0.0.1:{settings.port}")
-    print(f"🔑 Access Token: {settings.access_token}")
-    print(f"🗄️  Database: {settings.database_url}")
-    print(f"🌐 Frontend: {settings.frontend_path}")
+    print(f"Server URL: http://127.0.0.1:{settings.port}")
+    print(f"Access Token: {settings.access_token}")
+    print(f"Database: {settings.database_url}")
+    print(f"Frontend: {settings.frontend_path}")
     print("=" * 80)
-    print("✨ Starting server...")
+    print("Starting server...")
     print("=" * 80 + "\n")
 
     # Log the startup information
-    logger.info("🚀 Starting Antibody Genetics Agent Server")
-    logger.info(f"📍 Server will be available at: http://127.0.0.1:{settings.port}")
-    logger.info(f"🔑 Access token: {settings.access_token}")
-    logger.info(f"🗄️  Database: {settings.database_url}")
+    logger.info("Starting Antibody Genetics Agent Server")
+    logger.info(f"Server will be available at: http://127.0.0.1:{settings.port}")
+    logger.info(f"Access token: {settings.access_token}")
+    logger.info(f"Database: {settings.database_url}")
 
     uvicorn.run(app, host="0.0.0.0", port=settings.port)

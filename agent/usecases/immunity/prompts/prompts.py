@@ -324,6 +324,38 @@ Step 2: IgBlast
   Output: AIRR-format TSV with V/D/J assignments
 ```
 
+**Special Note for FLU BCR Analysis Workflow:**
+If your plan includes FLU BCR analysis tools, you MUST follow this exact workflow order:
+
+```
+Step 1: extract_seurat_umap_metadata
+  Purpose: Extract UMAP coordinates, cell type annotations, and gene expression from Seurat RDS
+  Input: Seurat RDS file (e.g., input/rds/20240923_flu_B_annotation.rds)
+  Output: temp/umap_coordinates.csv (with main_name, celltype, umap_1, umap_2, gene expression)
+
+Step 2: integrate_scbcr_bulk_bcr_data
+  Purpose: Integrate single-cell and bulk BCR data with UMAP coordinates
+  Input: scRNA.csv, bulk_raw_data/ (FASTQ directory), umap_coordinates.csv from Step 1
+  Output: temp/all_data.csv (integrated BCR data with UMAP coordinates)
+
+Step 3 (optional): bcr_clonal_clustering_and_feature_extraction
+  Purpose: Clonal clustering and feature extraction using ChangeO and ANARCI
+  Input: all_data.csv from Step 2
+  Output: all_data_with_feature.csv (with clonal clusters and BCR features)
+
+Step 4 (parallel with Step 2): integrate_binding_neutralization_experiments
+  Purpose: Process and standardize binding/neutralization experimental data
+  Input: Excel files from multiple experimental batches
+  Output: temp/0220_Flu_cAb.csv (standardized experimental results)
+
+Step 5: integrate_predictions_with_experimental_data
+  Purpose: Merge ML predictions with experimental measurements
+  Input: all_data.csv (or all_data_with_feature.csv), prediction directories, 0220_Flu_cAb.csv from Step 4
+  Output: temp/all_data_with_predict_and_feature.csv (complete integrated dataset)
+```
+
+**Critical**: Steps 1→2→5 form a mandatory dependency chain. Step 4 can run in parallel with Step 2, but Step 5 requires outputs from both Steps 2 and 4.
+
 ---
 
 Key requirement: The experiments must definitively answer whether the hypothesis
@@ -363,29 +395,87 @@ Please analyze and select the most appropriate tools to complete this task based
 
 **CRITICAL: Workflow Execution Order for FLU BCR Analysis**
 
-If this task involves FLU BCR analysis tools, you MUST follow this execution order:
+If this task involves FLU BCR analysis tools, you MUST follow this EXACT execution order. However, **each tool call requires user confirmation** - call tools one at a time and wait for user approval before proceeding to the next step. Do NOT automatically chain multiple tool calls.
 
-1. **extract_seurat_umap_metadata** (MUST be first)
-   - Extracts UMAP coordinates from Seurat RDS files
-   - Output: umap_coordinates_path (CSV file)
-   - Required by: integrate_scbcr_bulk_bcr_data
+**步骤1: extract_seurat_umap_metadata** (MUST be executed first)
+   - **Purpose**: Extract UMAP coordinates, cell type annotations, and gene expression values from Seurat RDS files
+   - **Input**: 
+     * RDS file (Seurat object)
+     * Default example: input/rds/20240923_flu_B_annotation.rds
+   - **Processing**:
+     * Extracts UMAP coordinates (umap_1, umap_2)
+     * Extracts cell type annotations (celltype)
+     * Extracts expression values for key genes (DUSP4, ZBTB38, LGMN, etc.)
+   - **Output**: temp/umap_coordinates.csv
+     * Columns: main_name, celltype, umap_1, umap_2, gene expression values
+   - **Required by**: integrate_scbcr_bulk_bcr_data (step 2)
 
-2. **integrate_scbcr_bulk_bcr_data** (Requires step 1 output)
-   - Integrates single-cell and bulk BCR data
-   - Input: umap_coordinates_path from step 1 (REQUIRED)
-   - Output: Integrated BCR dataset CSV
-   - Required by: integrate_predictions_with_experimental_data
+**步骤2: integrate_scbcr_bulk_bcr_data** (Requires step 1 output - CRITICAL dependency)
+   - **Purpose**: Integrate single-cell BCR data with bulk BCR FASTQ data, adding UMAP coordinates
+   - **Input**:
+     * scRNA.csv (single-cell BCR data)
+     * bulk_raw_data/ (directory containing bulk BCR FASTQ files)
+     * umap_coordinates.csv from step 1 ⭐ (REQUIRED - must use output from step 1)
+   - **Processing**:
+     * Load single-cell BCR data
+     * Parse bulk BCR FASTQ files
+     * Merge single-cell and bulk data
+     * Add UMAP coordinates and cell type information
+   - **Output**: temp/all_data.csv
+     * Columns: main_name, Heavy_DNA, Timepoint, celltype, locate_x (UMAP), locate_y (UMAP), and other BCR sequence information
+   - **Required by**: integrate_predictions_with_experimental_data (step 5)
 
-3. **integrate_binding_neutralization_experiments** (Can run in parallel with step 2)
-   - Processes binding/neutralization experimental data
-   - Output: Standardized experimental results CSV
-   - Required by: integrate_predictions_with_experimental_data
+**步骤3: bcr_clonal_clustering_and_feature_extraction** (Currently commented/optional)
+   - **Purpose**: Perform clonal clustering and extract BCR features using ChangeO and ANARCI tools
+   - **Input**: all_data.csv from step 2
+   - **Processing** (requires ChangeO + ANARCI tools):
+     * ChangeO clonal clustering:
+       - IgBLAST V(D)J alignment
+       - MakeDb database construction
+       - DefineClones clone definition
+       - CreateGermlines germline reconstruction
+     * ANARCI feature extraction:
+       - V/D/J gene usage frequencies
+       - CDR1/2/3 sequences
+       - SHM statistics
+   - **Output**: all_data_with_feature.csv
+   - **Note**: This tool is currently commented/disabled and may require manual execution or notebook usage
 
-4. **integrate_predictions_with_experimental_data** (Requires steps 2 and 3 outputs)
-   - Merges ML predictions with experimental data
-   - Input: feature_data_path from step 2 (REQUIRED)
-   - Input: clone_results_path from step 3 (REQUIRED)
-   - Output: Complete integrated dataset
+**步骤4: integrate_binding_neutralization_experiments** (Can run in parallel with step 2)
+   - **Purpose**: Process and standardize binding/neutralization experimental data from multiple batches
+   - **Input**:
+     * First batch experimental Excel file
+       - Example: raw_doc/first-time_Inf/flu_simple(...).xlsx
+     * Second batch experimental Excel file
+       - Example: raw_doc/second-time_Inf/flu_second_simple.xlsx
+   - **Processing**:
+     * Load both batches of experimental data
+     * Apply thresholds to convert to binary classification labels
+     * Standardize antibody naming
+     * Merge both batches (prioritize second batch data)
+   - **Output**: temp/0220_Flu_cAb.csv
+     * Columns: mAb, main_name, Heavy, Light, H1N1_Michigan(bind)(experiment), H1N1_Victoria(bind)(experiment), H1N1_Jiangsu(neu)(experiment), and other binding/neutralization experiment columns
+   - **Required by**: integrate_predictions_with_experimental_data (step 5)
+
+**步骤5: integrate_predictions_with_experimental_data** (Requires steps 2 and 4 outputs - CRITICAL dependencies)
+   - **Purpose**: Merge ML prediction results with experimental measurements
+   - **Input**:
+     * all_data_with_feature.csv from step 3 ⭐ (or all_data.csv from step 2 if step 3 skipped)
+     * predict_data/ensemble_predict/bind/ (directory with binding prediction results)
+     * predict_data/ensemble_predict/neut/ (directory with neutralization prediction results)
+     * 0220_Flu_cAb.csv from step 4 ⭐ (REQUIRED - must use output from step 4)
+   - **Processing**:
+     * Load feature data
+     * Load ML prediction results (multiple folds)
+     * Load experimental measurement results
+     * Merge all data sources
+   - **Output**: temp/all_data_with_predict_and_feature.csv
+     * Contains: all BCR features, UMAP coordinates, ML prediction scores (bind/neu), experimental results, and type (sc/bulk identifier)
+
+**步骤6-8: Visualization and Phylogenetic Tree** (Currently commented/optional)
+   - visualize_antibody_repertoire_analysis: Generate analysis plots
+   - prepare_bcell_phylogenetic_tree_data: Prepare phylogenetic tree data
+   - construct_bcell_phylogenetic_tree: Construct B cell phylogenetic tree
 
 **Alternative: Complete Integration Tool (integrateBcrData service)**
 
@@ -417,13 +507,51 @@ If this task involves FLU BCR analysis tools, you MUST follow this execution ord
      * You're working with bulk BCR FASTQ files
      * You want to process steps separately
 
-**IMPORTANT:**
-- Check conversation history for previous tool outputs before calling subsequent tools
-- Use file paths from previous tool outputs, not merged_csv_result_path for non-CSV parameters
-- Never skip steps or execute tools out of order
-- If a required input file is missing, check if a previous step needs to be executed first
+**CRITICAL EXECUTION RULES:**
 
-Please begin executing the task immediately using specific tool function names.
+1. **Strict Order Enforcement**: 
+   - NEVER skip steps or execute tools out of order
+   - **IMPORTANT**: Call tools ONE AT A TIME, waiting for user confirmation after each tool call. Do NOT automatically chain multiple tools even if they have dependencies.
+   - Step 1 MUST execute before Step 2
+   - Steps 2 and 4 can run in parallel (they don't depend on each other)
+   - Step 5 MUST wait for both Steps 2 and 4 to complete
+
+2. **File Path Handling**:
+   - Check conversation history for previous tool outputs before calling subsequent tools
+   - Use ACTUAL file paths from previous tool outputs, NOT placeholder paths
+   - For Step 2: Use the umap_coordinates_path output from Step 1
+   - For Step 5: Use feature_data_path from Step 2/3 AND clone_results_path from Step 4
+   - Do NOT use merged_csv_result_path for non-CSV parameters
+
+3. **Dependency Checking**:
+   - Before executing any step, verify all required inputs are available
+   - If a required input file is missing, check if a previous step needs to be executed first
+   - Always wait for the previous step to complete before starting the next dependent step
+
+4. **Error Handling**:
+   - If Step 3 (clonal clustering) is unavailable/commented, you can skip it and use all_data.csv from Step 2 directly for Step 5
+   - If Steps 6-8 (visualization) are unavailable/commented, you can skip them
+   - Steps 1, 2, 4, and 5 are CORE steps and should not be skipped
+
+5. **Parameter Accuracy**:
+   - Ensure correct tool parameter settings (especially key parameters like input_file, base_dir, umap_coordinates_path, feature_data_path, clone_results_path)
+   - Use exact parameter names as defined in tool schemas
+   - Verify file paths exist before passing them to tools
+
+**Data Flow Summary:**
+```
+Step 1: RDS → umap_coordinates.csv
+   ↓
+Step 2: scRNA.csv + bulk FASTQ + umap_coordinates.csv → all_data.csv
+   ↓
+Step 3 (optional): all_data.csv → all_data_with_feature.csv
+   ↓
+Step 4 (parallel): Excel files → 0220_Flu_cAb.csv
+   ↓
+Step 5: all_data.csv (or all_data_with_feature.csv) + predictions + 0220_Flu_cAb.csv → all_data_with_predict_and_feature.csv
+```
+
+Please begin executing the task immediately using specific tool function names and following the exact workflow order.
 """
 
     EVALUATE_PLANNING_PROMPT = """

@@ -227,7 +227,7 @@ def main():
 
     # Test queries (仅在未提供query参数时使用)
     test_queries = [
-        "1. 使用Igblast的analyze_vdj_batch工具；2. 使用metaBCR的metabcr工具；3. 使用flu的所有工具；4. 使用af3的两个工具； 5. 使用bioinformatics的一系列工具",
+        "1. 使用Igblast的analyze_vdj_batch工具；2. 使用metaBCR的metabcr工具；3. 按顺序使用lineage_analysis的所有工具；4.r_data_integration的工具；5. 按顺序使用bioinformatics的所有工具； 6. 使用af3的工具。",
         # "please design a computational method to identifiy broadly neutralizing antibodies against H5N1.",
         # "What is the phenotype of broadly reactive B cells in response to vaccination?",
         # "What structural features differentiate broadly neutralizing antibodies from those with narrow specificity?",

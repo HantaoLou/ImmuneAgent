@@ -24,7 +24,7 @@ def save_planning_report(planning_result: str, filepath: str, filename: str) -> 
     try:
         # 创建输出目录 / Create output directory
         output_dir = Path(
-            "/data/szh/antibody_gen/agent/analysis_results/" + filepath + "/"
+            "D:\\projects-开保智药\\antibody_gen\\agent\\analysis_results" + filepath + "/"
         )
         output_dir.mkdir(exist_ok=True)
 

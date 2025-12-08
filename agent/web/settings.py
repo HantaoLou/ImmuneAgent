@@ -4,10 +4,10 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite+aiosqlite:////opt/antibody_gen/data.db"
+    database_url: str = "sqlite+aiosqlite:///C:/opt/antibody_gen/data.db"
     access_token: str = str(uuid4())
-    frontend_path: str = "/opt/antibody_gen/dist"
-    artifact_path: str = "/opt/antibody_gen/artifacts"
+    frontend_path: str = "C:/opt/antibody_gen/dist"
+    artifact_path: str = "C:/opt/antibody_gen/artifacts"
     port: int = 8000
     
     # OSS配置

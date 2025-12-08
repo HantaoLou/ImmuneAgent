@@ -247,22 +247,32 @@ class TaskExecutor:
                 )
                 model = get_reasoning_model(enhanced_config)
             
+            # 使用 HIL 装饰器包装所有工具，确保工具调用需要用户确认
+            from usecases.deepagents.tools import hil
+            hil_tools = [hil(tool) for tool in all_tools] if all_tools else []
+            
             # 创建主代理 - 使用async_create_deep_agent支持MCP工具的异步操作
             self.agent = async_create_deep_agent(
-                tools=all_tools,  # 主代理直接使用所有MCP工具
+                tools=hil_tools,  # 使用经过 hil() 包装的工具，确保需要用户确认
                 instructions="""你是一个专业的免疫学研究助手，专门处理抗体发现、B细胞分析和免疫组学研究任务。
 
 重要指导原则：
-1. 当用户要求执行特定任务时，你必须立即使用相应的工具
-2. 不要询问更多信息，直接根据任务描述选择合适的工具执行
+1. 当用户要求执行特定任务时，使用相应的工具
+2. 不要询问更多信息，根据任务描述选择合适的工具执行
 3. 根据任务类型选择合适的工具：
    - MetaBCR工具 - 处理抗体BCR序列预测和分析
    - R Analysis工具 - 处理统计分析和数据可视化  
    - B Cell Analysis工具 - 处理B细胞分析和免疫组学
-4. 如果任务明确要求使用特定工具，请直接调用该工具
+4. 如果任务明确要求使用特定工具，请调用该工具
 5. 始终提供具体的执行结果，而不是仅仅解释或询问
 
-请根据任务需求立即执行相应的工具调用。""",
+**关键约束**：
+- **每次只能调用一个工具**，必须等待用户确认后才能调用下一个工具
+- 即使工具之间存在依赖关系（如步骤2需要步骤1的输出），也必须每次只调用一个工具并等待确认
+- **不要自动连续调用多个工具**，无论依赖关系如何
+- 每个工具调用都需要单独的用户确认
+
+请根据任务需求执行相应的工具调用，每次只调用一个工具并等待用户确认。""",
                 model=model,
                 interrupt_config=interrupt_config,  # 使用正确的interrupt_config参数
                 checkpointer=self.checkpointer  # 添加checkpointer支持

@@ -104,7 +104,7 @@ def get_tools_info() -> str:
 
 def get_tools_json() -> str:
     """返回JSON格式的工具注册表字符串，用于Stage1提示词
-    只包含igblast, metabcr, flu, af3, bioinformatics这五个服务的工具
+    只包含igblast, metabcr, lineage_analysis, af3, bioinformatics这五个服务的工具
     """
     tools_json = """{
   "BCR_analysis": [
@@ -289,9 +289,9 @@ def get_tools_json() -> str:
       ]
     }
   ],
-  "flu_service": [
+  "lineage_analysis_service": [
     {
-      "name": "Flu Service Tools",
+      "name": "Lineage Analysis Service Tools",
       "priority": 1,
       "description": "Flu-related analysis tools including data collection, ChangeO+ANARCI analysis, experiment prediction, figure generation, and cell tree preliminary analysis. These tools support comprehensive influenza antibody analysis workflows corresponding to notebook pipelines: 1. get_cell_location(R).ipynb, 2. flu_dataset_collect.ipynb, 3. ChangeO+ANARCI.ipynb, 3.5. clone_result.ipynb, 4. experiment+prediction.ipynb, 5. draw_for_mainfig.ipynb, 6. cell_tree_preliminary.ipynb, 7. cell_tree(R).ipynb. **CRITICAL EXECUTION ORDER**: When using FLU tools, follow this sequence: (1) extract_seurat_umap_metadata → (2) integrate_scbcr_bulk_bcr_data (requires step 1 output) → (3) integrate_binding_neutralization_experiments (can run in parallel with step 2) → (4) integrate_predictions_with_experimental_data (requires steps 2 and 3 outputs). Never skip steps or execute out of order, as each step depends on previous outputs.",
       "domains": [
@@ -444,9 +444,9 @@ The current system provides the following specific MCP tools. Please select inte
   - Output: Isotype distribution plots, SHM analysis, statistical comparisons
   - Corresponding generic tools: MetaBCR, BCR analysis tools, statistical analysis
 
-**FLU BCR Analysis Tools (flu service) - CRITICAL EXECUTION ORDER:**
+**Lineage Analysis BCR Tools (lineage_analysis service) - CRITICAL EXECUTION ORDER:**
 
-When using FLU-related tools, you MUST follow this specific execution order to ensure all required intermediate outputs are available:
+When using FLU-related tools, you MUST follow this specific execution order to ensure all required intermediate outputs are available. However, **each tool call requires user confirmation** - do NOT automatically chain multiple tool calls. Wait for user approval after each step before proceeding to the next one.
 
 **Required Sequential Steps:**
 1. **`extract_seurat_umap_metadata`** - Extract Seurat UMAP metadata
@@ -524,6 +524,8 @@ When using FLU-related tools, you MUST follow this specific execution order to e
 - **NEVER skip step 1** - extract_seurat_umap_metadata must run first
 - **NEVER execute step 2 without step 1 output** - integrate_scbcr_bulk_bcr_data requires umap_coordinates_path
 - **NEVER execute step 4 without steps 2 and 3 outputs** - integrate_predictions_with_experimental_data requires both feature_data_path and clone_results_path
+
+**IMPORTANT**: Although these tools have dependencies and must be executed in order, **EACH tool call still requires user confirmation**. After executing step 1 and receiving user approval, wait for user confirmation before proceeding to step 2. Do NOT automatically chain multiple tool calls - every tool invocation must be individually confirmed by the user.
 - **Always check conversation history** for previous tool outputs before calling subsequent tools
 - **Use file paths from previous tool outputs** - Do not use merged_csv_result_path for non-CSV parameters (RDS files, directories, etc.)
 

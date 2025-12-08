@@ -2,7 +2,7 @@
 name = "agent"
 version = "0.1.0"
 description = "Agent workflow system"
-requires-python = ">=3.12"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "kb==0.1.4",
     "langgraph>=0.2.0",
@@ -36,6 +36,8 @@ dependencies = [
     "aiosqlite>=0.21.0",
     "greenlet>=3.2.3",
     "oss2>=2.18.0",
+    "pypika<=0.48.9",
+    "onnxruntime>=1.23.0"
 ]
 
 [build-system]
@@ -137,3 +139,9 @@ prepend_sys_path = [
 # executable = "ruff"
 # options = "check --fix REVISION_SCRIPT_FILENAME"
 
+[tool.uv.resolution]
+allow-prereleases = true
+ignore-requires-python=["pypika"]
+
+[tool.uv.resolution.overrides]
+pypika=">=0.49.0"

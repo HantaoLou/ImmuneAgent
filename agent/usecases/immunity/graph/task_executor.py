@@ -107,6 +107,8 @@ class TaskExecutor:
             tools = []
         self.tools = tools
 
+        # 关键修复：必须使用 hil() 包装器来触发 interrupt
+        # 但是，我们需要确保 resume payload 只影响当前工具调用，不影响后续工具调用
         hil_tools = [hil(tool) for tool in self.tools] if self.tools else []
         self.agent = create_react_agent(
             model=model, tools=hil_tools, checkpointer=self.checkpointer
@@ -231,11 +233,21 @@ Please analyze the task description according to the above intelligent tool mapp
 1. Carefully analyze keywords and analysis types in the task description
 2. Select the most appropriate MCP tool according to the mapping strategy
 3. Ensure correct parameter settings (especially input_file and base_dir)
-4. If the task involves multiple steps, call the corresponding tools in logical order
-5. Prioritize tools with the best functional match and avoid using generic tool names
+4. **CRITICAL RULE #1**: Call ONLY ONE tool per response. Do NOT call multiple tools.
+5. **CRITICAL RULE #2**: After calling ONE tool, STOP immediately. Do NOT call any additional tools.
+6. **CRITICAL RULE #3**: Wait for user confirmation before calling the next tool, even if tools have dependencies.
+7. If the task involves multiple steps, call tools one at a time in logical order, but **STOP after each tool call** and wait for user confirmation.
+8. Prioritize tools with the best functional match and avoid using generic tool names
 {initial_file_hint}
 
-Please start executing the task immediately using specific MCP tool names for invocation.{preferred_tool_text}
+**ABSOLUTE REQUIREMENTS**: 
+- **You MUST call only ONE tool per response**
+- **After calling a tool, you MUST STOP and wait**
+- **Do NOT call multiple tools, even if they have dependencies**
+- **Do NOT automatically chain tool calls**
+- **Each tool call must be individually confirmed by the user**
+
+Please start by calling the FIRST tool only. STOP after calling it and wait for user confirmation.{preferred_tool_text}
 """
         )
 
@@ -247,6 +259,8 @@ Please start executing the task immediately using specific MCP tool names for in
             max_retries = 10
 
             while "__interrupt__" in result:
+                # 关键修复：确保每次只处理一个工具调用请求
+                # 即使 result 中包含多个 interrupt，也只处理第一个
                 interrupt_info = result["__interrupt__"][0]
 
                 tool_payload = self._parse_tool_call(interrupt_info.value)
@@ -254,39 +268,125 @@ Please start executing the task immediately using specific MCP tool names for in
                     break
 
                 tool_info = self._get_complete_parameters(tool_payload) or tool_payload
+                
+                # 关键修复：每次新的工具调用都必须等待用户确认
+                # 不要使用任何缓存的响应，确保用户对每个工具调用都明确确认
+                print(f"[DEBUG] execute_task: 🔔 检测到新的工具调用请求，工具: {tool_info.get('tool_name')}")
+                print(f"[DEBUG] execute_task: 🔔 准备调用 _get_user_confirmation，等待用户明确确认")
+                print(f"[DEBUG] execute_task: 🔔 这是第 {len(tools_called) + 1} 个工具调用")
 
+                # 关键修复：在内层循环开始前，确保用户已经确认要调用这个工具
+                # 即使工具执行完成后代理恢复并立即调用下一个工具，这里也会再次触发用户确认
                 while True:
+                    # 关键：每次都必须等待真实的用户响应，不能使用缓存或默认值
                     user_decision = await self._get_user_confirmation(tool_info)
                     action = (user_decision.get("action") or "").lower()
+                    
+                    print(f"[DEBUG] execute_task: ✅ 收到用户确认结果，action: {action}")
+                    print(f"[DEBUG] execute_task: ✅ 用户决策详情: {user_decision}")
 
                     if action == "accept":
                         if user_decision.get("modified_args") is not None:
                             tool_info["args"] = user_decision["modified_args"]
 
-                        execution_outcome = await self._execute_tool_with_retry(
-                            tool_info=tool_info,
-                            tools_called=tools_called,
-                            tool_results=tool_results,
-                            thread_config=thread_config,
-                            progress_hook=progress_hook,
-                            task_description=task_description,
-                            step_id=step_id or tool_info.get("tool_name"),
+                        # 关键修复：用户已确认，现在需要 resume 代理以执行工具
+                        # resume 的 payload 会被传递给 hil() 中当前等待的 interrupt()
+                        # 这个 payload 只会影响当前工具调用，不会影响后续的工具调用
+                        resume_payload = {"accept": True}
+                        if tool_info.get("args"):
+                            # 确保参数格式正确
+                            if isinstance(tool_info["args"], dict) and "args" not in tool_info["args"]:
+                                # 如果参数已经是字典，但没有 "args" 键，可能需要包装
+                                resume_payload["args"] = tool_info["args"]
+                            else:
+                                resume_payload["args"] = tool_info["args"]
+                        
+                        print(f"[DEBUG] execute_task: 🔄 准备 resume 代理以执行工具")
+                        print(f"[DEBUG] execute_task: 🔄 payload: {json.dumps(resume_payload, ensure_ascii=False)}")
+                        print(f"[DEBUG] execute_task: 🔄 工具: {tool_info.get('tool_name')}")
+                        print(f"[DEBUG] execute_task: 🔄 这是第 {len(tools_called) + 1} 个工具调用")
+                        
+                        # 关键：resume 代理，传递用户确认
+                        # 这个 resume payload 会被传递给 hil() 中当前等待的 interrupt()
+                        # 工具会通过 hil() 包装器执行
+                        result = self.agent.invoke(
+                            Command(resume=json.dumps(resume_payload, ensure_ascii=False)),
+                            thread_config,
                         )
-
-                        status = execution_outcome["status"]
-                        if status == "completed":
-                            # 工具执行完成，需要恢复agent继续执行，以获取下一个工具调用或最终结果
-                            # 注意：这里不能直接使用execution_outcome["result"]，因为那只是工具调用的结果
-                            # 需要让agent继续执行，看看是否还有下一个工具调用
-                            result = self.agent.invoke(
-                                Command(resume=json.dumps({"accept": True})),
-                                thread_config,
+                        
+                        print(f"[DEBUG] execute_task: ✅ 代理 resume 完成，检查结果...")
+                        print(f"[DEBUG] execute_task: ✅ result 类型: {type(result)}")
+                        print(f"[DEBUG] execute_task: ✅ result 键: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                        
+                        # 关键：提取工具执行结果
+                        # 工具执行结果可能在 result["messages"] 中
+                        tool_result = None
+                        if "messages" in result and result["messages"]:
+                            # 查找工具执行的消息
+                            for msg in result["messages"]:
+                                # 检查是否是工具消息
+                                if hasattr(msg, "name") and msg.name == tool_info.get("tool_name"):
+                                    tool_result = msg.content if hasattr(msg, "content") else str(msg)
+                                    print(f"[DEBUG] execute_task: ✅ 从消息中提取工具结果: {str(tool_result)[:200]}")
+                                    break
+                                # 检查是否是 ToolMessage
+                                elif hasattr(msg, "content") and hasattr(msg, "tool_call_id"):
+                                    # 可能是工具执行结果
+                                    tool_result = msg.content if hasattr(msg, "content") else str(msg)
+                                    print(f"[DEBUG] execute_task: ✅ 从 ToolMessage 中提取工具结果: {str(tool_result)[:200]}")
+                        
+                        # 记录工具调用结果
+                        call_entry = self._create_tool_call_entry(
+                            tool_info.get("tool_name"),
+                            tool_info.get("args"),
+                            status="completed" if tool_result else "running",
+                            service_id=tool_info.get("service_id"),
+                        )
+                        if tool_result:
+                            call_entry["result"] = tool_result
+                        tools_called.append(call_entry)
+                        
+                        if tool_result:
+                            tool_result_data = {
+                                "tool_name": tool_info.get("tool_name"),
+                                "args": tool_info.get("args"),
+                                "result": tool_result,
+                                "status": "completed",
+                            }
+                            tool_results.append(tool_result_data)
+                            
+                            # 收集 CSV 结果
+                            if self.csv_collector:
+                                try:
+                                    merged_csv_path = await self.csv_collector.collect_tool_output(tool_result_data)
+                                    if merged_csv_path:
+                                        tool_result_data["merged_csv_path"] = merged_csv_path
+                                except Exception:
+                                    pass
+                            
+                            await self._emit_tool_progress(
+                                progress_hook, tools_called, tool_results, call_entry
                             )
-                            # 检查是否还有下一个工具调用（__interrupt__），如果没有则退出循环
-                            if "__interrupt__" not in result:
-                                break
-                            # 如果有下一个工具调用，继续外层循环处理
+                        
+                        # 关键：检查是否还有下一个工具调用（__interrupt__）
+                        # 如果有，说明代理在工具执行完成后立即决定调用下一个工具
+                        # 外层循环会继续，捕获新的 interrupt，并调用 _get_user_confirmation 让用户确认
+                        # 
+                        # 关键修复：确保 resume payload 不会影响新的 interrupt
+                        # 如果 result 中包含 "__interrupt__"，说明有新的工具调用请求
+                        # 这个新的 interrupt 应该等待新的用户确认，而不是使用之前的 resume payload
+                        
+                        if "__interrupt__" not in result:
+                            # 没有下一个工具调用，任务执行完成
+                            print(f"[DEBUG] execute_task: ✅ 没有下一个工具调用，任务执行完成")
                             break
+                        
+                        # 如果有下一个工具调用，外层循环会继续处理
+                        # 新的 interrupt 会被捕获，并调用 _get_user_confirmation 让用户确认
+                        print(f"[DEBUG] execute_task: 🔔 检测到下一个工具调用请求，继续外层循环")
+                        print(f"[DEBUG] execute_task: 🔔 重要：新的 interrupt 会等待新的用户确认，不会使用之前的 resume payload")
+                        # break 内层循环，让外层循环处理新的工具调用
+                        break
                         # 注意：status == "retry"的情况已经在_execute_tool_with_retry内部处理了
                         # 如果返回retry状态，说明有逻辑错误，应该记录并继续
                         if status == "retry":
@@ -437,7 +537,7 @@ Please start executing the task immediately using specific MCP tool names for in
             call_entry = self._create_tool_call_entry(
                 tool_info.get("tool_name"),
                 attempt_args,
-                status="running",
+                status="pending",  # 改为 pending，等待用户确认
                 service_id=tool_info.get("service_id"),
             )
             tools_called.append(call_entry)
@@ -445,6 +545,68 @@ Please start executing the task immediately using specific MCP tool names for in
                 progress_hook, tools_called, tool_results, call_entry
             )
 
+            # 注意：不要在这里自动设置 accept: True
+            # hil() 装饰器会在工具调用时触发 interrupt，用户需要通过 interrupt 确认
+            # 这里不应该直接 resume，而是应该等待 interrupt 处理完成
+            # 但是由于这个方法是处理已经中断的调用，我们需要先等待用户确认
+            
+            # 等待用户确认（通过 interrupt 机制）
+            # 这里不应该自动 accept，应该等待用户的明确确认
+            # 但实际上，如果代理已经中断，说明 hil() 已经触发了 interrupt
+            # 所以这里不应该再次 invoke，而应该等待 interrupt 响应
+            
+            # 重要：这里不应该自动 accept，需要检查是否有中断等待处理
+            # 如果有中断，应该等待用户响应，而不是自动 accept
+            
+            print(f"[DEBUG] 准备执行工具 {tool_info.get('tool_name')}，等待用户确认...")
+            print(f"[DEBUG] 参数: {attempt_args}")
+            
+            # 注意：如果代理是通过 hil() 包装的，工具调用会自动触发 interrupt
+            # 这里我们不应该绕过这个机制，应该让 interrupt 正常处理
+            
+            # 重要：这里不应该自动 accept！
+            # 工具已经被 hil() 包装，hil() 会在调用时触发 interrupt
+            # 用户确认已经在 execute_task 的 _get_user_confirmation 中完成
+            # 但是，当我们 resume 代理时，我们需要确保 resume 的格式符合 hil() 的期望
+            # hil() 期望的格式是 JSON 字符串: {"accept": true, "args": {...}}
+            # 
+            # 问题：当我们使用 Command(resume=...) 时，我们是在恢复被 hil() interrupt 的工具调用
+            # 但是，如果我们在 resume 中传入 accept: True，可能会绕过 hil() 的第二次确认
+            # 
+            # 解决方案：我们需要确保 resume 的 payload 格式正确，并且不应该自动 accept
+            # 实际上，用户已经在 _get_user_confirmation 中确认了，所以这里可以使用确认的参数
+            # 但关键是确保格式正确
+            
+            # 关键修复：这里不应该直接 resume 代理！
+            # 用户确认已经在 execute_task 的外层循环（第273行）中通过 _get_user_confirmation 完成
+            # 当我们调用 _execute_tool_with_retry 时，代理已经在等待用户确认的状态
+            # 但是，由于我们已经在 execute_task 中处理了用户确认，这里不应该再次 resume
+            # 
+            # 问题：如果在 execute_task 中已经 resume 了代理，那么工具应该已经执行了
+            # 但实际上，工具调用是在这里执行的，说明代理还没有 resume
+            # 
+            # 解决方案：这里应该 resume 代理，传递用户确认的参数
+            # 但是，要确保 resume payload 只影响当前的工具调用，不影响后续的工具调用
+            
+            # ⚠️ 关键问题：这里不应该 resume 代理！
+            # 工具已经被 hil() 包装，当代理调用工具时会触发 interrupt()
+            # 用户确认已经在外层循环（execute_task）中通过 _get_user_confirmation 完成
+            # 
+            # 正确的流程应该是：
+            # 1. 代理调用工具 → hil() 触发 interrupt() → 代理暂停
+            # 2. 外层循环捕获 interrupt → 调用 _get_user_confirmation → 获取用户确认
+            # 3. 用户确认后，在外层循环中 resume 代理，传递用户确认
+            # 4. 代理恢复，hil() 中的 interrupt() 返回用户确认的值，工具执行
+            # 5. 工具执行完成后，如果代理决定调用下一个工具，会触发新的 interrupt()
+            # 6. 新的 interrupt() 应该等待新的用户确认，而不是使用之前的 resume payload
+            #
+            # 问题：如果我们在 _execute_tool_with_retry 中 resume，resume payload 可能被传递给了新的 interrupt()
+            #
+            # 解决方案：不在 _execute_tool_with_retry 中 resume，而是在外层循环中 resume
+            # 但是，这个函数被调用时，说明外层循环需要工具执行结果
+            # 所以，我们需要在这里 resume，但要确保 resume payload 只影响当前工具调用
+            
+            # 构建 resume payload，只包含当前工具调用的确认信息
             resume_payload = {"accept": True}
             if attempt_args is not None:
                 if tool_info.get("structured", False) and isinstance(attempt_args, dict) and "args" not in attempt_args:
@@ -454,9 +616,18 @@ Please start executing the task immediately using specific MCP tool names for in
 
             call_start = time.time()
             try:
+                # ⚠️ 关键：这里 resume 代理，resume payload 会被传递给当前等待的 interrupt()
+                # 但是，如果代理在工具执行完成后立即调用下一个工具，新的 interrupt() 应该不会收到这个 payload
+                # 问题可能在于：LangGraph 的 resume 机制可能会将 payload 传递给下一个 interrupt()
+                #
+                # 解决方案：确保每个工具调用都有唯一的标识，或者使用不同的 thread_id
+                resume_json = json.dumps(resume_payload, ensure_ascii=False)
+                print(f"[DEBUG] _execute_tool_with_retry: ⚠️ 准备 resume 代理，payload: {resume_json}")
+                print(f"[DEBUG] _execute_tool_with_retry: ⚠️ 警告：这个 resume 可能影响后续的工具调用！")
                 invoke_result = self.agent.invoke(
-                    Command(resume=json.dumps(resume_payload)), thread_config
+                    Command(resume=resume_json), thread_config
                 )
+                print(f"[DEBUG] _execute_tool_with_retry: ✅ 代理 resume 完成")
             except Exception as call_error:  # noqa: BLE001
                 error_message = str(call_error)
                 call_entry["status"] = "failed"
@@ -1543,13 +1714,18 @@ Please start executing the task immediately using specific MCP tool names for in
             composite_event_name = f"{(session_id or 'no-session')}:{action_event_id}"
             self.sse_streamer.push_action_request({**action_data, "event_name": composite_event_name, "session_id": session_id})
             
-            # 等待前端响应
+            # 关键修复：等待前端响应，必须等待真实的用户输入
+            print(f"[_get_sse_confirmation] ⏳ 等待前端响应，event_name: {composite_event_name}, session_id: {session_id}")
+            print(f"[_get_sse_confirmation] ⏳ 工具: {tool_info.get('tool_name')}, 参数: {tool_info.get('args')}")
             user_response = await self.sse_streamer.wait_for_action_response(timeout=600, event_name=composite_event_name, session_id=session_id)
             
             if user_response:
+                print(f"[_get_sse_confirmation] ✅ 收到前端响应: {user_response}")
                 # 转换前端响应格式为内部格式
                 return self._convert_sse_response_to_internal(user_response, tool_info)
             else:
+                # 关键修复：如果没有收到响应（超时或错误），返回 reject 而不是 accept
+                print(f"[_get_sse_confirmation] ⚠️ 未收到前端响应（超时或错误），返回 reject")
                 return {"action": "reject"}
                 
         except Exception as e:

@@ -235,12 +235,40 @@ class CSVResultCollector:
             
             # 如果result是字符串，尝试提取路径
             elif isinstance(result_content, str):
+                # 关键修复：优先检查是否是纯文件路径（不包含描述性文本）
+                # 如果字符串是纯文件路径（以/开头或包含.csv/.xlsx/.xls扩展名），直接使用
+                trimmed = result_content.strip()
+                if self._is_csv_or_excel_file(trimmed) and not any(
+                    keyword in trimmed.lower() 
+                    for keyword in ["successfully", "saved to", "results", "extracted", "output"]
+                ):
+                    # 纯文件路径，直接使用
+                    file_paths.append(trimmed)
                 # 处理分号分隔的多个文件路径
-                if ";" in result_content:
+                elif ";" in result_content:
                     paths = [p.strip() for p in result_content.split(";") if p.strip()]
-                    file_paths.extend([p for p in paths if self._is_csv_or_excel_file(p)])
+                    file_paths.extend([p for p in paths if self._is_csv_or_excel_file(p) and not any(
+                        keyword in p.lower() 
+                        for keyword in ["successfully", "saved to", "results", "extracted"]
+                    )])
                 else:
-                    file_paths.extend(self._extract_file_paths_from_result(result_content))
+                    # 使用正则提取路径，但过滤掉包含描述性文本的结果
+                    extracted_paths = self._extract_file_paths_from_result(result_content)
+                    # 过滤：路径应该只包含文件路径，不应该包含描述性文本
+                    for path in extracted_paths:
+                        # 检查路径是否在消息文本中，且消息包含描述性关键词
+                        # 如果路径是消息的一部分，且消息包含关键词，则忽略
+                        if any(keyword in result_content.lower() for keyword in ["successfully", "saved to", "results saved"]):
+                            # 只有在路径看起来是独立的文件路径时才使用
+                            # 如果路径前后有描述性文本，忽略
+                            path_pos = result_content.find(path)
+                            if path_pos > 0:
+                                # 检查路径前的文本是否包含关键词
+                                before_text = result_content[:path_pos].lower()
+                                if any(keyword in before_text for keyword in ["saved to", "results saved", "extracted"]):
+                                    print(f"[CSVResultCollector] 跳过包含描述性文本的路径: {path}")
+                                    continue
+                        file_paths.append(path)
             
             # 如果还没有找到文件路径，尝试递归提取
             if not file_paths:
@@ -259,15 +287,53 @@ class CSVResultCollector:
             if not file_paths:
                 file_paths = self._extract_file_paths_from_result(result_content)
             
+            # 关键修复：严格过滤文件路径，确保不包含描述性文本
+            # 只接受纯文件路径，不接受包含 "Successfully", "saved to" 等描述文本的字符串
+            valid_file_paths = []
+            for path in file_paths:
+                if not path:
+                    continue
+                path_str = str(path).strip()
+                
+                # 必须是有效的CSV/Excel文件
+                if not self._is_csv_or_excel_file(path_str):
+                    continue
+                
+                # 关键：严格检查，如果路径包含描述性文本，拒绝
+                path_lower = path_str.lower()
+                description_keywords = [
+                    "successfully", "saved to", "results saved", "extracted",
+                    "output file", "file saved", "results saved to"
+                ]
+                
+                # 如果路径本身包含描述性关键词，跳过
+                if any(keyword in path_lower for keyword in description_keywords):
+                    print(f"[CSVResultCollector] ⚠️ 拒绝包含描述性文本的路径: {path_str[:100]}")
+                    continue
+                
+                # 检查路径是否是独立的文件路径（应该只包含路径，不包含其他文本）
+                # 如果路径长度超过合理范围（例如超过200字符），可能是包含了其他文本
+                if len(path_str) > 200:
+                    print(f"[CSVResultCollector] ⚠️ 路径过长，可能包含其他文本，跳过: {path_str[:100]}...")
+                    continue
+                
+                # 验证路径格式：应该以 / 开头或者是相对路径
+                if not (path_str.startswith('/') or path_str.startswith('./') or '\\' in path_str or '/' in path_str):
+                    print(f"[CSVResultCollector] ⚠️ 路径格式不正确，跳过: {path_str}")
+                    continue
+                
+                valid_file_paths.append(path_str)
+            
+            # 去重
+            file_paths = list(set(valid_file_paths))
+            
             if not file_paths:
-                print(f"[CSVResultCollector] 工具 {tool_result.get('tool_name')} 未产生CSV/Excel文件")
+                print(f"[CSVResultCollector] 工具 {tool_result.get('tool_name')} 未产生有效的CSV/Excel文件")
                 print(f"[CSVResultCollector] 工具结果类型: {type(result_content)}")
                 print(f"[CSVResultCollector] 工具结果内容: {str(result_content)[:500]}")
                 return None
             
-            # 去重并过滤出有效的文件路径
-            file_paths = list(set([p for p in file_paths if p and self._is_csv_or_excel_file(p)]))
-            print(f"[CSVResultCollector] 工具 {tool_result.get('tool_name')} 产生了 {len(file_paths)} 个文件: {file_paths}")
+            print(f"[CSVResultCollector] ✅ 工具 {tool_result.get('tool_name')} 产生了 {len(file_paths)} 个有效文件: {file_paths}")
             
             # 处理每个文件
             last_merged_path = None
@@ -382,6 +448,29 @@ class CSVResultCollector:
         Returns:
             合并后的CSV文件路径，如果合并失败则返回None
         """
+        # 关键修复：验证文件路径是否有效，不包含描述性文本
+        if not new_csv_file:
+            print(f"[CSVResultCollector] ⚠️ 新CSV文件路径为空，跳过合并")
+            return None
+        
+        new_csv_file = str(new_csv_file).strip()
+        
+        # 严格验证：路径不应该包含描述性文本
+        file_lower = new_csv_file.lower()
+        if any(keyword in file_lower for keyword in ["successfully", "saved to", "results saved", "extracted"]):
+            print(f"[CSVResultCollector] ⚠️ 拒绝包含描述性文本的文件路径: {new_csv_file[:100]}")
+            return None
+        
+        # 验证路径格式
+        if not self._is_csv_or_excel_file(new_csv_file):
+            print(f"[CSVResultCollector] ⚠️ 文件路径不是有效的CSV/Excel文件: {new_csv_file}")
+            return None
+        
+        # 验证路径长度（过长可能包含其他文本）
+        if len(new_csv_file) > 300:
+            print(f"[CSVResultCollector] ⚠️ 文件路径过长，可能包含其他文本: {new_csv_file[:100]}...")
+            return None
+        
         if not self.merged_csv_path:
             print(f"[CSVResultCollector] 累积CSV文件路径为空，使用新文件作为初始文件: {new_csv_file}")
             self.merged_csv_path = new_csv_file
@@ -391,13 +480,16 @@ class CSVResultCollector:
         
         try:
             # 调用file_utils的merge_csv_by_key工具合并CSV文件
+            print(f"[CSVResultCollector] 🔗 准备合并CSV文件:")
+            print(f"[CSVResultCollector]   input_file1: {self.merged_csv_path}")
+            print(f"[CSVResultCollector]   input_file2: {new_csv_file}")
             result = await mcp_tool_async(
                 service_id=self.file_utils_service_id,
                 tool_name="merge_csv_by_key",
                 params={
                     "args": {
                         "input_file1": self.merged_csv_path,
-                        "input_file2": new_csv_file,
+                        "input_file2": new_csv_file,  # 已验证的有效路径
                         "key_column": None,  # 使用行索引合并（row-by-row）
                         "output_file": None  # 让服务自动生成
                     }
