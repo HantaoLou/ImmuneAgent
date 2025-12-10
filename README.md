@@ -1,7 +1,5 @@
 #ImmuneAgent for immunologists
 
-[Figure1-nbt.tif](https://github.com/user-attachments/files/24066723/Figure1-nbt.tif)
-
 
 ## Table of Contents
 
