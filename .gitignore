@@ -8,3 +8,9 @@ output/
 .ruff_cache/
 node_modules/
 dist/
+
+# Large model files
+*.pth.filepart
+**/pytorch_model.bin
+**/Models/**/*.pth
+**/Models/**/*.filepart
