@@ -1,0 +1,6 @@
+"combine_barcode","Heavy","Light","bind_output","bind_predict"
+"CELL_001-1","HEAVY_V2_1","LIGHT_V2_1","BIND_OUT_V2_1","negative"
+"CELL_002-1","HEAVY_V2_2","LIGHT_V2_2","BIND_OUT_V2_2","positive"
+"CELL_003-1","HEAVY_V2_3","LIGHT_V2_3","BIND_OUT_V2_3","negative"
+"CELL_004-1","HEAVY_V2_4","LIGHT_V2_4","BIND_OUT_V2_4","positive"
+"CELL_005-1","HEAVY_V2_5","LIGHT_V2_5","BIND_OUT_V2_5","positive"

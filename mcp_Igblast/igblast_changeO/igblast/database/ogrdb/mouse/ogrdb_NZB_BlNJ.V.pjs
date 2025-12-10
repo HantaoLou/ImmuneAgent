@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_NZB_BlNJ.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_NZB_BlNJ.V_prot",
+  "number-of-letters": 10557,
+  "number-of-sequences": 108,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 70134,
+  "bytes-to-cache": 11642,
+  "files": [
+    "ogrdb_NZB_BlNJ.V.pdb",
+    "ogrdb_NZB_BlNJ.V.phr",
+    "ogrdb_NZB_BlNJ.V.pin",
+    "ogrdb_NZB_BlNJ.V.pog",
+    "ogrdb_NZB_BlNJ.V.pos",
+    "ogrdb_NZB_BlNJ.V.pot",
+    "ogrdb_NZB_BlNJ.V.psq",
+    "ogrdb_NZB_BlNJ.V.ptf",
+    "ogrdb_NZB_BlNJ.V.pto"
+  ]
+}

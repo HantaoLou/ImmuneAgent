@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_PWD_PhJ.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_PWD_PhJ.V_prot",
+  "number-of-letters": 17942,
+  "number-of-sequences": 184,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 92931,
+  "bytes-to-cache": 19711,
+  "files": [
+    "ogrdb_PWD_PhJ.V.pdb",
+    "ogrdb_PWD_PhJ.V.phr",
+    "ogrdb_PWD_PhJ.V.pin",
+    "ogrdb_PWD_PhJ.V.pog",
+    "ogrdb_PWD_PhJ.V.pos",
+    "ogrdb_PWD_PhJ.V.pot",
+    "ogrdb_PWD_PhJ.V.psq",
+    "ogrdb_PWD_PhJ.V.ptf",
+    "ogrdb_PWD_PhJ.V.pto"
+  ]
+}

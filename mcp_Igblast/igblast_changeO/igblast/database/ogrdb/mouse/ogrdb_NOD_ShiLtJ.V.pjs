@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_NOD_ShiLtJ.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_NOD_ShiLtJ.V_prot",
+  "number-of-letters": 14577,
+  "number-of-sequences": 149,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 78057,
+  "bytes-to-cache": 16039,
+  "files": [
+    "ogrdb_NOD_ShiLtJ.V.pdb",
+    "ogrdb_NOD_ShiLtJ.V.phr",
+    "ogrdb_NOD_ShiLtJ.V.pin",
+    "ogrdb_NOD_ShiLtJ.V.pog",
+    "ogrdb_NOD_ShiLtJ.V.pos",
+    "ogrdb_NOD_ShiLtJ.V.pot",
+    "ogrdb_NOD_ShiLtJ.V.psq",
+    "ogrdb_NOD_ShiLtJ.V.ptf",
+    "ogrdb_NOD_ShiLtJ.V.pto"
+  ]
+}

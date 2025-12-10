@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_C57BL_6J.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_C57BL_6J.V_prot",
+  "number-of-letters": 9182,
+  "number-of-sequences": 94,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 67429,
+  "bytes-to-cache": 10141,
+  "files": [
+    "ogrdb_C57BL_6J.V.pdb",
+    "ogrdb_C57BL_6J.V.phr",
+    "ogrdb_C57BL_6J.V.pin",
+    "ogrdb_C57BL_6J.V.pog",
+    "ogrdb_C57BL_6J.V.pos",
+    "ogrdb_C57BL_6J.V.pot",
+    "ogrdb_C57BL_6J.V.psq",
+    "ogrdb_C57BL_6J.V.ptf",
+    "ogrdb_C57BL_6J.V.pto"
+  ]
+}

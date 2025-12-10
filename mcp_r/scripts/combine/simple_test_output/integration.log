@@ -1,0 +1,66 @@
+
+===============================================
+  一键整合BCR数据分析工具
+===============================================
+输入文件:
+  CSV:  /data_new/workspace/antibody_gen/mcp_r/scripts/combine/simple_test_output/test.csv 
+  RDS:  /data_new/workspace/antibody_gen/mcp_r/scripts/combine/simple_test_output/test.rds 
+输出文件:  /data_new/workspace/antibody_gen/mcp_r/scripts/combine/simple_test_output/output.rds 
+分隔符:  _ 
+===============================================
+
+[步骤 1/5] 读取CSV文件...
+CSV文件读取成功: 5 行, 4 列
+
+[步骤 2/5] 读取RDS文件...
+Seurat对象读取成功: 10 个细胞
+
+[步骤 3/5] 标准化CSV数据...
+将使用以下字段生成CSV的combine_barcode: barcode 
+CSV字段验证通过，将组合以下字段: barcode 
+CSV combine_barcode生成完成
+  总行数: 5 
+  唯一barcode数: 5 
+  重复率: 0 %
+  示例值: CELL_001-1 CELL_002-1 CELL_003-1 
+
+[步骤 4/5] 标准化RDS数据...
+将使用以下字段生成RDS的combine_barcode: rownames 
+RDS字段验证通过，将组合以下字段: rownames 
+RDS combine_barcode生成完成
+  总细胞数: 10 
+  唯一barcode数: 10 
+  重复率: 0 %
+  示例值: CELL_001-1 CELL_002-1 CELL_003-1 
+
+[步骤 5/5] 整合CSV和RDS数据...
+
+=== 开始整合数据 ===
+检测到的预测字段数量:
+  variant_seq: 0 
+  variant_name: 0 
+  bind_output: 0 
+  bind_predict: 1 
+  neu_output: 0 
+  neu_predict: 0 
+实际合并字段数: 3 
+执行数据整合（left_join）...
+
+整合完成!
+  原metadata列数: 4 
+  整合后列数: 7 
+  新增列数: 3 
+  成功匹配细胞数: 5 / 10 
+  匹配率: 50 %
+
+=== 保存结果 ===
+保存整合后的Seurat对象到: /data_new/workspace/antibody_gen/mcp_r/scripts/combine/simple_test_output/output.rds 
+
+===============================================
+  整合完成！
+===============================================
+输出文件: /data_new/workspace/antibody_gen/mcp_r/scripts/combine/simple_test_output/output.rds 
+最终metadata包含 7 个字段
+总细胞数: 10 
+===============================================
+

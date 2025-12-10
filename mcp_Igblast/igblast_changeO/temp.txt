@@ -1,0 +1,31 @@
+#######
+#汇总
+#######
+# conda activate gluon
+# cd /mnt/f/S1ide/IV/20/'Data Analyze_scRNA_v1(SARS)'
+
+
+# ##这一步很慢，慎运行
+# python /mnt/e/Anaconda/envs/gluon/Scripts/AssignGenes.py igblast \
+#     -s step_data/changeo/Tar.fasta -b igblast -o step_data/changeo/Tar_igblast.fmt7
+
+
+# #这一步速度还行
+# python /mnt/e/Anaconda/envs/gluon/Scripts/MakeDb.py igblast  \
+#     -s step_data/changeo/Tar.fasta -r igblast/human/vdj \
+#     -i step_data/changeo/Tar_igblast.fmt7 -o step_data/changeo/Tar_igblast_db-pass.tsv
+
+# #这一步也超级慢，慎运行
+# python /mnt/e/Anaconda/envs/gluon/Scripts/DefineClones.py   \
+#     -d step_data/changeo/Tar_igblast_db-pass.tsv --mode gene --act set\
+#     --model hh_s5f --dist 0.2  \
+#     --sf JUNCTION --norm len \
+#     -o step_data/changeo/Tar_igblast_db-pass_clone-pass.tsv
+
+# #速度非常快
+# python /mnt/e/Anaconda/envs/gluon/Scripts/CreateGermlines.py   \
+#     -d step_data/changeo/Tar_igblast_db-pass_clone-pass.tsv  -r igblast/human/vdj    \
+#     -g dmask --cloned  \
+#     -o step_data/changeo/Tar_igblast_db-pass_clone-pass_germ-pass.tsv
+
+# #多带个回车让最后一条命令也被执行

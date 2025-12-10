@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_MRL_MpJ.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_MRL_MpJ.V_prot",
+  "number-of-letters": 7353,
+  "number-of-sequences": 75,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 63795,
+  "bytes-to-cache": 8141,
+  "files": [
+    "ogrdb_MRL_MpJ.V.pdb",
+    "ogrdb_MRL_MpJ.V.phr",
+    "ogrdb_MRL_MpJ.V.pin",
+    "ogrdb_MRL_MpJ.V.pog",
+    "ogrdb_MRL_MpJ.V.pos",
+    "ogrdb_MRL_MpJ.V.pot",
+    "ogrdb_MRL_MpJ.V.psq",
+    "ogrdb_MRL_MpJ.V.ptf",
+    "ogrdb_MRL_MpJ.V.pto"
+  ]
+}

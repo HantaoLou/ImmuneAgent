@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_LEWES_EiJ.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_LEWES_EiJ.V_prot",
+  "number-of-letters": 16496,
+  "number-of-sequences": 169,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 81868,
+  "bytes-to-cache": 18130,
+  "files": [
+    "ogrdb_LEWES_EiJ.V.pdb",
+    "ogrdb_LEWES_EiJ.V.phr",
+    "ogrdb_LEWES_EiJ.V.pin",
+    "ogrdb_LEWES_EiJ.V.pog",
+    "ogrdb_LEWES_EiJ.V.pos",
+    "ogrdb_LEWES_EiJ.V.pot",
+    "ogrdb_LEWES_EiJ.V.psq",
+    "ogrdb_LEWES_EiJ.V.ptf",
+    "ogrdb_LEWES_EiJ.V.pto"
+  ]
+}

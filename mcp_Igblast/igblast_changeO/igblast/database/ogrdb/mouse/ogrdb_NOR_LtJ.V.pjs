@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_NOR_LtJ.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_NOR_LtJ.V_prot",
+  "number-of-letters": 8148,
+  "number-of-sequences": 83,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 65350,
+  "bytes-to-cache": 9008,
+  "files": [
+    "ogrdb_NOR_LtJ.V.pdb",
+    "ogrdb_NOR_LtJ.V.phr",
+    "ogrdb_NOR_LtJ.V.pin",
+    "ogrdb_NOR_LtJ.V.pog",
+    "ogrdb_NOR_LtJ.V.pos",
+    "ogrdb_NOR_LtJ.V.pot",
+    "ogrdb_NOR_LtJ.V.psq",
+    "ogrdb_NOR_LtJ.V.ptf",
+    "ogrdb_NOR_LtJ.V.pto"
+  ]
+}

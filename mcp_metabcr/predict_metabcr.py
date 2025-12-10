@@ -81,7 +81,7 @@ def get_synonym_dict(synonym_dict_pth=None):
                     synonym_dict[line[0]] = line[1]
     else:
         synonym_dict = {
-            'variant_seq': ["antigen_seq","variant_seq"],
+            'variant_seq': ["antigen_seq","variant_seq","variant"],
             'label': ["label","bind_value","neu_value","rbd"],
         }
     return synonym_dict

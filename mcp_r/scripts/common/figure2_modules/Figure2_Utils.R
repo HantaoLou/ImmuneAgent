@@ -237,9 +237,16 @@ initialize_figure2_environment <- function(input_rds_file, base_dir, figure_name
     stop(paste("Input file does not exist:", input_rds_file))
   }
   
-  # 检查基础目录是否存在
+  # 检查基础目录是否存在，不存在则创建
   if (!dir.exists(base_dir)) {
-    stop(paste("Base directory does not exist:", base_dir))
+    cat(paste("Base directory does not exist, creating:", base_dir, "\n"))
+    dir.create(base_dir, recursive = TRUE, showWarnings = FALSE)
+    
+    # 验证创建是否成功
+    if (!dir.exists(base_dir)) {
+      stop(paste("Failed to create base directory:", base_dir))
+    }
+    cat(paste("Base directory created successfully:", base_dir, "\n"))
   }
   
   # 创建输出目录（使用标准化路径）

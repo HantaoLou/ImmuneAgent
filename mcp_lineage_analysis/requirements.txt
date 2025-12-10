@@ -1,0 +1,23 @@
+# FLU MCP Server 依赖
+
+# MCP服务器框架
+fastmcp>=0.9.0
+mcp>=1.0.0
+
+# 数据处理
+pandas>=1.5.0
+numpy>=1.23.0
+openpyxl>=3.0.0
+
+# 其他工具
+pydantic>=2.0.0
+pathlib2>=2.3.0
+
+# R接口（可选，如果需要Python调用R）
+# rpy2>=3.5.0
+
+# 绘图（可选，如果需要绘图功能）
+# matplotlib>=3.5.0
+# seaborn>=0.12.0
+# logomaker>=0.8.0
+

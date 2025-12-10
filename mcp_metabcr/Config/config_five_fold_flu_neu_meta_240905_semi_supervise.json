@@ -1,0 +1,40 @@
+{
+    "train_mode": "flu-neu",
+    "model": "XBCR_ACNN",
+    "batch_sz": 32,
+    "device": "cuda",
+    "num_epochs": 100,
+    "lr": 0.00001,
+    "meta_update_iter": 5,
+    "unsup_loss_weight": 1,
+    "date_step": "0905-updt_itr=5-epoch=100-acc-w_unsup_loss=1",
+    "date": "240905-flu_neu",
+    "use_onehot": false,
+    "bert_name": "External/prot_bert",
+    "root_dir": "/home/jachin/data/Github/meta_bcr",
+    "pretrain_model_dir": "Models/240530-flu-neu",
+    "hiv_split_seed": 3,
+    "prop": [2, 2, 1, 1, 1.2],
+    "rand_seed": 2023,
+    "freeze_layer_count": 100,
+    "freeze_bert": true,
+    "saveaft": 5,
+    "print_step": 20,
+    "best_val_epoch": 125,
+    "regul_step": 100,
+    "regul_v": [0.02, 0.001],
+    "regul_tgt_dev_rat": 0.08,
+    "benchmark": "acc",
+    "fdir_train_1": "Data/20240902_flu_neu/20240902-abag_flu-neu_trainmeta_pos_fold{}_randomseed-3.xlsx",
+    "fdir_train_0": "Data/20240902_flu_neu/20240902-abag_flu-neu_trainmeta_neg_fold{}_randomseed-3.xlsx",
+    "fdir_train_nolabel": "Data/1025_all_merged_QIV_bcrs.xlsx",
+    "fdir_train_non_experiment_list": [
+      "Data/240618_nega_forflu_processed_data.xlsx",
+      "Data/240314_neg_data_for_flu.xlsx"],
+    "fdir_val_1": "Data/20240510_rbd_flu_hiv_train_data/20240510-abag_flu-neu_val_pos_fold{}_unique_randomseed-3.xlsx",
+    "fdir_val_0": "Data/20240510_rbd_flu_hiv_train_data/20240510-abag_flu-neu_val_neg_fold{}_unique_randomseed-3.xlsx",
+    "fdir_tst_dict": {
+      "TEST": "Data/20240902_flu_neu/20240904_flu_neut_benchmark_o_jiangsu.xlsx"
+    }
+  }
+  

@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_BALB_c_ByJ.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_BALB_c_ByJ.V_prot",
+  "number-of-letters": 9872,
+  "number-of-sequences": 101,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 68792,
+  "bytes-to-cache": 10902,
+  "files": [
+    "ogrdb_BALB_c_ByJ.V.pdb",
+    "ogrdb_BALB_c_ByJ.V.phr",
+    "ogrdb_BALB_c_ByJ.V.pin",
+    "ogrdb_BALB_c_ByJ.V.pog",
+    "ogrdb_BALB_c_ByJ.V.pos",
+    "ogrdb_BALB_c_ByJ.V.pot",
+    "ogrdb_BALB_c_ByJ.V.psq",
+    "ogrdb_BALB_c_ByJ.V.ptf",
+    "ogrdb_BALB_c_ByJ.V.pto"
+  ]
+}

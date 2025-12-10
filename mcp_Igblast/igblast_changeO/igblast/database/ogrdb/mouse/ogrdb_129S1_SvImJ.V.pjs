@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_129S1_SvImJ.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_129S1_SvImJ.V_prot",
+  "number-of-letters": 9181,
+  "number-of-sequences": 94,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 67436,
+  "bytes-to-cache": 10148,
+  "files": [
+    "ogrdb_129S1_SvImJ.V.pdb",
+    "ogrdb_129S1_SvImJ.V.phr",
+    "ogrdb_129S1_SvImJ.V.pin",
+    "ogrdb_129S1_SvImJ.V.pog",
+    "ogrdb_129S1_SvImJ.V.pos",
+    "ogrdb_129S1_SvImJ.V.pot",
+    "ogrdb_129S1_SvImJ.V.psq",
+    "ogrdb_129S1_SvImJ.V.ptf",
+    "ogrdb_129S1_SvImJ.V.pto"
+  ]
+}

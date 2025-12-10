@@ -1,0 +1,59 @@
+{
+    "tool_name": "metabcr",
+    "description": "MetaBCR antibody-antigen binding affinity prediction using deep learning models",
+    "category": "bioinformatics",
+    "function": "predict_antibody_antigen_binding_affinity",
+    "parameters": {
+        "input_file_path": {
+            "type": "string",
+            "description": "Input file path containing antibody sequences for binding affinity prediction",
+            "required": false,
+            "default": "Data/FLU_infer/test000012_flu_dataset.csv",
+            "tags": ["@file_path@", "@upload@"],
+            "file_formats": [".csv", ".xlsx", ".xls"],
+            "semantic_hints": ["antibody sequences", "BCR data", "immune repertoire"]
+        },
+        "output_file_path": {
+            "type": "string", 
+            "description": "Output directory path for prediction results",
+            "required": false,
+            "default": "output",
+            "tags": ["@file_path@", "@output_path@"],
+            "semantic_hints": ["save results", "output directory", "prediction output"]
+        }
+    },
+    "returns": {
+        "type": "string",
+        "description": "Path to the predicted binding affinities Excel file",
+        "format": ".xlsx",
+        "contains": ["binding_affinities", "antibody_names", "prediction_scores"]
+    },
+    "model_config": {
+        "antigen_name": "flu",
+        "task_name": "bind", 
+        "config_date": "250312",
+        "fold": 0,
+        "supported_antigens": ["flu", "rsv", "hiv", "sars"],
+        "supported_tasks": ["bind", "neu"]
+    },
+    "semantic_triggers": {
+        "keywords": [
+            "antibody binding", "antigen binding", "binding affinity",
+            "antibody-antigen interaction", "BCR binding", "immune binding",
+            "flu prediction", "influenza antibody", "RSV antibody"
+        ],
+        "context_patterns": [
+            "predict.*antibody.*binding",
+            "antibody.*affinity.*prediction",
+            "antigen.*interaction.*analysis",
+            "BCR.*binding.*prediction"
+        ]
+    },
+    "usage_examples": [
+        {
+            "description": "Predict flu antibody binding affinity",
+            "input_file": "antibody_sequences.csv",
+            "expected_output": "binding_affinity_results.xlsx"
+        }
+    ]
+}

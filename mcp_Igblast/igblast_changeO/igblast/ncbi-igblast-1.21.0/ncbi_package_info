@@ -1,0 +1,74 @@
+PACKAGE_NAME: igblast
+PACKAGE_VERSION: 1.21.0
+PACKAGE_SIGNATURE: GCC_730-ReleaseMT64--x86_64-unknown-linux3.10.0-gnu2.17-coremake11
+PACKAGE_CONFIG: Linux64-Centos : gcc : ./c++/compilers/unix/GCC.sh --with-static --without-dll --with-bin-release --with-strip --without-debug --without-pcre --with-mt --with-openmp --with-flat-makefile --with-vdb=/panfs/traces01.be-md.ncbi.nlm.nih.gov/trace_software/vdb --with-static-vdb --without-gnutls --without-gcrypt --with-nghttp2=/netopt/ncbi_tools64/nghttp2-1.40.0 --without-python --with-build-root-sfx=--Linux64-Centos-gcc --with-flat-makefile --with-ncbi-public --without-ccache --without-caution --without-runpath --without-makefile-auto-update --with-projects=scripts/projects/igblast/project.lst --with-internal
+
+>>>>>  igblastp
+
+igblastp: 1.21.0
+ Package: igblast 1.21.0, build Apr 12 2023 18:51:45
+ Package-Config:  Linux64-Centos : gcc : ./c++/compilers/unix/GCC.sh --with-static --without-dll --with-bin-release --with-strip --without-debug --without-pcre --with-mt --with-openmp --with-flat-makefile --with-vdb=/panfs/traces01.be-md.ncbi.nlm.nih.gov/trace_software/vdb --with-static-vdb --without-gnutls --without-gcrypt --with-nghttp2=/netopt/ncbi_tools64/nghttp2-1.40.0 --without-python --with-build-root-sfx=--Linux64-Centos-gcc --with-flat-makefile --with-ncbi-public --without-ccache --without-caution --without-runpath --without-makefile-auto-update --with-projects=scripts/projects/igblast/project.lst --with-internal
+ Build-Signature:  GCC_730-ReleaseMT64--x86_64-unknown-linux3.10.0-gnu2.17-coremake11
+ GI-64bit:  TRUE
+ Build-Date:  Apr 12 2023 19:20:43
+ Build-ID:  dabeb52d-2406-49e0-be3a-76df049f7de0
+ Revision:  665751
+ Subversion-Revision:  665751
+ Stable-Components-Version:  27
+ Production-Version:  20230304
+ Built-As:  igblastp
+
+
+
+>>>>>  igblastn
+
+igblastn: 1.21.0
+ Package: igblast 1.21.0, build Apr 12 2023 18:51:45
+ Package-Config:  Linux64-Centos : gcc : ./c++/compilers/unix/GCC.sh --with-static --without-dll --with-bin-release --with-strip --without-debug --without-pcre --with-mt --with-openmp --with-flat-makefile --with-vdb=/panfs/traces01.be-md.ncbi.nlm.nih.gov/trace_software/vdb --with-static-vdb --without-gnutls --without-gcrypt --with-nghttp2=/netopt/ncbi_tools64/nghttp2-1.40.0 --without-python --with-build-root-sfx=--Linux64-Centos-gcc --with-flat-makefile --with-ncbi-public --without-ccache --without-caution --without-runpath --without-makefile-auto-update --with-projects=scripts/projects/igblast/project.lst --with-internal
+ Build-Signature:  GCC_730-ReleaseMT64--x86_64-unknown-linux3.10.0-gnu2.17-coremake11
+ GI-64bit:  TRUE
+ Build-Date:  Apr 12 2023 19:20:38
+ Build-ID:  dabeb52d-2406-49e0-be3a-76df049f7de0
+ Revision:  665751
+ Subversion-Revision:  665751
+ Stable-Components-Version:  27
+ Production-Version:  20230304
+ Built-As:  igblastn
+
+
+
+>>>>>  makeblastdb
+
+makeblastdb: 2.14.0+
+ Package: igblast 1.21.0, build Apr 12 2023 18:51:45
+ Package-Config:  Linux64-Centos : gcc : ./c++/compilers/unix/GCC.sh --with-static --without-dll --with-bin-release --with-strip --without-debug --without-pcre --with-mt --with-openmp --with-flat-makefile --with-vdb=/panfs/traces01.be-md.ncbi.nlm.nih.gov/trace_software/vdb --with-static-vdb --without-gnutls --without-gcrypt --with-nghttp2=/netopt/ncbi_tools64/nghttp2-1.40.0 --without-python --with-build-root-sfx=--Linux64-Centos-gcc --with-flat-makefile --with-ncbi-public --without-ccache --without-caution --without-runpath --without-makefile-auto-update --with-projects=scripts/projects/igblast/project.lst --with-internal
+ Build-Signature:  GCC_730-ReleaseMT64--x86_64-unknown-linux3.10.0-gnu2.17-coremake11
+ GI-64bit:  TRUE
+ Build-Date:  Apr 12 2023 19:20:50
+ Build-ID:  dabeb52d-2406-49e0-be3a-76df049f7de0
+ Revision:  665751
+ Subversion-Revision:  665751
+ Stable-Components-Version:  27
+ Production-Version:  20230304
+ Built-As:  makeblastdb
+
+
+
+>>>>>  blastdbcmd
+
+blastdbcmd: 2.14.0+
+ Package: igblast 1.21.0, build Apr 12 2023 18:51:45
+ Package-Config:  Linux64-Centos : gcc : ./c++/compilers/unix/GCC.sh --with-static --without-dll --with-bin-release --with-strip --without-debug --without-pcre --with-mt --with-openmp --with-flat-makefile --with-vdb=/panfs/traces01.be-md.ncbi.nlm.nih.gov/trace_software/vdb --with-static-vdb --without-gnutls --without-gcrypt --with-nghttp2=/netopt/ncbi_tools64/nghttp2-1.40.0 --without-python --with-build-root-sfx=--Linux64-Centos-gcc --with-flat-makefile --with-ncbi-public --without-ccache --without-caution --without-runpath --without-makefile-auto-update --with-projects=scripts/projects/igblast/project.lst --with-internal
+ Build-Signature:  GCC_730-ReleaseMT64--x86_64-unknown-linux3.10.0-gnu2.17-coremake11
+ GI-64bit:  TRUE
+ Build-Date:  Apr 12 2023 19:23:27
+ Build-ID:  dabeb52d-2406-49e0-be3a-76df049f7de0
+ Revision:  665751
+ Subversion-Revision:  665751
+ Stable-Components-Version:  27
+ Production-Version:  20230304
+ Built-As:  blastdbcmd
+
+
+
+

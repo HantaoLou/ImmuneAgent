@@ -6,6 +6,7 @@
 library(Seurat)
 library(dplyr)
 library(readr)
+library(readxl)  # 用于读取Excel文件
 
 # 设置工作目录和文件路径
 # csv_file、rds_file和output_path应该作为参数传递给脚本
@@ -29,8 +30,31 @@ if (dir.exists(output_path)) {
   output_file <- output_path
 }
 
+# 检查输入文件类型，如果是Excel则转换为CSV
+file_ext <- tolower(tools::file_ext(csv_file))
+if (file_ext %in% c("xlsx", "xls")) {
+  cat("检测到Excel文件，开始转换为CSV...\n")
+  cat("Excel文件:", csv_file, "\n")
+  
+  # 读取Excel文件
+  excel_data <- read_excel(csv_file)
+  cat("Excel包含", nrow(excel_data), "行,", ncol(excel_data), "列\n")
+  
+  # 生成临时CSV文件名
+  csv_temp_file <- sub("\\.(xlsx|xls)$", "_temp.csv", csv_file)
+  
+  # 写入CSV
+  write.csv(excel_data, csv_temp_file, row.names = FALSE, fileEncoding = "UTF-8")
+  cat("已转换为CSV:", csv_temp_file, "\n")
+  
+  # 更新csv_file指向临时CSV文件
+  csv_file <- csv_temp_file
+  cat("将使用转换后的CSV文件继续处理\n\n")
+}
+
 # 读取CSV文件
-cat("读取CSV文件...\n")
+cat("读取CSV/Excel数据...\n")
+cat("文件路径:", csv_file, "\n")
 tryCatch({
   combine_barcode <- read_csv(csv_file, locale = locale(encoding = "UTF-8"))
   cat("CSV文件包含", nrow(combine_barcode), "行数据\n")
@@ -115,24 +139,133 @@ available_cols <- intersect(merge_cols, colnames(combine_barcode))
 cat("将合并以下", length(available_cols), "列:\n")
 print(available_cols)
 
-# 准备合并数据
-merge_data <- combine_barcode[, c("combine_barcode", available_cols)]
-
 # 获取当前metadata
 current_meta <- seurat_obj@meta.data
 
-# 检查并移除已存在的重复字段，避免产生.x和.y后缀
-existing_cols <- intersect(available_cols, colnames(current_meta))
-if (length(existing_cols) > 0) {
-  cat("检测到已存在的字段，将先移除以避免重复:\n")
-  print(existing_cols)
-  current_meta <- current_meta[, !colnames(current_meta) %in% existing_cols, drop = FALSE]
+###############################################################################
+#                    智能字段版本控制                                         #
+###############################################################################
+
+cat("\n=== 智能字段处理策略 ===\n")
+
+# 定义保护字段（已存在则跳过，不追加）
+protected_fields <- c("Heavy", "Light")
+
+# 定义可追加字段（支持版本控制，允许多版本共存）
+# 这些是预测相关的字段，可能会多次运行得到不同版本的结果
+versioned_field_patterns <- c(
+  "bind_output", "bind_predict",
+  "neu_output", "neu_predict",
+  "variant_seq", "variant_name"
+)
+
+# 分类处理字段
+fields_to_skip <- c()      # 需要跳过的字段
+fields_to_add <- c()       # 可以直接添加的字段（新字段）
+fields_to_version <- list() # 需要版本控制的字段（原名 -> 新名）
+
+for (field in available_cols) {
+  field_exists <- field %in% colnames(current_meta)
+  
+  if (field %in% protected_fields) {
+    # 保护字段逻辑
+    if (field_exists) {
+      cat("✓ [保护字段]", field, "已存在，跳过不覆盖\n")
+      fields_to_skip <- c(fields_to_skip, field)
+    } else {
+      cat("✓ [保护字段]", field, "不存在，使用原名添加\n")
+      fields_to_add <- c(fields_to_add, field)
+    }
+  } else {
+    # 检查是否为可追加字段（预测相关字段）
+    is_versioned <- any(sapply(versioned_field_patterns, function(pattern) {
+      grepl(paste0("^", pattern, "($|\\.|_)"), field)
+    }))
+    
+    if (is_versioned && field_exists) {
+      # 可追加字段且已存在，需要生成新版本名称
+      
+      # 查找该字段的所有现有版本
+      base_name <- field
+      existing_versions <- grep(paste0("^", base_name, "(\\.[0-9]+)?$"), 
+                               colnames(current_meta), value = TRUE)
+      
+      # 提取版本号
+      version_numbers <- sapply(existing_versions, function(v) {
+        if (v == base_name) return(0)
+        match <- regexec("\\.([0-9]+)$", v)
+        if (match[[1]][1] == -1) return(0)
+        as.integer(regmatches(v, match)[[1]][2])
+      })
+      
+      # 生成新版本号
+      next_version <- max(version_numbers) + 1
+      new_field_name <- paste0(base_name, ".", next_version)
+      
+      cat("✓ [版本字段]", field, "已存在，将添加为", new_field_name, "\n")
+      fields_to_version[[field]] <- new_field_name
+      
+    } else if (field_exists) {
+      # 其他字段已存在，跳过
+      cat("✓ [普通字段]", field, "已存在，跳过\n")
+      fields_to_skip <- c(fields_to_skip, field)
+    } else {
+      # 字段不存在，直接添加
+      cat("✓ [新字段]", field, "不存在，使用原名添加\n")
+      fields_to_add <- c(fields_to_add, field)
+    }
+  }
 }
 
-# 执行左连接，直接使用combine_barcode进行匹配
-cat("执行数据整合...\n")
-integrated_meta <- current_meta %>%
-  left_join(merge_data, by = c("combine_barcode" = "combine_barcode"))
+# 统计信息
+cat("\n=== 字段处理汇总 ===\n")
+cat("跳过字段数:", length(fields_to_skip), "\n")
+if (length(fields_to_skip) > 0) {
+  cat("  ", paste(fields_to_skip, collapse = ", "), "\n")
+}
+
+cat("直接添加字段数:", length(fields_to_add), "\n")
+if (length(fields_to_add) > 0) {
+  cat("  ", paste(fields_to_add, collapse = ", "), "\n")
+}
+
+cat("版本控制字段数:", length(fields_to_version), "\n")
+if (length(fields_to_version) > 0) {
+  for (old_name in names(fields_to_version)) {
+    cat("  ", old_name, "->", fields_to_version[[old_name]], "\n")
+  }
+}
+
+# 执行数据整合
+total_fields_to_merge <- length(fields_to_add) + length(fields_to_version)
+
+if (total_fields_to_merge > 0) {
+  cat("\n执行数据整合...\n")
+  
+  # 准备合并数据
+  fields_in_csv <- c(fields_to_add, names(fields_to_version))
+  merge_data <- combine_barcode[, c("combine_barcode", fields_in_csv)]
+  
+  # 重命名需要版本控制的字段
+  if (length(fields_to_version) > 0) {
+    for (old_name in names(fields_to_version)) {
+      new_name <- fields_to_version[[old_name]]
+      colnames(merge_data)[colnames(merge_data) == old_name] <- new_name
+    }
+  }
+  
+  # 执行左连接
+  integrated_meta <- current_meta %>%
+    left_join(merge_data, by = c("combine_barcode" = "combine_barcode"))
+  
+  # 更新available_cols为实际添加的字段名（包括重命名后的）
+  available_cols <- c(fields_to_add, unlist(fields_to_version))
+  
+} else {
+  cat("\n所有字段均已存在且为保护字段，跳过数据整合\n")
+  integrated_meta <- current_meta
+  available_cols <- c()
+}
 
 # 检查合并结果并处理缺失列
 if (length(available_cols) > 0) {

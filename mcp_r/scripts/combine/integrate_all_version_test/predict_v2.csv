@@ -1,0 +1,6 @@
+combine_barcode,Heavy,Light,bind_output,bind_predict
+CELL_001-1,HEAVY_V2_1,LIGHT_V2_1,0.85,negative
+CELL_002-1,HEAVY_V2_2,LIGHT_V2_2,0.6,positive
+CELL_003-1,HEAVY_V2_3,LIGHT_V2_3,0.95,positive
+CELL_004-1,HEAVY_V2_4,LIGHT_V2_4,0.5,negative
+CELL_005-1,HEAVY_V2_5,LIGHT_V2_5,0.7,positive

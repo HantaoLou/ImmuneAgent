@@ -8,9 +8,17 @@ import sys
 import csv
 import os
 import glob
+import tempfile
+import zipfile
+import tarfile
+import shutil
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel, Field
+import urllib.request
+from urllib.parse import urlparse
+from urllib.error import URLError, HTTPError
 
 # Configure logging to stderr to avoid interfering with MCP protocol
 logging.basicConfig(
@@ -22,6 +30,71 @@ logger = logging.getLogger(__name__)
 
 # 创建 MCP 服务器实例
 mcp = FastMCP("B Cell Analysis Server")
+
+def download_url_to_temp_file(url: str, default_ext: str = None) -> str:
+    """
+    下载 HTTP/HTTPS URL 到临时文件
+    
+    Args:
+        url: HTTP/HTTPS URL
+        default_ext: 默认文件扩展名（如果 URL 中没有扩展名）
+        
+    Returns:
+        临时文件路径
+        
+    Raises:
+        Exception: 如果下载失败
+    """
+    try:
+        # 从 URL 获取文件扩展名
+        parsed_url = urlparse(url)
+        url_path = parsed_url.path
+        # 获取文件扩展名
+        ext = os.path.splitext(url_path)[1]
+        if not ext and default_ext:
+            ext = default_ext
+        elif not ext:
+            ext = '.rds'
+        
+        # 创建临时文件
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+        temp_file_path = temp_file.name
+        temp_file.close()
+        
+        # 下载文件
+        urllib.request.urlretrieve(url, temp_file_path)
+        
+        return temp_file_path
+    except Exception as e:
+        raise Exception(f"Failed to download URL {url}: {str(e)}")
+
+# Pydantic参数模型定义
+class RunFigure2DegAnalysisArgs(BaseModel):
+    """Parameters for Figure 2 DEG analysis"""
+    flu_data_path: Optional[str] = Field(default=None, description="Flu data RDS path", json_schema_extra={"ui_type": "text"})
+    sars_data_path: Optional[str] = Field(default=None, description="SARS data RDS path", json_schema_extra={"ui_type": "text"})
+    rsv_data_path: Optional[str] = Field(default=None, description="RSV data RDS path", json_schema_extra={"ui_type": "text"})
+    flu_binding_threshold: float = Field(default=0.625, description="Flu binding threshold", json_schema_extra={"ui_type": "number", "min": 0.0, "max": 1.0})
+    sars_binding_threshold: float = Field(default=0.5, description="SARS binding threshold", json_schema_extra={"ui_type": "number", "min": 0.0, "max": 1.0})
+    rsv_binding_threshold: float = Field(default=1.0, description="RSV binding threshold", json_schema_extra={"ui_type": "number", "min": 0.0, "max": 2.0})
+    logfc_threshold: float = Field(default=0.0, description="LogFC threshold", json_schema_extra={"ui_type": "number"})
+    min_pct: float = Field(default=0.2, description="Min percentage", json_schema_extra={"ui_type": "number", "min": 0.01, "max": 1.0})
+    output_dir: str = Field(default="./output/Figure2", description="Output directory", json_schema_extra={"ui_type": "text"})
+
+class RunDataProcessingArgs(BaseModel):
+    """Parameters for data processing"""
+    data_path: str = Field(..., description="Data path", json_schema_extra={"ui_type": "text"})
+    output_dir: str = Field(default="./output", description="Output directory", json_schema_extra={"ui_type": "text"})
+
+class RunCustomAnalysisArgs(BaseModel):
+    """Parameters for custom analysis"""
+    data_path: str = Field(..., description="Data path", json_schema_extra={"ui_type": "text"})
+    analysis_type: str = Field(..., description="Analysis type", json_schema_extra={"ui_type": "text"})
+    output_dir: str = Field(default="./output", description="Output directory", json_schema_extra={"ui_type": "text"})
+
+class ReadCsvFileArgs(BaseModel):
+    """Parameters for reading CSV file"""
+    path: str = Field(..., description="CSV file path", json_schema_extra={"ui_type": "text"})
 
 def execute_r_script(r_script: str, output_dir: str) -> Dict[str, Any]:
     """Execute R script and return results"""
@@ -81,24 +154,14 @@ def execute_r_script(r_script: str, output_dir: str) -> Dict[str, Any]:
         raise RuntimeError("Rscript not found. Please install R and ensure Rscript is in PATH")
 
 @mcp.tool()
-def run_figure2_deg_analysis(
-    flu_data_path: Optional[str] = None,
-    sars_data_path: Optional[str] = None,
-    rsv_data_path: Optional[str] = None,
-    flu_binding_threshold: float = 0.625,
-    sars_binding_threshold: float = 0.5,
-    rsv_binding_threshold: float = 1.0,
-    logfc_threshold: float = 0.0,
-    min_pct: float = 0.2,
-    output_dir: str = "./output/Figure2"
-) -> Dict[str, Any]:
+def run_figure2_deg_analysis(args: RunFigure2DegAnalysisArgs) -> Dict[str, Any]:
     """
     Run Figure 2 DEG (Differential Gene Expression) analysis
     
     Args:
-        flu_data_path: Path to flu vaccination data RDS file
-        sars_data_path: Path to SARS-CoV-2 data RDS file  
-        rsv_data_path: Path to RSV data RDS file
+        flu_data_path: Path to flu vaccination data RDS file (支持本地路径或 HTTP/HTTPS URL)
+        sars_data_path: Path to SARS-CoV-2 data RDS file (支持本地路径或 HTTP/HTTPS URL)
+        rsv_data_path: Path to RSV data RDS file (支持本地路径或 HTTP/HTTPS URL)
         flu_binding_threshold: Threshold for flu binding classification (default: 0.625)
         sars_binding_threshold: Threshold for SARS-CoV-2 binding (default: 0.5)
         rsv_binding_threshold: Threshold for RSV binding (default: 1.0)
@@ -109,54 +172,80 @@ def run_figure2_deg_analysis(
     Returns:
         Analysis results and output file paths
     """
+    # 处理 URL 下载
+    temp_files = {}  # 存储需要清理的临时文件路径
+    actual_flu_path = None
+    actual_sars_path = None
+    actual_rsv_path = None
     
-    if not any([flu_data_path, sars_data_path, rsv_data_path]):
-        return {
-            "status": "error",
-            "message": "At least one data file path must be provided"
-        }
-    
-    # 导入校验函数
-    from .validate_rds import validate_rds_file
-    
-    # 校验输入的RDS文件
-    validation_results = {}
-    
-    if flu_data_path:
-        flu_validation = validate_rds_file(flu_data_path, flu_binding_threshold, output_dir)
-        validation_results["flu"] = flu_validation
-        if not flu_validation["valid"]:
+    try:
+        if not any([args.flu_data_path, args.sars_data_path, args.rsv_data_path]):
             return {
                 "status": "error",
-                "message": f"Flu数据验证失败: {flu_validation['message']}",
-                "validation_results": validation_results
+                "message": "At least one data file path must be provided"
             }
-    
-    if sars_data_path:
-        sars_validation = validate_rds_file(sars_data_path, sars_binding_threshold, output_dir)
-        validation_results["sars"] = sars_validation
-        if not sars_validation["valid"]:
-            return {
-                "status": "error",
-                "message": f"SARS数据验证失败: {sars_validation['message']}",
-                "validation_results": validation_results
-            }
-    
-    if rsv_data_path:
-        rsv_validation = validate_rds_file(rsv_data_path, rsv_binding_threshold, output_dir)
-        validation_results["rsv"] = rsv_validation
-        if not rsv_validation["valid"]:
-            return {
-                "status": "error",
-                "message": f"RSV数据验证失败: {rsv_validation['message']}",
-                "validation_results": validation_results
-            }
-    
-    # 生成时间戳后缀用于文件名区分
-    import datetime
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    r_script = f"""
+        if args.flu_data_path:
+            if args.flu_data_path.startswith(('http://', 'https://')):
+                actual_flu_path = download_url_to_temp_file(args.flu_data_path, '.rds')
+                temp_files['flu'] = actual_flu_path
+            else:
+                actual_flu_path = args.flu_data_path
+        
+        if args.sars_data_path:
+            if args.sars_data_path.startswith(('http://', 'https://')):
+                actual_sars_path = download_url_to_temp_file(args.sars_data_path, '.rds')
+                temp_files['sars'] = actual_sars_path
+            else:
+                actual_sars_path = args.sars_data_path
+        
+        if args.rsv_data_path:
+            if args.rsv_data_path.startswith(('http://', 'https://')):
+                actual_rsv_path = download_url_to_temp_file(args.rsv_data_path, '.rds')
+                temp_files['rsv'] = actual_rsv_path
+            else:
+                actual_rsv_path = args.rsv_data_path
+        
+        # 导入校验函数
+        from .validate_rds import validate_rds_file
+        
+        # 校验输入的RDS文件
+        validation_results = {}
+        
+        if actual_flu_path:
+            flu_validation = validate_rds_file(actual_flu_path, args.flu_binding_threshold, args.output_dir)
+            validation_results["flu"] = flu_validation
+            if not flu_validation["valid"]:
+                return {
+                    "status": "error",
+                    "message": f"Flu数据验证失败: {flu_validation['message']}",
+                    "validation_results": validation_results
+                }
+        
+        if actual_sars_path:
+            sars_validation = validate_rds_file(actual_sars_path, args.sars_binding_threshold, args.output_dir)
+            validation_results["sars"] = sars_validation
+            if not sars_validation["valid"]:
+                return {
+                    "status": "error",
+                    "message": f"SARS数据验证失败: {sars_validation['message']}",
+                    "validation_results": validation_results
+                }
+        
+        if actual_rsv_path:
+            rsv_validation = validate_rds_file(actual_rsv_path, args.rsv_binding_threshold, args.output_dir)
+            validation_results["rsv"] = rsv_validation
+            if not rsv_validation["valid"]:
+                return {
+                    "status": "error",
+                    "message": f"RSV数据验证失败: {rsv_validation['message']}",
+                    "validation_results": validation_results
+                }
+        
+        # 生成时间戳后缀用于文件名区分
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        r_script = f"""
 # Figure 2 Analysis - DEG Analysis
 rm(list = ls())
 options(stringsAsFactors = FALSE)
@@ -208,7 +297,7 @@ if (!requireNamespace("presto", quietly = TRUE)) {{
 }}
 
 # Create output directory
-output_dir <- "{output_dir}"
+output_dir <- "{args.output_dir}"
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 # 设置时间戳后缀用于文件名区分
@@ -218,9 +307,9 @@ tryCatch({{
     # Load data files
     data_files <- list()
     
-    {"data_files$flu <- readRDS('" + flu_data_path + "')" if flu_data_path else "# No flu data"}
-    {"data_files$sars <- readRDS('" + sars_data_path + "')" if sars_data_path else "# No SARS data"}
-    {"data_files$rsv <- readRDS('" + rsv_data_path + "')" if rsv_data_path else "# No RSV data"}
+    {"data_files$flu <- readRDS('" + actual_flu_path + "')" if actual_flu_path else "# No flu data"}
+    {"data_files$sars <- readRDS('" + actual_sars_path + "')" if actual_sars_path else "# No SARS data"}
+    {"data_files$rsv <- readRDS('" + actual_rsv_path + "')" if actual_rsv_path else "# No RSV data"}
     
     # 统一的预测字段检测函数
     detect_all_binding_columns <- function(metadata) {{
@@ -346,8 +435,8 @@ tryCatch({{
             obj,
             ident.1 = "broad",
             ident.2 = "specific",
-            logfc.threshold = {logfc_threshold},
-            min.pct = {min_pct},
+            logfc.threshold = {args.logfc_threshold},
+            min.pct = {args.min_pct},
             verbose = FALSE,
             test.use = "wilcox",  # 明确指定测试方法
             slot = "data"  # 明确指定使用data slot（兼容Seurat v4/v5）
@@ -463,16 +552,16 @@ tryCatch({{
     }}
     
     # 为每个数据集计算统一的预测平均值
-    {"if ('flu' %in% names(data_files)) { data_files$flu <- calculate_binding_average(data_files$flu, 'flu') }" if flu_data_path else ""}
-    {"if ('sars' %in% names(data_files)) { data_files$sars <- calculate_binding_average(data_files$sars, 'sars') }" if sars_data_path else ""}
-    {"if ('rsv' %in% names(data_files)) { data_files$rsv <- calculate_binding_average(data_files$rsv, 'rsv') }" if rsv_data_path else ""}
+    {"if ('flu' %in% names(data_files)) { data_files$flu <- calculate_binding_average(data_files$flu, 'flu') }" if actual_flu_path else ""}
+    {"if ('sars' %in% names(data_files)) { data_files$sars <- calculate_binding_average(data_files$sars, 'sars') }" if actual_sars_path else ""}
+    {"if ('rsv' %in% names(data_files)) { data_files$rsv <- calculate_binding_average(data_files$rsv, 'rsv') }" if actual_rsv_path else ""}
     
     # Run analysis for available datasets
     results <- list()
     
-    {"if ('flu' %in% names(data_files)) { results$flu <- perform_deg(data_files$flu, " + str(flu_binding_threshold) + ", 'flu') }" if flu_data_path else ""}
-    {"if ('sars' %in% names(data_files)) { results$sars <- perform_deg(data_files$sars, " + str(sars_binding_threshold) + ", 'sars') }" if sars_data_path else ""}
-    {"if ('rsv' %in% names(data_files)) { results$rsv <- perform_deg(data_files$rsv, " + str(rsv_binding_threshold) + ", 'rsv') }" if rsv_data_path else ""}
+    {"if ('flu' %in% names(data_files)) { results$flu <- perform_deg(data_files$flu, " + str(args.flu_binding_threshold) + ", 'flu') }" if actual_flu_path else ""}
+    {"if ('sars' %in% names(data_files)) { results$sars <- perform_deg(data_files$sars, " + str(args.sars_binding_threshold) + ", 'sars') }" if actual_sars_path else ""}
+    {"if ('rsv' %in% names(data_files)) { results$rsv <- perform_deg(data_files$rsv, " + str(args.rsv_binding_threshold) + ", 'rsv') }" if actual_rsv_path else ""}
     
     message("Figure 2 DEG analysis completed successfully!")
     
@@ -481,13 +570,22 @@ tryCatch({{
     quit(status = 1)
 }})
 """
-    
-    result = execute_r_script(r_script, output_dir)
-    
-    # 添加验证结果到返回值
-    result["validation_results"] = validation_results
-    
-    return result
+        
+        result = execute_r_script(r_script, args.output_dir)
+        
+        # 添加验证结果到返回值
+        result["validation_results"] = validation_results
+        
+        return result
+    finally:
+        # 清理临时文件
+        for temp_path in temp_files.values():
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                    logger.info(f"已清理临时文件: {temp_path}")
+                except Exception as e:
+                    logger.warning(f"清理临时文件失败 {temp_path}: {e}")
 
 @mcp.tool()
 def run_figure3_correlation_analysis(
@@ -505,46 +603,131 @@ def run_figure3_correlation_analysis(
         Analysis results and correlation statistics
     """
     
-    # 1. 检查输入目录是否存在
-    if not os.path.exists(figure2_results_dir):
-        return {
-            "status": "error",
-            "message": f"输入目录不存在: {figure2_results_dir}",
-            "output_files": []
-        }
+    # 处理 URL 下载（如果是目录的 zip 压缩包）
+    temp_dir_path = None
+    actual_figure2_results_dir = figure2_results_dir
     
-    # 2. 检查是否有足够的DEG文件（至少2个）
-    deg_files = glob.glob(os.path.join(figure2_results_dir, "*_DEG.csv"))
-    if len(deg_files) < 2:
-        return {
-            "status": "error",
-            "message": f"Need at least 2 DEG result files for correlation analysis. Found {len(deg_files)} files.",
-            "output_files": []
-        }
-    
-    # 3. 检查每个DEG文件是否包含avg_log2FC字段
-    for deg_file in deg_files:
-        try:
-            # 读取CSV文件的第一行来检查列名
-            with open(deg_file, 'r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                header = next(reader)  # 读取第一行（列名）
-                if 'avg_log2FC' not in header:
-                    return {
-                        "status": "error",
-                        "message": f"文件 {os.path.basename(deg_file)} 缺少必需的 'avg_log2FC' 字段",
-                        "output_files": []
-                    }
-        except Exception as e:
+    try:
+        # 如果 figure2_results_dir 是 URL，先下载并解压到临时目录
+        if figure2_results_dir.startswith(('http://', 'https://')):
+            try:
+                # 从 URL 路径检测压缩格式
+                parsed_url = urlparse(figure2_results_dir)
+                url_path = parsed_url.path.lower()
+                
+                # 检测文件扩展名
+                if url_path.endswith('.zip'):
+                    archive_format = 'zip'
+                    default_ext = '.zip'
+                elif url_path.endswith(('.tar.gz', '.tgz')):
+                    archive_format = 'tar.gz'
+                    default_ext = '.tar.gz'
+                elif url_path.endswith('.tar'):
+                    archive_format = 'tar'
+                    default_ext = '.tar'
+                else:
+                    # 默认尝试 zip 格式
+                    archive_format = 'zip'
+                    default_ext = '.zip'
+                
+                # 下载压缩文件到临时文件
+                temp_archive = download_url_to_temp_file(figure2_results_dir, default_ext)
+                
+                # 创建临时目录用于解压
+                temp_dir = tempfile.mkdtemp(prefix='dir_download_')
+                
+                # 根据格式解压文件
+                if archive_format == 'zip':
+                    with zipfile.ZipFile(temp_archive, 'r') as archive_ref:
+                        archive_ref.extractall(temp_dir)
+                elif archive_format in ('tar.gz', 'tgz'):
+                    with tarfile.open(temp_archive, 'r:gz') as archive_ref:
+                        archive_ref.extractall(temp_dir)
+                elif archive_format == 'tar':
+                    with tarfile.open(temp_archive, 'r') as archive_ref:
+                        archive_ref.extractall(temp_dir)
+                else:
+                    raise ValueError(f"Unsupported archive format: {archive_format}")
+                
+                # 清理临时压缩文件
+                try:
+                    os.unlink(temp_archive)
+                except:
+                    pass
+                
+                actual_figure2_results_dir = temp_dir
+                temp_dir_path = temp_dir
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "message": f"Failed to download and extract directory from URL {figure2_results_dir}: {str(e)}",
+                    "output_files": []
+                }
+        
+        # 1. 检查输入目录是否存在
+        if not os.path.exists(actual_figure2_results_dir):
+            # 清理临时目录
+            if temp_dir_path and os.path.exists(temp_dir_path):
+                try:
+                    shutil.rmtree(temp_dir_path)
+                except:
+                    pass
             return {
                 "status": "error",
-                "message": f"无法读取文件 {os.path.basename(deg_file)}: {str(e)}",
+                "message": f"输入目录不存在: {actual_figure2_results_dir}",
                 "output_files": []
             }
-    
-    logger.info(f"输入验证通过: 找到 {len(deg_files)} 个有效的DEG文件")
-    
-    r_script = f"""
+        
+        # 2. 检查是否有足够的DEG文件（至少2个）
+        deg_files = glob.glob(os.path.join(actual_figure2_results_dir, "*_DEG.csv"))
+        if len(deg_files) < 2:
+            # 清理临时目录
+            if temp_dir_path and os.path.exists(temp_dir_path):
+                try:
+                    shutil.rmtree(temp_dir_path)
+                except:
+                    pass
+            return {
+                "status": "error",
+                "message": f"Need at least 2 DEG result files for correlation analysis. Found {len(deg_files)} files.",
+                "output_files": []
+            }
+        
+        # 3. 检查每个DEG文件是否包含avg_log2FC字段
+        for deg_file in deg_files:
+            try:
+                # 读取CSV文件的第一行来检查列名
+                with open(deg_file, 'r', encoding='utf-8') as f:
+                    reader = csv.reader(f)
+                    header = next(reader)  # 读取第一行（列名）
+                    if 'avg_log2FC' not in header:
+                        # 清理临时目录
+                        if temp_dir_path and os.path.exists(temp_dir_path):
+                            try:
+                                shutil.rmtree(temp_dir_path)
+                            except:
+                                pass
+                        return {
+                            "status": "error",
+                            "message": f"文件 {os.path.basename(deg_file)} 缺少必需的 'avg_log2FC' 字段",
+                            "output_files": []
+                        }
+            except Exception as e:
+                # 清理临时目录
+                if temp_dir_path and os.path.exists(temp_dir_path):
+                    try:
+                        shutil.rmtree(temp_dir_path)
+                    except:
+                        pass
+                return {
+                    "status": "error",
+                    "message": f"无法读取文件 {os.path.basename(deg_file)}: {str(e)}",
+                    "output_files": []
+                }
+        
+        logger.info(f"输入验证通过: 找到 {len(deg_files)} 个有效的DEG文件")
+        
+        r_script = f"""
 # Figure 3 Analysis - Correlation Analysis
 rm(list = ls())
 options(stringsAsFactors = FALSE)
@@ -561,7 +744,7 @@ dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 tryCatch({{
     # Load DEG results from Figure 2
-    deg_files <- list.files("{figure2_results_dir}", pattern = "*_DEG.csv$", full.names = TRUE)
+    deg_files <- list.files("{actual_figure2_results_dir}", pattern = "*_DEG.csv$", full.names = TRUE)
     
     if (length(deg_files) > 0) {{
         deg_results <- list()
@@ -625,7 +808,7 @@ tryCatch({{
             message("Need at least 2 DEG result files for correlation analysis")
         }}
     }} else {{
-        message("No DEG result files found in {figure2_results_dir}")
+        message("No DEG result files found in {actual_figure2_results_dir}")
     }}
     
 }}, error = function(e) {{
@@ -633,8 +816,15 @@ tryCatch({{
     quit(status = 1)
 }})
 """
-    
-    return execute_r_script(r_script, output_dir)
+        
+        return execute_r_script(r_script, output_dir)
+    finally:
+        # 清理临时目录
+        if temp_dir_path and os.path.exists(temp_dir_path):
+            try:
+                shutil.rmtree(temp_dir_path)
+            except:
+                pass
 
 @mcp.tool()
 def run_figure4_trajectory_analysis(

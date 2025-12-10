@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_DBA_2J.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_DBA_2J.V_prot",
+  "number-of-letters": 10066,
+  "number-of-sequences": 103,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 69168,
+  "bytes-to-cache": 11106,
+  "files": [
+    "ogrdb_DBA_2J.V.pdb",
+    "ogrdb_DBA_2J.V.phr",
+    "ogrdb_DBA_2J.V.pin",
+    "ogrdb_DBA_2J.V.pog",
+    "ogrdb_DBA_2J.V.pos",
+    "ogrdb_DBA_2J.V.pot",
+    "ogrdb_DBA_2J.V.psq",
+    "ogrdb_DBA_2J.V.ptf",
+    "ogrdb_DBA_2J.V.pto"
+  ]
+}

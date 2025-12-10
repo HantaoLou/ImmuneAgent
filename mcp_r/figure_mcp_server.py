@@ -7,11 +7,71 @@ This server provides R analysis tools for Figure 2-5 RSV data analysis.
 import os
 import json
 import subprocess
+import tempfile
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel, Field
+import urllib.request
+from urllib.parse import urlparse
+from urllib.error import URLError, HTTPError
 
 # Create MCP server
 mcp = FastMCP("R Analysis Server")
+
+def download_url_to_temp_file(url: str) -> str:
+    """
+    下载 HTTP/HTTPS URL 到临时文件
+    
+    Args:
+        url: HTTP/HTTPS URL
+        
+    Returns:
+        临时文件路径
+        
+    Raises:
+        Exception: 如果下载失败
+    """
+    try:
+        # 从 URL 获取文件扩展名
+        parsed_url = urlparse(url)
+        url_path = parsed_url.path
+        # 获取文件扩展名，如果没有则使用 .rds 作为默认扩展名
+        ext = os.path.splitext(url_path)[1] or '.rds'
+        
+        # 创建临时文件
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+        temp_file_path = temp_file.name
+        temp_file.close()
+        
+        # 下载文件
+        urllib.request.urlretrieve(url, temp_file_path)
+        
+        return temp_file_path
+    except Exception as e:
+        raise Exception(f"Failed to download URL {url}: {str(e)}")
+
+
+# Pydantic参数模型定义
+class RunFigureAnalysisArgs(BaseModel):
+    """Parameters for figure analysis"""
+    input_file: str = Field(
+        ...,
+        description="Input RDS file path (支持本地路径或 HTTP/HTTPS URL)",
+        json_schema_extra={
+            "ui_type": "text",
+            "placeholder": "/data/seurat_object.rds or https://example.com/data.rds",
+            "help_text": "Path to input RDS file containing Seurat object with scRNA-seq data (支持本地路径或 HTTP/HTTPS URL)"
+        }
+    )
+    base_dir: str = Field(
+        ...,
+        description="Base output directory",
+        json_schema_extra={
+            "ui_type": "text",
+            "placeholder": "/output",
+            "help_text": "Base output directory path for analysis results"
+        }
+    )
 
 def run_r_script(figure_name: str, input_file: str, base_dir: str) -> str:
     """
@@ -19,24 +79,42 @@ def run_r_script(figure_name: str, input_file: str, base_dir: str) -> str:
     
     Args:
         figure_name: Analysis figure name (e.g., "Figure2_Common")
-        input_file: Input RDS file path containing Seurat object with scRNA-seq data
+        input_file: Input RDS file path containing Seurat object with scRNA-seq data (支持本地路径或 HTTP/HTTPS URL)
         base_dir: Base output directory path for analysis results
         
     Returns:
         Analysis execution result string with generated file paths
     """
-    # Check input file existence - 抛出异常而不是返回错误字符串
-    if not os.path.exists(input_file):
-        raise FileNotFoundError(f"Input file does not exist: {input_file}")
     
     working_dir = Path(__file__).parent
     base_dir = Path(base_dir)  # Convert to Path object
+    
+    # 如果输入是 URL，先下载到临时文件
+    temp_file_path = None
+    actual_input_file = input_file
+    
+    if input_file.startswith(('http://', 'https://')):
+        try:
+            temp_file_path = download_url_to_temp_file(input_file)
+            actual_input_file = temp_file_path
+        except Exception as e:
+            raise FileNotFoundError(f"Failed to download file from URL {input_file}: {str(e)}")
+    
+    # Check if actual input file exists
+    if not os.path.exists(actual_input_file):
+        return f"Error: Input file does not exist or is not accessible: {actual_input_file}"
     
     # R script path
     r_script_path = working_dir / "scripts/common" / f"{figure_name}.R"
     
     # Check R script existence - 抛出异常而不是返回错误字符串
     if not r_script_path.exists():
+        # 清理临时文件
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
         raise FileNotFoundError(f"R script does not exist: {r_script_path}")
     
     # Set timeout (Figure4 requires longer execution time)
@@ -45,8 +123,7 @@ def run_r_script(figure_name: str, input_file: str, base_dir: str) -> str:
     try:
         # Execute R script (R script handles configuration and directory creation)
         result = subprocess.run(
-            ["Rscript", str(r_script_path), input_file, base_dir],
-
+            ["Rscript", str(r_script_path), actual_input_file, str(base_dir)],
             cwd=str(working_dir),
             capture_output=True,
             text=True,
@@ -57,7 +134,8 @@ def run_r_script(figure_name: str, input_file: str, base_dir: str) -> str:
         
         # Check execution results - 抛出异常而不是返回错误字符串
         if result.returncode != 0:
-            raise RuntimeError(f"R script execution failed (return code: {result.returncode})\nError message: {result.stderr}")
+            error_msg = f"R script execution failed (return code: {result.returncode})\nError message: {result.stderr}"
+            raise RuntimeError(error_msg)
         
         # Collect generated files using precise paths from config
         output_dir = base_dir / figure_name
@@ -90,9 +168,16 @@ def run_r_script(figure_name: str, input_file: str, base_dir: str) -> str:
         return f"R script execution timeout (exceeded {timeout} seconds)"
     except Exception as e:
         return f"Error occurred during R script execution: {str(e)}"
+    finally:
+        # 清理临时文件
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
 
 @mcp.tool()
-def run_figure2_analysis(input_file: str, base_dir: str) -> str:
+def run_figure2_analysis(args: RunFigureAnalysisArgs) -> str:
     """Single-cell RNA-seq differential gene expression analysis and visualization
     
     Performs comprehensive differential expression analysis on single-cell B-cell data:
@@ -114,10 +199,10 @@ def run_figure2_analysis(input_file: str, base_dir: str) -> str:
     Returns:
         Analysis results summary with generated file list and statistical outcomes
     """
-    return run_r_script("Figure2_Common", input_file, base_dir)
+    return run_r_script("Figure2_Common", args.input_file, args.base_dir)
 
 @mcp.tool()
-def run_figure3_analysis(input_file: str, base_dir: str) -> str:
+def run_figure3_analysis(args: RunFigureAnalysisArgs) -> str:
     """Single-cell antigen binding prediction visualization and UMAP density analysis
     
     Generates comprehensive visualization of antigen binding predictions on single-cell data:
@@ -140,10 +225,10 @@ def run_figure3_analysis(input_file: str, base_dir: str) -> str:
     Returns:
         Visualization analysis results with generated plot file paths
     """
-    return run_r_script("Figure3_Common", input_file, base_dir)
+    return run_r_script("Figure3_Common", args.input_file, args.base_dir)
 
 @mcp.tool()
-def run_figure4_analysis(input_file: str, base_dir: str) -> str:
+def run_figure4_analysis(args: RunFigureAnalysisArgs) -> str:
     """Single-cell trajectory analysis and gene module scoring with pseudotime inference (computationally intensive)
     
     Performs comprehensive trajectory and temporal analysis on B-cell differentiation:
@@ -167,10 +252,10 @@ def run_figure4_analysis(input_file: str, base_dir: str) -> str:
     Returns:
         Trajectory analysis results with generated visualization files and module scores
     """
-    return run_r_script("Figure4_Common", input_file, base_dir)
+    return run_r_script("Figure4", args.input_file, args.base_dir)
 
 @mcp.tool()
-def run_figure5_analysis(input_file: str, base_dir: str) -> str:
+def run_figure5_analysis(args: RunFigureAnalysisArgs) -> str:
     """B-cell receptor isotype distribution and somatic hypermutation (SHM) rate analysis
     
     Performs comprehensive BCR repertoire analysis focusing on isotype switching and affinity maturation:
@@ -194,7 +279,7 @@ def run_figure5_analysis(input_file: str, base_dir: str) -> str:
     Returns:
         BCR repertoire analysis results with isotype and SHM statistical summaries
     """
-    return run_r_script("Figure5_Common", input_file, base_dir)
+    return run_r_script("Figure5_Common", args.input_file, args.base_dir)
 
 
 # Add lifecycle management

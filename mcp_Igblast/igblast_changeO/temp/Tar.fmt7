@@ -1,0 +1,21 @@
+# IGBLASTN
+# Query: SARSA1_AAACCTGCACGCCAGT-1_H
+# Database: igblast/database/imgt_human_ig_v igblast/database/imgt_human_ig_d igblast/database/imgt_human_ig_j igblast/database/imgt_human_ig_c
+# Domain classification requested: imgt
+# 0 hits found
+# IGBLASTN
+# Query: SARSA1_AAACCTGCATCGATTG-1_H
+# Database: igblast/database/imgt_human_ig_v igblast/database/imgt_human_ig_d igblast/database/imgt_human_ig_j igblast/database/imgt_human_ig_c
+# Domain classification requested: imgt
+# 0 hits found
+# IGBLASTN
+# Query: SARSA1_AAACCTGGTCAAAGCG-1_H
+# Database: igblast/database/imgt_human_ig_v igblast/database/imgt_human_ig_d igblast/database/imgt_human_ig_j igblast/database/imgt_human_ig_c
+# Domain classification requested: imgt
+# 0 hits found
+
+Total queries = 3
+Total identifiable CDR3 = 0
+Total unique clonotypes = 0
+
+# BLAST processed 3 queries

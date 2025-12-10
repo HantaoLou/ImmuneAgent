@@ -1,0 +1,51 @@
+Loading required package: SeuratObject
+Loading required package: sp
+
+Attaching package: ‘SeuratObject’
+
+The following objects are masked from ‘package:base’:
+
+    intersect, t
+
+
+Attaching package: ‘dplyr’
+
+The following objects are masked from ‘package:stats’:
+
+    filter, lag
+
+The following objects are masked from ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+检测到Excel文件，开始转换为CSV...
+Excel文件: /data_new/workspace/antibody_gen/mcp_r/data/test_results_000003_flu_dataset_bind_250312_fold0.xlsx 
+Excel包含 67283 行, 7 列
+已转换为CSV: /data_new/workspace/antibody_gen/mcp_r/data/test_results_000003_flu_dataset_bind_250312_fold0_temp.csv 
+将使用转换后的CSV文件继续处理
+
+读取CSV/Excel数据...
+文件路径: /data_new/workspace/antibody_gen/mcp_r/data/test_results_000003_flu_dataset_bind_250312_fold0_temp.csv 
+Rows: 67283 Columns: 7
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: ","
+chr (5): BarCode, Heavy, Light, experiment, variant_seq
+dbl (2): bind_output, bind_predict
+
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+CSV文件包含 67283 行数据
+CSV文件列名: BarCode, Heavy, Light, experiment, variant_seq, bind_output, bind_predict 
+读取RDS文件...
+文件路径: /data_new/workspace/antibody_gen/mcp_r/scripts/combine/excel_test_output/result_excel1.rds 
+文件是否存在: FALSE 
+RDS文件读取失败，错误信息: cannot open the connection 
+尝试使用不同的方法读取...
+Error in value[[3L]](cond) : 无法读取RDS文件: cannot open the connection
+Calls: tryCatch ... tryCatch -> tryCatchList -> tryCatchOne -> <Anonymous>
+In addition: Warning messages:
+1: In gzfile(file, "rb") :
+  cannot open compressed file '/data_new/workspace/antibody_gen/mcp_r/scripts/combine/excel_test_output/result_excel1.rds', probable reason 'No such file or directory'
+2: In readChar(con, 5L, useBytes = TRUE) :
+  cannot open compressed file '/data_new/workspace/antibody_gen/mcp_r/scripts/combine/excel_test_output/result_excel1.rds', probable reason 'No such file or directory'
+Execution halted

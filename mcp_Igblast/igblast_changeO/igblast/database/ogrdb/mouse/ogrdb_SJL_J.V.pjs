@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "ogrdb_SJL_J.V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "ogrdb_SJL_J.V_prot",
+  "number-of-letters": 6826,
+  "number-of-sequences": 70,
+  "last-updated": "2022-09-13T14:21:00",
+  "number-of-volumes": 1,
+  "bytes-total": 62785,
+  "bytes-to-cache": 7561,
+  "files": [
+    "ogrdb_SJL_J.V.pdb",
+    "ogrdb_SJL_J.V.phr",
+    "ogrdb_SJL_J.V.pin",
+    "ogrdb_SJL_J.V.pog",
+    "ogrdb_SJL_J.V.pos",
+    "ogrdb_SJL_J.V.pot",
+    "ogrdb_SJL_J.V.psq",
+    "ogrdb_SJL_J.V.ptf",
+    "ogrdb_SJL_J.V.pto"
+  ]
+}

@@ -183,9 +183,42 @@ if (!requireNamespace("monocle3", quietly = TRUE)) {
     }
     
     if (!root_cell_found) {
-      # 如果没有找到指定的细胞类型，手动选择
-      cds <- monocle3::order_cells(cds)
-      cat("警告: 未找到", root_celltype, "细胞类型，需要手动选择根细胞\n")
+      # 如果没有找到指定的细胞类型，尝试其他常见名称或使用第一个细胞
+      cat("警告: 未找到", root_celltype, "细胞类型，尝试查找备选细胞类型...\n")
+      
+      # 尝试常见的B细胞类型名称
+      alternative_names <- c("Naive", "naive", "Naive B", "naive B", "B_naive", "Bcell", "B cell")
+      
+      for (alt_name in alternative_names) {
+        if ("CellType" %in% colnames(sub@meta.data)) {
+          target_cells <- which(grepl(alt_name, sub$CellType, ignore.case = TRUE))
+          if (length(target_cells) > 0) {
+            root_cell <- colnames(sub)[target_cells[1]]
+            cds <- monocle3::order_cells(cds, root_cells = root_cell)
+            cat("使用备选细胞类型:", alt_name, "\n")
+            root_cell_found <- TRUE
+            break
+          }
+        }
+        
+        if ("combined_cluster" %in% colnames(sub@meta.data)) {
+          target_cells <- which(grepl(alt_name, sub$combined_cluster, ignore.case = TRUE))
+          if (length(target_cells) > 0) {
+            root_cell <- colnames(sub)[target_cells[1]]
+            cds <- monocle3::order_cells(cds, root_cells = root_cell)
+            cat("使用备选细胞类型:", alt_name, "\n")
+            root_cell_found <- TRUE
+            break
+          }
+        }
+      }
+      
+      # 如果仍然没有找到，使用第一个细胞作为根
+      if (!root_cell_found) {
+        root_cell <- colnames(sub)[1]
+        cds <- monocle3::order_cells(cds, root_cells = root_cell)
+        cat("使用默认根细胞（第一个细胞）:", root_cell, "\n")
+      }
     }
     
     # 绘制伪时间图

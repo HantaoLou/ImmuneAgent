@@ -1,0 +1,44 @@
+Loading required package: SeuratObject
+Loading required package: sp
+
+Attaching package: ‘SeuratObject’
+
+The following objects are masked from ‘package:base’:
+
+    intersect, t
+
+
+Attaching package: ‘dplyr’
+
+The following objects are masked from ‘package:stats’:
+
+    filter, lag
+
+The following objects are masked from ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+检测到Excel文件，开始转换为CSV...
+Excel文件: /data_new/workspace/antibody_gen/mcp_r/data/test_results_000002_flu_dataset_bind_250312_fold0.xlsx 
+Excel包含 67283 行, 7 列
+已转换为CSV: /data_new/workspace/antibody_gen/mcp_r/data/test_results_000002_flu_dataset_bind_250312_fold0_temp.csv 
+将使用转换后的CSV文件继续处理
+
+读取CSV/Excel数据...
+文件路径: /data_new/workspace/antibody_gen/mcp_r/data/test_results_000002_flu_dataset_bind_250312_fold0_temp.csv 
+Rows: 67283 Columns: 7
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: ","
+chr (5): BarCode, Heavy, Light, experiment, variant_seq
+dbl (2): bind_output, bind_predict
+
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+CSV文件包含 67283 行数据
+CSV文件列名: BarCode, Heavy, Light, experiment, variant_seq, bind_output, bind_predict 
+读取RDS文件...
+文件路径: /data_new/workspace/antibody_gen/mcp_r/data/Age_Bcells.rds 
+文件是否存在: TRUE 
+Seurat对象包含 71614 个细胞
+Error: 错误: Seurat对象的metadata中未找到combine_barcode字段
+Execution halted
