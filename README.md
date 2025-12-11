@@ -1,4 +1,4 @@
-# Antibody Generation and Immune Analysis System - English Documentation
+Agent system to tackle immunological challenges
 
 ## Table of Contents
 
