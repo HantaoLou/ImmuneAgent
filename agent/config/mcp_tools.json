@@ -1,0 +1,19 @@
+{
+    "mcp_tools": [
+        {
+            "name": "metabcr",
+            "description": "Metabcr is a tool for analyzing antibody-antigen interactions.",
+            "params": [
+                { "name": "antibody_file", "type": "file", "description": "The antibody file to be analyzed" },
+                { "name": "antigen_file", "type": "file", "description": "The antigen file to be analyzed" },
+                { "name": "output_file", "type": "file", "description": "The output file to be saved" }
+            ],
+            "return_type": "file",
+            "example": {
+                "antibody_file": "antibody.csv",
+                "antigen_file": "antigen.csv",
+                "output_file": "output.csv"
+            }
+        }
+    ]
+}
