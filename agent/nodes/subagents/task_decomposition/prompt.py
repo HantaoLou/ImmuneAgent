@@ -1,54 +1,54 @@
 """
-Task Decomposition Agent 提示词模块
+Task Decomposition Agent Prompt Module
 
-集中管理所有提示词模板，便于维护和修改。
-强调基于可用工具进行任务分解，确保任务的可执行性。
+Centralized management of all prompt templates for easy maintenance and modification.
+Emphasizes task decomposition based on available tools to ensure task executability.
 
-采用三阶段分解：
-0. 阶段0：粗分解（确定所需工具类型，不传工具列表）
-1. 阶段1：细分解（基于筛选工具进行详细任务分解和工具匹配）
-2. 阶段2：并行任务推断（基于细分解结果推断并行关系）
+Three-stage decomposition:
+0. Stage 0: Coarse decomposition (determine required tool types, without passing tool list)
+1. Stage 1: Fine decomposition (detailed task decomposition and tool matching based on filtered tools)
+2. Stage 2: Parallel task inference (infer parallel relationships based on fine decomposition results)
 """
 
 from typing import Optional, List, Dict, Any
 import json
 
-# ===================== 阶段0：粗分解 - 确定所需工具类型 =====================
+# ===================== Stage 0: Coarse Decomposition - Determine Required Tool Types =====================
 
-COARSE_DECOMPOSITION_SYSTEM_PROMPT = """你是一个专业的任务分析专家，隶属于一个科研类多智能体系统。
+COARSE_DECOMPOSITION_SYSTEM_PROMPT = """You are a professional task analysis expert, part of a research-oriented multi-agent system.
 
-# 你的职责
+# Your Responsibilities
 
-根据用户的任务描述和执行计划，分析任务所需的主要服务（service）。
-**注意：** 你不需要知道具体的工具列表，只需要根据任务需求确定需要哪些service_id。
+Analyze the main services (service) required for the task based on the user's task description and execution plan.
+**Note:** You don't need to know the specific tool list, only need to determine which service_ids are needed based on task requirements.
 
-# 特殊服务说明
+# Special Service Notes
 
-- **codeact服务**：当现有MCP工具无法支撑任务时，可以使用codeact服务。codeact是一个代码执行服务，用于编写和执行Python代码来完成复杂任务。如果任务需要：
-  - 复杂的自定义计算或算法
-  - 现有工具无法提供的特定功能
-  - 需要组合多个工具但无法通过现有工具链完成
-  - 需要处理特殊格式的数据或文件
+- **codeact service**: When existing MCP tools cannot support the task, you can use the codeact service. codeact is a code execution service for writing and executing Python code to complete complex tasks. If the task requires:
+  - Complex custom calculations or algorithms
+  - Specific functionality not provided by existing tools
+  - Combining multiple tools but cannot be completed through existing tool chains
+  - Processing special format data or files
   
-  可以考虑使用codeact服务。但优先使用现有的MCP服务，只有在确实无法匹配时才使用codeact。
+  You can consider using the codeact service. However, prioritize using existing MCP services, and only use codeact when it's truly impossible to match.
 
-# 输出格式规范
+# Output Format Specification
 
-你必须以JSON格式返回分析结果，包含以下字段：
+You must return the analysis results in JSON format, containing the following fields:
 
 {{
-  "required_service_ids": ["af3", "r_bcell", "bindcraft", ...],  // 所需service_id列表
-  "analysis_summary": "..."  // 简要说明为什么需要这些服务
+  "required_service_ids": ["af3", "r_bcell", "bindcraft", ...],  // List of required service_ids
+  "analysis_summary": "..."  // Brief explanation of why these services are needed
 }}
 
-# 输出要求
+# Output Requirements
 
-1. **只返回JSON对象**，不要包含任何其他文字或解释
-2. 确保JSON格式正确，所有字符串使用双引号
-3. service_id必须与提供的service_list中的service_id完全匹配
-4. 只选择任务真正需要的服务，不要选择过多
-5. 如果任务涉及多个阶段，考虑所有阶段需要的服务
-6. 优先使用现有的MCP服务，只有在确实无法匹配时才使用codeact"""
+1. **Return only JSON object**, do not include any other text or explanations
+2. Ensure JSON format is correct, all strings use double quotes
+3. service_id must exactly match the service_id in the provided service_list
+4. Only select services truly needed for the task, don't select too many
+5. If the task involves multiple stages, consider services needed for all stages
+6. Prioritize using existing MCP services, only use codeact when it's truly impossible to match"""
 
 
 def get_coarse_decomposition_user_prompt(
@@ -57,21 +57,21 @@ def get_coarse_decomposition_user_prompt(
     service_list: Optional[List[Dict[str, Any]]] = None
 ) -> str:
     """
-    生成粗分解的用户提示词
+    Generate user prompt for coarse decomposition
     
     Args:
-        user_input: 用户输入的任务描述
-        execution_plan: 用户提供的执行计划（如果有）
-        service_list: service列表（包含service_id和description）
+        user_input: User's task description
+        execution_plan: User-provided execution plan (if any)
+        service_list: Service list (containing service_id and description)
     
     Returns:
-        格式化的用户提示词
+        Formatted user prompt
     """
     plan_text = user_input
     if execution_plan:
-        plan_text = f"{user_input}\n\n**执行计划：**\n{execution_plan}"
+        plan_text = f"{user_input}\n\n**Execution Plan:**\n{execution_plan}"
     
-    # 格式化service列表
+    # Format service list
     service_info = ""
     if service_list:
         service_items = []
@@ -81,79 +81,79 @@ def get_coarse_decomposition_user_prompt(
             service_items.append(f"- {service_id}: {description}")
         service_info = "\n".join(service_items)
     else:
-        service_info = "（service列表未提供）"
+        service_info = "(Service list not provided)"
     
-    return f"""# 本次任务输入
+    return f"""# Current Task Input
 
-**任务描述：**
+**Task Description:**
 {plan_text}
 
-# 可用的服务列表
+# Available Service List
 
 {service_info}
 
-# 本次任务要求
+# Current Task Requirements
 
-请根据以上任务描述和执行计划，分析完成该任务需要哪些服务（service_id）。
+Please analyze which services (service_id) are needed to complete this task based on the above task description and execution plan.
 
-要求：
-1. 仔细分析任务的各个阶段和步骤
-2. 确定每个阶段需要的主要服务
-3. 只选择任务真正需要的服务，不要选择过多
-4. service_id必须与上述服务列表中的service_id完全匹配
-5. **优先使用现有的MCP服务**，只有在确实无法匹配到合适的MCP服务时，才使用codeact服务
+Requirements:
+1. Carefully analyze each stage and step of the task
+2. Determine the main services needed for each stage
+3. Only select services truly needed for the task, don't select too many
+4. service_id must exactly match the service_id in the above service list
+5. **Prioritize using existing MCP services**, only use codeact service when it's truly impossible to match a suitable MCP service
 
-请严格按照系统提示中的输出格式规范，返回JSON格式的分析结果。"""
+Please strictly follow the output format specification in the system prompt and return the analysis results in JSON format."""
 
 
-# ===================== 阶段1：细分解 - 任务分解和工具匹配 =====================
+# ===================== Stage 1: Fine Decomposition - Task Decomposition and Tool Matching =====================
 
-TASK_DECOMPOSITION_SYSTEM_PROMPT = """你是一个专业的任务分解专家，隶属于一个科研类多智能体系统。
+TASK_DECOMPOSITION_SYSTEM_PROMPT = """You are a professional task decomposition expert, part of a research-oriented multi-agent system.
 
-# 你的职责
+# Your Responsibilities
 
-将用户的执行计划分解为结构化的、序列化的任务列表。每个任务都必须匹配可用的执行工具，并明确任务之间的依赖关系。
+Decompose the user's execution plan into a structured, serialized task list. Each task must match available execution tools and clearly define dependencies between tasks.
 
-**重要：** 本阶段只关注任务分解、工具匹配和依赖关系识别，不需要考虑并行执行。
+**Important:** This stage only focuses on task decomposition, tool matching, and dependency identification, without considering parallel execution.
 
-# 核心原则
+# Core Principles
 
-1. **科学性**：
-   - 基于科学方法和最佳实践进行任务分解
-   - 确保分解后的任务符合科研工作流程
-   - 考虑任务之间的逻辑关系和数据流
+1. **Scientific Approach**:
+   - Decompose tasks based on scientific methods and best practices
+   - Ensure decomposed tasks conform to research workflows
+   - Consider logical relationships and data flow between tasks
 
-2. **可执行性**：
-   - 每个子任务都必须匹配可用的工具
-   - 如果某个步骤没有匹配的工具，可以使用codeact工具（代码执行工具）
-   - 优先使用精确匹配的MCP工具，其次考虑语义相似的工具，最后才使用codeact工具
+2. **Executability**:
+   - Each subtask must match available tools
+   - If a step has no matching tool, you can use the codeact tool (code execution tool)
+   - Prioritize using precisely matched MCP tools, then consider semantically similar tools, and finally use codeact tools
 
-3. **完整性**：
-   - 确保所有必要的步骤都被包含
-   - 不遗漏关键环节
-   - 考虑边界情况和异常处理
+3. **Completeness**:
+   - Ensure all necessary steps are included
+   - Don't miss critical links
+   - Consider edge cases and exception handling
 
-4. **依赖关系**：
-   - 明确识别任务之间的依赖关系
-   - 确保依赖关系准确反映数据流和执行顺序
+4. **Dependencies**:
+   - Clearly identify dependencies between tasks
+   - Ensure dependencies accurately reflect data flow and execution order
 
-# 工具提取规则
+# Tool Extraction Rules
 
-1. **工具匹配**：
-   - 对于每个任务步骤，使用工具注册表中的 description 字段进行语义匹配
-   - 分析任务需求与工具功能的匹配度
+1. **Tool Matching**:
+   - For each task step, use the description field in the tool registry for semantic matching
+   - Analyze the match between task requirements and tool functionality
 
-2. **可执行工具提取**：
-   - 如果工具的 "tool" 字段包含值：使用这些具体的工具字典（包含 tool_name 和 description）
-   - 如果工具的 "tool" 字段为空：使用工具的 "name" 字段作为 tool_name，description 字段作为工具描述
+2. **Executable Tool Extraction**:
+   - If the tool's "tool" field contains values: use these specific tool dictionaries (containing tool_name and description)
+   - If the tool's "tool" field is empty: use the tool's "name" field as tool_name, and the description field as tool description
 
-3. **工具去重**：
-   - 确保每个任务内的 tool_names 不重复
-   - 如果多个工具匹配同一个步骤，选择最合适的工具
+3. **Tool Deduplication**:
+   - Ensure tool_names within each task are not duplicated
+   - If multiple tools match the same step, select the most appropriate tool
 
-# 工具提取示例
+# Tool Extraction Example
 
-**工具注册表条目：**
+**Tool Registry Entry:**
 {{
   "name": "IgBlast",
   "description": "V(D)J analysis tool for analyzing antibody sequences",
@@ -169,11 +169,11 @@ TASK_DECOMPOSITION_SYSTEM_PROMPT = """你是一个专业的任务分解专家，
   ]
 }}
 
-**提取到任务结构：**
+**Extracted Task Structure:**
 {{
   "task_id": "task_001",
-  "name": "V(D)J序列分析",
-  "description": "使用IgBlast工具对V(D)J序列进行批量分析，提取CDR3区域信息",
+  "name": "V(D)J Sequence Analysis",
+  "description": "Use IgBlast tool to perform batch analysis of V(D)J sequences and extract CDR3 region information",
   "tools": [
     {{
       "tool_name": "analyze_vdj_batch",
@@ -184,8 +184,8 @@ TASK_DECOMPOSITION_SYSTEM_PROMPT = """你是一个专业的任务分解专家，
       "description": "Extracts CDR3 nucleotide and amino acid sequences from AIRR format data"
     }}
   ],
-  "inputs": ["AIRR格式序列文件", "参考基因组文件"],
-  "outputs": ["V(D)J分析结果", "CDR3序列文件"],
+  "inputs": ["AIRR format sequence file", "Reference genome file"],
+  "outputs": ["V(D)J analysis results", "CDR3 sequence file"],
   "parameters": {{
     "input_file": "sequences.airr",
     "reference_genome": "human_ig_reference.fasta"
@@ -193,37 +193,37 @@ TASK_DECOMPOSITION_SYSTEM_PROMPT = """你是一个专业的任务分解专家，
   "dependencies": []
 }}
 
-# 输出格式规范
+# Output Format Specification
 
-你必须以JSON格式返回任务分解结果，包含以下字段：
+You must return the task decomposition results in JSON format, containing the following fields:
 
-**任务字段说明：**
-- **task_id**: 唯一任务ID（格式：task_001, task_002...）
-- **name**: 任务名称（简洁明了）
-- **description**: 详细的任务描述，说明要执行什么分析，如果无匹配工具需说明
-- **tools**: 可执行工具列表，从工具注册表中提取（每个工具包含 tool_name 和 description）
-- **inputs**: 输入数据类型列表（根据工具描述和任务需求推断）
-- **outputs**: 输出结果类型列表（根据工具描述和任务需求推断）
-- **parameters**: 参数配置对象（根据工具的参数定义和任务上下文设置）
-- **dependencies**: 依赖的前置任务ID列表（必须准确反映任务之间的依赖关系）
+**Task Field Descriptions:**
+- **task_id**: Unique task ID (format: task_001, task_002...)
+- **name**: Task name (concise and clear)
+- **description**: Detailed task description, explaining what analysis to perform, and if no matching tool is available, explain this
+- **tools**: Executable tool list, extracted from tool registry (each tool contains tool_name and description)
+- **inputs**: Input data type list (inferred based on tool description and task requirements)
+- **outputs**: Output result type list (inferred based on tool description and task requirements)
+- **parameters**: Parameter configuration object (set based on tool parameter definitions and task context)
+- **dependencies**: List of prerequisite task IDs (must accurately reflect dependencies between tasks)
 
-**输出结构：**
+**Output Structure:**
 {{
-  "tasks": [...],  // 所有任务列表（按依赖关系排序，包含完整的依赖信息）
-  "decomposition_summary": "..."  // 任务分解的总体说明
+  "tasks": [...],  // All task list (sorted by dependencies, containing complete dependency information)
+  "decomposition_summary": "..."  // Overall description of task decomposition
 }}
 
-**注意：** 
-- 必须准确设置 dependencies 字段，反映任务之间的依赖关系
+**Note:** 
+- Must accurately set the dependencies field to reflect dependencies between tasks
 
-# 输出要求
+# Output Requirements
 
-1. **只返回JSON对象**，不要包含任何其他文字或解释
-2. 确保JSON格式正确，所有字符串使用双引号
-3. 任务ID必须是唯一的
-4. 每个任务的 tools 数组必须不包含重复的 tool_names
-5. 优先匹配可用的工具，如果某个步骤没有匹配的工具，在 description 中明确说明
-6. **依赖关系必须准确**，确保 dependencies 数组正确反映任务执行顺序"""
+1. **Return only JSON object**, do not include any other text or explanations
+2. Ensure JSON format is correct, all strings use double quotes
+3. Task IDs must be unique
+4. Each task's tools array must not contain duplicate tool_names
+5. Prioritize matching available tools, if a step has no matching tool, clearly state this in the description
+6. **Dependencies must be accurate**, ensure the dependencies array correctly reflects task execution order"""
 
 
 def get_task_decomposition_user_prompt(
@@ -232,34 +232,34 @@ def get_task_decomposition_user_prompt(
     available_tools: Optional[List[Dict[str, Any]]] = None
 ) -> str:
     """
-    生成第一阶段任务分解的用户提示词
+    Generate user prompt for Stage 1 task decomposition
     
-    只关注任务分解和工具匹配，不涉及并行关系。
+    Only focuses on task decomposition and tool matching, without involving parallel relationships.
     
     Args:
-        user_input: 用户输入的任务描述
-        execution_plan: 用户提供的执行计划（如果有）
-        available_tools: 可用的工具列表（MCP工具、Skills、持久化工具）
+        user_input: User's task description
+        execution_plan: User-provided execution plan (if any)
+        available_tools: Available tool list (MCP tools, Skills, persistent tools)
     
     Returns:
-        格式化的用户提示词
+        Formatted user prompt
     """
-    # 优化工具信息：限制数量和描述长度，减少输入长度
-    MAX_TOOLS = 50  # 最多传递50个工具
-    MAX_TOOL_DESCRIPTION_LENGTH = 200  # 每个工具描述最多200字符
+    # Optimize tool information: limit quantity and description length to reduce input length
+    MAX_TOOLS = 50  # Maximum 50 tools
+    MAX_TOOL_DESCRIPTION_LENGTH = 200  # Maximum 200 characters per tool description
     
     simplified_tools = []
     if available_tools and len(available_tools) > 0:
-        # 如果工具数量超过限制，只取前N个
+        # If tool count exceeds limit, only take first N
         tools_to_use = available_tools[:MAX_TOOLS] if len(available_tools) > MAX_TOOLS else available_tools
         
         for tool in tools_to_use:
             simplified_tool = {
                 "name": tool.get("name", ""),
-                "description": tool.get("description", "")[:MAX_TOOL_DESCRIPTION_LENGTH],  # 截断描述
+                "description": tool.get("description", "")[:MAX_TOOL_DESCRIPTION_LENGTH],  # Truncate description
                 "service": tool.get("service", "")
             }
-            # 只保留 tool 字段中的基本信息
+            # Only keep basic information from tool field
             if "tool" in tool and tool["tool"]:
                 if isinstance(tool["tool"], list) and len(tool["tool"]) > 0:
                     first_tool = tool["tool"][0]
@@ -269,131 +269,131 @@ def get_task_decomposition_user_prompt(
                     }]
             simplified_tools.append(simplified_tool)
     
-    # 格式化工具信息（使用更紧凑的格式）
+    # Format tool information (using more compact format)
     tools_info = ""
     if simplified_tools:
-        tools_info = json.dumps(simplified_tools, ensure_ascii=False, indent=1)  # 使用indent=1减少空格
+        tools_info = json.dumps(simplified_tools, ensure_ascii=False, indent=1)  # Use indent=1 to reduce spaces
         if len(available_tools) > MAX_TOOLS:
-            tools_info += f"\n\n注意：工具列表已截断，仅显示前 {MAX_TOOLS} 个工具（共 {len(available_tools)} 个）"
+            tools_info += f"\n\nNote: Tool list has been truncated, showing only the first {MAX_TOOLS} tools (out of {len(available_tools)} total)"
     else:
         tools_info = "[]"
     
-    # 构建计划信息
+    # Build plan information
     plan_text = user_input
     if execution_plan:
-        plan_text = f"{user_input}\n\n**执行计划：**\n{execution_plan}"
+        plan_text = f"{user_input}\n\n**Execution Plan:**\n{execution_plan}"
     
-    return f"""# 本次任务输入
+    return f"""# Current Task Input
 
-**实验计划：**
+**Experimental Plan:**
 {plan_text}
 
-**可用工具注册表：**
+**Available Tool Registry:**
 {tools_info}
 
-# 本次任务要求
+# Current Task Requirements
 
-请根据以上实验计划和可用工具注册表，执行第一阶段任务分解：
+Please perform Stage 1 task decomposition based on the above experimental plan and available tool registry:
 
-1. 将实验计划按实验阶段分解为详细、具体的步骤
-2. 对于每个步骤，从工具注册表中匹配最合适的工具
-3. 提取可执行工具（从工具的 "tool" 字段或 "name" 字段）
-4. 构建结构化任务，包含完整的任务信息（tools, inputs, outputs, parameters等）
-5. **识别并准确设置任务之间的依赖关系**（dependencies字段）
+1. Decompose the experimental plan into detailed, specific steps by experimental stage
+2. For each step, match the most suitable tool from the tool registry
+3. Extract executable tools (from the tool's "tool" field or "name" field)
+4. Build structured tasks, including complete task information (tools, inputs, outputs, parameters, etc.)
+5. **Identify and accurately set dependencies between tasks** (dependencies field)
 
-**重要：** 本阶段只需要返回序列化的任务列表和依赖关系，不需要考虑并行执行。
+**Important:** This stage only needs to return serialized task list and dependencies, without considering parallel execution.
 
-请严格按照系统提示中的输出格式规范，返回JSON格式的任务分解结果。"""
+Please strictly follow the output format specification in the system prompt and return the task decomposition results in JSON format."""
 
 
-# ===================== 第二阶段：并行任务推断 =====================
+# ===================== Stage 2: Parallel Task Inference =====================
 
-PARALLEL_INFERENCE_SYSTEM_PROMPT = """你是一个专业的任务并行化分析专家，隶属于一个科研类多智能体系统。
+PARALLEL_INFERENCE_SYSTEM_PROMPT = """You are a professional task parallelization analysis expert, part of a research-oriented multi-agent system.
 
-# 你的职责（第二阶段）
+# Your Responsibilities (Stage 2)
 
-基于第一阶段分解的序列化任务列表，分析哪些任务可以并行执行，并组织成并行任务组。
+Based on the serialized task list decomposed in Stage 1, analyze which tasks can be executed in parallel and organize them into parallel task groups.
 
-# 并行执行判断原则
+# Parallel Execution Judgment Principles
 
-1. **无依赖关系**：
-   - 两个任务之间没有依赖关系（即一个任务的 dependencies 中不包含另一个任务的 task_id）
-   - 两个任务不共享相同的输入数据（除非是只读共享）
+1. **No Dependencies**:
+   - Two tasks have no dependency relationship (i.e., one task's dependencies do not contain the other task's task_id)
+   - Two tasks do not share the same input data (unless it's read-only sharing)
 
-2. **数据独立性**：
-   - 任务之间没有数据竞争
-   - 一个任务的输出不是另一个任务的输入（除非是依赖关系）
+2. **Data Independence**:
+   - No data races between tasks
+   - One task's output is not another task's input (unless it's a dependency relationship)
 
-3. **资源独立性**：
-   - 任务使用的工具不冲突
-   - 任务可以同时执行而不相互干扰
+3. **Resource Independence**:
+   - Tools used by tasks do not conflict
+   - Tasks can execute simultaneously without interfering with each other
 
-4. **执行效率**：
-   - 将可以并行的任务组织成并行组，提高执行效率
-   - 保持合理的并行粒度，避免过度并行
+4. **Execution Efficiency**:
+   - Organize parallelizable tasks into parallel groups to improve execution efficiency
+   - Maintain reasonable parallel granularity, avoid excessive parallelism
 
-# 输出格式规范
+# Output Format Specification
 
-你必须以JSON格式返回并行任务组织结果：
+You must return the parallel task organization results in JSON format:
 
 {{
-  "tasks": [...],  // 需要串行执行的任务列表（有依赖关系的任务，保持原样）
+  "tasks": [...],  // Tasks that need serial execution (tasks with dependencies, keep as is)
   "parallel_task_groups": [
     {{
       "group_id": "group_1",
-      "tasks": [...]  // 可以并行执行的任务列表
+      "tasks": [...]  // List of tasks that can be executed in parallel
     }}
   ],
-  "parallel_inference_summary": "..."  // 并行推断的说明
+  "parallel_inference_summary": "..."  // Explanation of parallel inference
 }}
 
-**字段说明：**
-- **tasks**: 需要串行执行的任务（保持原样，包含 dependencies）
-- **parallel_task_groups**: 并行任务组列表，每个组内的任务可以同时执行
-- **parallel_inference_summary**: 说明哪些任务被组织为并行组，以及原因
+**Field Descriptions:**
+- **tasks**: Tasks that need serial execution (keep as is, including dependencies)
+- **parallel_task_groups**: List of parallel task groups, tasks within each group can execute simultaneously
+- **parallel_inference_summary**: Explain which tasks are organized into parallel groups and why
 
-**重要规则：**
-1. 如果任务有依赖关系，必须保持串行，不能放入并行组
-2. 并行组内的任务必须设置 parallel_group_id 为对应的 group_id
-3. 串行任务（在 tasks 数组中）的 parallel_group_id 为 null
-4. 不能破坏原有的依赖关系
+**Important Rules:**
+1. If tasks have dependencies, they must remain serial and cannot be placed in parallel groups
+2. Tasks within parallel groups must set parallel_group_id to the corresponding group_id
+3. Serial tasks (in the tasks array) have parallel_group_id as null
+4. Cannot break existing dependency relationships
 
-# 输出要求
+# Output Requirements
 
-1. **只返回JSON对象**，不要包含任何其他文字或解释
-2. 确保JSON格式正确，所有字符串使用双引号
-3. 不能修改任务的 dependencies 字段
-4. 不能将有依赖关系的任务放入同一个并行组"""
+1. **Return only JSON object**, do not include any other text or explanations
+2. Ensure JSON format is correct, all strings use double quotes
+3. Cannot modify the tasks' dependencies field
+4. Cannot place tasks with dependencies in the same parallel group"""
 
 
 def get_parallel_inference_user_prompt(
     tasks: List[Dict[str, Any]]
 ) -> str:
     """
-    生成第二阶段并行推断的用户提示词
+    Generate user prompt for Stage 2 parallel inference
     
-    基于第一阶段的任务列表，推断并行关系。
+    Infer parallel relationships based on Stage 1 task list.
     
     Args:
-        tasks: 第一阶段分解的任务列表（JSON格式）
+        tasks: Task list decomposed in Stage 1 (JSON format)
     
     Returns:
-        格式化的用户提示词
+        Formatted user prompt
     """
     tasks_json = json.dumps(tasks, ensure_ascii=False, indent=2)
     
-    return f"""# 第一阶段任务分解结果
+    return f"""# Stage 1 Task Decomposition Results
 
-**序列化任务列表：**
+**Serialized Task List:**
 {tasks_json}
 
-# 本次任务要求
+# Current Task Requirements
 
-请分析以上任务列表，识别哪些任务可以并行执行：
+Please analyze the above task list to identify which tasks can be executed in parallel:
 
-1. 检查任务之间的依赖关系（dependencies字段）
-2. 识别没有依赖关系的任务组
-3. 将这些任务组织成并行任务组
-4. 保持有依赖关系的任务在串行任务列表中
+1. Check dependencies between tasks (dependencies field)
+2. Identify task groups without dependencies
+3. Organize these tasks into parallel task groups
+4. Keep tasks with dependencies in the serial task list
 
-请严格按照系统提示中的输出格式规范，返回JSON格式的并行任务组织结果。"""
+Please strictly follow the output format specification in the system prompt and return the parallel task organization results in JSON format."""

@@ -1,10 +1,10 @@
 """
-CodeAct Revision 机制
+CodeAct Revision Mechanism
 
-参考 SE-Agent 的 Revision 机制，实现失败驱动的策略生成：
-1. 深度自我反思：分析失败原因，识别根本问题
-2. 正交策略生成：生成与失败路径不同的新策略
-3. 架构级改进：不仅修复错误，还改进整体方法
+Reference SE-Agent's Revision mechanism, implement failure-driven strategy generation:
+1. Deep self-reflection: Analyze failure causes, identify root problems
+2. Orthogonal strategy generation: Generate new strategies different from failure path
+3. Architecture-level improvement: Not only fix errors, but also improve overall approach
 """
 
 from typing import Dict, List, Any, Optional
@@ -17,29 +17,29 @@ from agent.utils.llm_factory import create_reasoning_advanced_llm, create_code_l
 
 
 class RevisionStrategy(str, Enum):
-    """Revision策略类型"""
-    CODE_FIX = "code_fix"  # 代码修复：修复语法错误、逻辑错误
-    PARAMETER_ADJUST = "parameter_adjust"  # 参数调整：修改参数值或类型
-    ARCHITECTURE_CHANGE = "architecture_change"  # 架构改进：改变整体实现方法
-    DEPENDENCY_RESOLVE = "dependency_resolve"  # 依赖解决：添加缺失的依赖或导入
-    ENVIRONMENT_FIX = "environment_fix"  # 环境修复：修复环境配置问题
+    """Revision strategy type"""
+    CODE_FIX = "code_fix"  # Code fix: Fix syntax errors, logic errors
+    PARAMETER_ADJUST = "parameter_adjust"  # Parameter adjustment: Modify parameter values or types
+    ARCHITECTURE_CHANGE = "architecture_change"  # Architecture improvement: Change overall implementation approach
+    DEPENDENCY_RESOLVE = "dependency_resolve"  # Dependency resolution: Add missing dependencies or imports
+    ENVIRONMENT_FIX = "environment_fix"  # Environment fix: Fix environment configuration issues
 
 
 class RevisionPlan(BaseModel):
-    """Revision计划"""
-    strategy: RevisionStrategy = Field(description="采用的策略")
-    root_cause: str = Field(description="根本原因分析")
-    action_items: List[str] = Field(default_factory=list, description="具体行动项")
-    expected_outcome: str = Field(description="预期结果")
-    confidence: float = Field(description="信心度（0-1）", ge=0.0, le=1.0)
-    orthogonal: bool = Field(default=False, description="是否与失败路径正交（采用不同方法）")
+    """Revision plan"""
+    strategy: RevisionStrategy = Field(description="Strategy to adopt")
+    root_cause: str = Field(description="Root cause analysis")
+    action_items: List[str] = Field(default_factory=list, description="Specific action items")
+    expected_outcome: str = Field(description="Expected outcome")
+    confidence: float = Field(description="Confidence (0-1)", ge=0.0, le=1.0)
+    orthogonal: bool = Field(default=False, description="Whether orthogonal to failure path (using different approach)")
 
 
 class RevisionAnalyzer:
     """
-    Revision分析器
+    Revision analyzer
     
-    负责分析失败轨迹，生成Revision计划。
+    Responsible for analyzing failed trajectories and generating Revision plans.
     """
     
     def __init__(self):
@@ -51,23 +51,23 @@ class RevisionAnalyzer:
         previous_trajectories: Optional[List[CodeTrajectory]] = None
     ) -> RevisionPlan:
         """
-        分析失败轨迹，生成Revision计划
+        Analyze failed trajectory and generate Revision plan
         
         Args:
-            failed_trajectory: 失败的轨迹
-            previous_trajectories: 之前的尝试轨迹（用于避免重复错误）
+            failed_trajectory: Failed trajectory
+            previous_trajectories: Previous attempt trajectories (to avoid repeating errors)
         
         Returns:
-            Revision计划
+            Revision plan
         """
         if not self.llm:
-            # LLM不可用，使用简单分析
+            # LLM unavailable, use simple analysis
             return self._analyze_failure_simple(failed_trajectory)
         
         try:
             return self._analyze_failure_with_llm(failed_trajectory, previous_trajectories or [])
         except Exception as e:
-            print(f"  ⚠ LLM分析失败: {e}，使用简单分析")
+            print(f"  ⚠ LLM analysis failed: {e}, using simple analysis")
             return self._analyze_failure_simple(failed_trajectory)
     
     def _analyze_failure_with_llm(
@@ -75,33 +75,33 @@ class RevisionAnalyzer:
         failed_trajectory: CodeTrajectory,
         previous_trajectories: List[CodeTrajectory]
     ) -> RevisionPlan:
-        """使用LLM进行深度分析"""
+        """Use LLM for deep analysis"""
         from langchain_core.messages import SystemMessage, HumanMessage
         
-        system_prompt = """你是一个代码执行失败分析专家。你的任务是深度分析代码执行失败的根本原因，并生成一个Revision计划来修复问题。
+        system_prompt = """You are a code execution failure analysis expert. Your task is to deeply analyze the root cause of code execution failures and generate a Revision plan to fix the problem.
 
-分析要求：
-1. **深度自我反思**：不要只看表面错误，要识别根本问题
-   - 是代码逻辑错误？参数问题？环境配置？依赖缺失？
-   - 错误是否可重现？是否有模式？
+Analysis Requirements:
+1. **Deep Self-Reflection**: Don't just look at surface errors, identify root problems
+   - Is it code logic error? Parameter issue? Environment configuration? Missing dependencies?
+   - Is the error reproducible? Are there patterns?
    
-2. **正交策略生成**：生成与失败路径不同的新策略
-   - 如果之前尝试了方法A，考虑方法B
-   - 避免重复相同的错误路径
+2. **Orthogonal Strategy Generation**: Generate new strategies different from failure path
+   - If method A was tried before, consider method B
+   - Avoid repeating the same error path
    
-3. **架构级改进**：不仅修复错误，还改进整体方法
-   - 考虑是否有更好的实现方式
-   - 是否可以通过改变架构来避免问题
+3. **Architecture-Level Improvement**: Not only fix errors, but also improve overall approach
+   - Consider if there's a better implementation way
+   - Can the problem be avoided by changing architecture
 
-输出格式：JSON格式的Revision计划，包含：
-- strategy: 策略类型（code_fix/parameter_adjust/architecture_change/dependency_resolve/environment_fix）
-- root_cause: 根本原因分析（详细说明）
-- action_items: 具体行动项列表（每项一个字符串）
-- expected_outcome: 预期结果描述
-- confidence: 信心度（0-1）
-- orthogonal: 是否与失败路径正交（true/false）"""
+Output Format: Revision plan in JSON format, containing:
+- strategy: Strategy type (code_fix/parameter_adjust/architecture_change/dependency_resolve/environment_fix)
+- root_cause: Root cause analysis (detailed explanation)
+- action_items: Specific action items list (each item a string)
+- expected_outcome: Expected outcome description
+- confidence: Confidence (0-1)
+- orthogonal: Whether orthogonal to failure path (true/false)"""
         
-        # 准备失败信息
+        # Prepare failure information
         error_info = {
             "error_type": failed_trajectory.error_type,
             "error_message": failed_trajectory.error_message,
@@ -111,9 +111,9 @@ class RevisionAnalyzer:
             "parameters": failed_trajectory.parameters
         }
         
-        # 准备之前的尝试信息
+        # Prepare previous attempt information
         previous_attempts = []
-        for prev_traj in previous_trajectories[-3:]:  # 只考虑最近3次尝试
+        for prev_traj in previous_trajectories[-3:]:  # Only consider last 3 attempts
             prev_info = {
                 "error_type": prev_traj.error_type,
                 "error_message": prev_traj.error_message[:200] if prev_traj.error_message else None,
@@ -121,15 +121,15 @@ class RevisionAnalyzer:
             }
             previous_attempts.append(prev_info)
         
-        user_prompt = f"""请分析以下代码执行失败，并生成Revision计划：
+        user_prompt = f"""Please analyze the following code execution failure and generate a Revision plan:
 
-失败信息：
+Failure Information:
 {json.dumps(error_info, ensure_ascii=False, indent=2)}
 
-之前的尝试（避免重复）：
-{json.dumps(previous_attempts, ensure_ascii=False, indent=2) if previous_attempts else "无"}
+Previous Attempts (avoid repetition):
+{json.dumps(previous_attempts, ensure_ascii=False, indent=2) if previous_attempts else "None"}
 
-请生成Revision计划（JSON格式）。"""
+Please generate Revision plan (JSON format)."""
         
         messages = [
             SystemMessage(content=system_prompt),
@@ -139,7 +139,7 @@ class RevisionAnalyzer:
         response = self.llm.invoke(messages)
         response_text = response.content.strip()
         
-        # 解析JSON响应
+        # Parse JSON response
         if response_text.startswith("```json"):
             response_text = response_text[7:]
         if response_text.startswith("```"):
@@ -150,48 +150,48 @@ class RevisionAnalyzer:
         
         plan_data = json.loads(response_text)
         
-        # 创建Revision计划
+        # Create Revision plan
         return RevisionPlan(
             strategy=RevisionStrategy(plan_data.get("strategy", "code_fix")),
-            root_cause=plan_data.get("root_cause", "未知原因"),
+            root_cause=plan_data.get("root_cause", "Unknown cause"),
             action_items=plan_data.get("action_items", []),
-            expected_outcome=plan_data.get("expected_outcome", "修复错误"),
+            expected_outcome=plan_data.get("expected_outcome", "Fix error"),
             confidence=float(plan_data.get("confidence", 0.5)),
             orthogonal=bool(plan_data.get("orthogonal", False))
         )
     
     def _analyze_failure_simple(self, failed_trajectory: CodeTrajectory) -> RevisionPlan:
-        """简单分析（LLM不可用时使用）"""
+        """Simple analysis (used when LLM unavailable)"""
         error_type = failed_trajectory.error_type or "Unknown"
         error_message = failed_trajectory.error_message or ""
         
-        # 基于错误类型推断策略
+        # Infer strategy based on error type
         if "SyntaxError" in error_type or "IndentationError" in error_type:
             strategy = RevisionStrategy.CODE_FIX
-            root_cause = "代码语法错误"
-            action_items = ["检查代码语法", "修复缩进问题", "验证代码结构"]
+            root_cause = "Code syntax error"
+            action_items = ["Check code syntax", "Fix indentation issues", "Verify code structure"]
         elif "NameError" in error_type or "ImportError" in error_type:
             strategy = RevisionStrategy.DEPENDENCY_RESOLVE
-            root_cause = "依赖或导入问题"
-            action_items = ["检查导入语句", "添加缺失的依赖", "验证模块路径"]
+            root_cause = "Dependency or import issue"
+            action_items = ["Check import statements", "Add missing dependencies", "Verify module paths"]
         elif "TypeError" in error_type or "ValueError" in error_type:
             strategy = RevisionStrategy.PARAMETER_ADJUST
-            root_cause = "参数类型或值错误"
-            action_items = ["检查参数类型", "验证参数值", "调整参数格式"]
+            root_cause = "Parameter type or value error"
+            action_items = ["Check parameter types", "Verify parameter values", "Adjust parameter format"]
         elif "AttributeError" in error_type:
             strategy = RevisionStrategy.CODE_FIX
-            root_cause = "对象属性访问错误"
-            action_items = ["检查对象类型", "验证属性存在性", "修复属性访问"]
+            root_cause = "Object attribute access error"
+            action_items = ["Check object type", "Verify attribute existence", "Fix attribute access"]
         else:
             strategy = RevisionStrategy.CODE_FIX
-            root_cause = f"执行错误: {error_type}"
-            action_items = ["检查代码逻辑", "添加错误处理", "验证执行环境"]
+            root_cause = f"Execution error: {error_type}"
+            action_items = ["Check code logic", "Add error handling", "Verify execution environment"]
         
         return RevisionPlan(
             strategy=strategy,
             root_cause=root_cause,
             action_items=action_items,
-            expected_outcome="修复错误并成功执行",
+            expected_outcome="Fix error and execute successfully",
             confidence=0.6,
             orthogonal=False
         )
@@ -199,9 +199,9 @@ class RevisionAnalyzer:
 
 class RevisionExecutor:
     """
-    Revision执行器
+    Revision executor
     
-    根据Revision计划，生成修复后的代码。
+    Generate fixed code based on Revision plan.
     """
     
     def __init__(self):
@@ -218,20 +218,20 @@ class RevisionExecutor:
         parameters: Dict[str, Any]
     ) -> str:
         """
-        根据Revision计划生成修复后的代码
+        Generate fixed code based on Revision plan
         
         Args:
-            revision_plan: Revision计划
-            original_code: 原始代码
-            original_error: 原始错误信息
-            task_description: 任务描述
-            parameters: 任务参数
+            revision_plan: Revision plan
+            original_code: Original code
+            original_error: Original error message
+            task_description: Task description
+            parameters: Task parameters
         
         Returns:
-            修复后的代码
+            Fixed code
         """
         if not self.llm:
-            # LLM不可用，使用简单修复
+            # LLM unavailable, use simple fix
             return self._generate_revision_code_simple(revision_plan, original_code, original_error)
         
         try:
@@ -239,7 +239,7 @@ class RevisionExecutor:
                 revision_plan, original_code, original_error, task_description, parameters
             )
         except Exception as e:
-            print(f"  ⚠ LLM生成修复代码失败: {e}，使用简单修复")
+            print(f"  ⚠ LLM failed to generate fix code: {e}, using simple fix")
             return self._generate_revision_code_simple(revision_plan, original_code, original_error)
     
     def _generate_revision_code_with_llm(
@@ -250,45 +250,45 @@ class RevisionExecutor:
         task_description: str,
         parameters: Dict[str, Any]
     ) -> str:
-        """使用LLM生成修复代码"""
+        """Use LLM to generate fix code"""
         from langchain_core.messages import SystemMessage, HumanMessage
         from agent.nodes.subagents.code_act.prompt import FIX_CODE_SYSTEM_PROMPT
         
-        # 根据策略选择不同的提示词
+        # Select different prompts based on strategy
         if revision_plan.strategy == RevisionStrategy.ARCHITECTURE_CHANGE:
-            system_prompt = """你是一个代码架构改进专家。你的任务是根据失败分析，采用完全不同的架构方法重新实现代码。
+            system_prompt = """You are a code architecture improvement expert. Your task is to re-implement code using a completely different architectural approach based on failure analysis.
 
-要求：
-1. **正交策略**：不要重复失败的方法，采用全新的实现思路
-2. **架构改进**：考虑更优雅、更健壮的实现方式
-3. **错误预防**：在代码中加入错误处理和验证
-4. **可维护性**：代码应该清晰、易读、易维护
+Requirements:
+1. **Orthogonal Strategy**: Don't repeat the failed method, adopt a completely new implementation approach
+2. **Architecture Improvement**: Consider more elegant, more robust implementation approaches
+3. **Error Prevention**: Add error handling and validation in code
+4. **Maintainability**: Code should be clear, readable, and maintainable
 
-生成完整的、可执行的代码。"""
+Generate complete, executable code."""
         else:
             system_prompt = FIX_CODE_SYSTEM_PROMPT
         
-        user_prompt = f"""根据以下Revision计划，生成修复后的代码：
+        user_prompt = f"""Based on the following Revision plan, generate fixed code:
 
-Revision计划：
-- 策略: {revision_plan.strategy.value}
-- 根本原因: {revision_plan.root_cause}
-- 行动项: {', '.join(revision_plan.action_items)}
-- 预期结果: {revision_plan.expected_outcome}
-- 正交策略: {'是' if revision_plan.orthogonal else '否'}
+Revision Plan:
+- Strategy: {revision_plan.strategy.value}
+- Root cause: {revision_plan.root_cause}
+- Action items: {', '.join(revision_plan.action_items)}
+- Expected outcome: {revision_plan.expected_outcome}
+- Orthogonal strategy: {'Yes' if revision_plan.orthogonal else 'No'}
 
-原始代码：
+Original Code:
 ```python
 {original_code}
 ```
 
-原始错误：
+Original Error:
 {original_error}
 
-任务描述: {task_description}
-参数: {json.dumps(parameters, ensure_ascii=False)}
+Task Description: {task_description}
+Parameters: {json.dumps(parameters, ensure_ascii=False)}
 
-请生成修复后的完整代码（确保可执行）。"""
+Please generate complete fixed code (ensure executable)."""
         
         messages = [
             SystemMessage(content=system_prompt),
@@ -298,7 +298,7 @@ Revision计划：
         response = self.llm.invoke(messages)
         code = response.content.strip()
         
-        # 移除markdown代码块标记
+        # Remove markdown code block markers
         if code.startswith("```python"):
             code = code[9:]
         elif code.startswith("```"):
@@ -315,17 +315,17 @@ Revision计划：
         original_code: str,
         original_error: str
     ) -> str:
-        """简单修复（LLM不可用时使用）"""
-        # 基本的错误处理包装
-        fixed_code = f"""# Revision修复: {revision_plan.root_cause}
-# 策略: {revision_plan.strategy.value}
-# 行动项: {', '.join(revision_plan.action_items)}
+        """Simple fix (used when LLM unavailable)"""
+        # Basic error handling wrapper
+        fixed_code = f"""# Revision fix: {revision_plan.root_cause}
+# Strategy: {revision_plan.strategy.value}
+# Action items: {', '.join(revision_plan.action_items)}
 
 try:
 {chr(10).join('    ' + line for line in original_code.split(chr(10)))}
-    result = {{"status": "success", "output": "执行成功"}}
+    result = {{"status": "success", "output": "Execution successful"}}
 except Exception as e:
-    # 错误处理
+    # Error handling
     result = {{
         "status": "failed",
         "error": str(e),
@@ -340,14 +340,14 @@ def create_revision_plan(
     previous_trajectories: Optional[List[CodeTrajectory]] = None
 ) -> RevisionPlan:
     """
-    创建Revision计划的便捷函数
+    Convenience function to create Revision plan
     
     Args:
-        failed_trajectory: 失败的轨迹
-        previous_trajectories: 之前的尝试轨迹
+        failed_trajectory: Failed trajectory
+        previous_trajectories: Previous attempt trajectories
     
     Returns:
-        Revision计划
+        Revision plan
     """
     analyzer = RevisionAnalyzer()
     return analyzer.analyze_failure(failed_trajectory, previous_trajectories)
@@ -361,17 +361,17 @@ def execute_revision_plan(
     parameters: Dict[str, Any]
 ) -> str:
     """
-    执行Revision计划的便捷函数
+    Convenience function to execute Revision plan
     
     Args:
-        revision_plan: Revision计划
-        original_code: 原始代码
-        original_error: 原始错误
-        task_description: 任务描述
-        parameters: 任务参数
+        revision_plan: Revision plan
+        original_code: Original code
+        original_error: Original error
+        task_description: Task description
+        parameters: Task parameters
     
     Returns:
-        修复后的代码
+        Fixed code
     """
     executor = RevisionExecutor()
     return executor.generate_revision_code(

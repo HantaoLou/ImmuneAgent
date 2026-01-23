@@ -1,11 +1,11 @@
 """
-CodeAct Agent 子图模块
+CodeAct Agent Subgraph Module
 
-负责代码生成和执行，包括：
-1. MCP工具调用代码生成
-2. 普通代码生成
-3. 代码修复（修复代码错误和参数错误）
-4. 代码执行和错误处理
+Responsible for code generation and execution, including:
+1. MCP tool call code generation
+2. General code generation
+3. Code fixing (fix code errors and parameter errors)
+4. Code execution and error handling
 """
 
 from .graph import (

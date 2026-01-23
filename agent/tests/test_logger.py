@@ -19,6 +19,44 @@ from datetime import datetime
 from collections import defaultdict
 
 
+def _safe_serialize_for_json(obj: Any) -> Any:
+    """
+    安全地将对象序列化为可 JSON 序列化的格式
+    
+    Args:
+        obj: 要序列化的对象
+        
+    Returns:
+        可序列化的对象
+    """
+    if obj is None:
+        return None
+    
+    # 如果是 Interrupt 对象（通常有 value 和 id 属性）
+    if hasattr(obj, 'value') and hasattr(obj, 'id'):
+        return {
+            "type": "Interrupt",
+            "id": str(getattr(obj, 'id', '')),
+            "value": _safe_serialize_for_json(getattr(obj, 'value', {}))
+        }
+    
+    # 如果是字典，递归处理
+    if isinstance(obj, dict):
+        return {k: _safe_serialize_for_json(v) for k, v in obj.items()}
+    
+    # 如果是列表，递归处理
+    if isinstance(obj, list):
+        return [_safe_serialize_for_json(item) for item in obj]
+    
+    # 如果是其他可序列化类型，尝试直接返回
+    try:
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError):
+        # 如果无法序列化，转换为字符串
+        return str(obj)
+
+
 class TestCaseLogger:
     """单个测试用例的日志记录器"""
     __test__ = False  # 告诉 pytest 这不是测试类
@@ -386,7 +424,9 @@ class GlobalTestLogger:
                     
                     f.write(f"**任务 {task_id}** - 类型: {req_type}\n\n")
                     f.write("```json\n")
-                    f.write(json.dumps(request, ensure_ascii=False, indent=2))
+                    # 安全序列化，确保可以 JSON 序列化
+                    safe_request = _safe_serialize_for_json(request)
+                    f.write(json.dumps(safe_request, ensure_ascii=False, indent=2))
                     f.write("\n```\n\n")
             
             if hitl_responses:
@@ -399,7 +439,9 @@ class GlobalTestLogger:
                     
                     f.write(f"**任务 {task_id}** - 类型: {resp_type}\n\n")
                     f.write("```json\n")
-                    f.write(json.dumps(response, ensure_ascii=False, indent=2))
+                    # 安全序列化，确保可以 JSON 序列化
+                    safe_response = _safe_serialize_for_json(response)
+                    f.write(json.dumps(safe_response, ensure_ascii=False, indent=2))
                     f.write("\n```\n\n")
             
             f.write("---\n\n")

@@ -1,36 +1,35 @@
 """
-Supervisor Agent 提示词模块
+Supervisor Agent Prompt Module
 
-集中管理所有提示词模板，便于维护和修改。
+Centralized management of all prompt templates for easy maintenance and modification.
 """
 
-# ===================== 任务分类提示词 =====================
+# ===================== Task Classification Prompts =====================
 
-TASK_CLASSIFICATION_SYSTEM_PROMPT = """你是一个任务分类助手。你的任务是根据用户的输入，判断任务属于以下三种类型中的哪一种：
+TASK_CLASSIFICATION_SYSTEM_PROMPT = """You are a task classification assistant. Your task is to classify user input into one of the following three types:
 
-1. 【普通问答】：用户提出的一般性问题、咨询、讨论等，不需要执行特定计划或涉及专业领域的任务。
+1. 【General Q&A】: General questions, consultations, discussions, etc. that do not require executing a specific plan or involve specialized domain tasks.
 
-2. 【执行给定计划】：用户明确提供了需要执行的计划、步骤或指令，或者要求按照某个预设的计划执行任务。
+2. 【Execute Given Plan】: The user has explicitly provided a plan, steps, or instructions to execute, or requests to execute tasks according to a preset plan.
 
-3. 【免疫学相关任务】：用户的任务与免疫学相关，涉及抗原、抗体、细胞、免疫系统、免疫反应、疫苗、免疫检测等免疫学领域的内容。
+3. 【Immunology-Related Task】: Tasks related to immunology, involving antigens, antibodies, cells, immune systems, immune responses, vaccines, immune detection, and other immunology domain content.
 
-请仔细分析用户输入，只返回任务类型对应的中文名称（必须完全匹配以下三种之一）：
-- "普通问答"
-- "执行给定计划"  
-- "免疫学相关任务"
+Please carefully analyze the user input and return only the task type name in English (must exactly match one of the following three):
+- "General Q&A"
+- "Execute Given Plan"
+- "Immunology-Related Task"
 
-只返回类型名称，不要返回其他任何内容。"""
+Return only the type name, do not return any other content."""
 
 
 def get_task_classification_user_prompt(user_input: str) -> str:
     """
-    生成任务分类的用户提示词
+    Generate user prompt for task classification
     
     Args:
-        user_input: 用户输入
+        user_input: User input
     
     Returns:
-        格式化的用户提示词
+        Formatted user prompt
     """
-    return f"用户输入：{user_input}\n\n请判断这个任务属于哪种类型："
-
+    return f"User input: {user_input}\n\nPlease classify this task into one of the types:"

@@ -1,47 +1,47 @@
 """
-CodeAct Agent 提示词模块
+CodeAct Agent Prompt Module
 
-集中管理所有代码生成相关的提示词模板。
+Centralized management of all code generation related prompt templates.
 """
 
 from typing import List, Dict, Any, Optional
 import json
 
 
-# ===================== MCP工具调用代码生成 =====================
+# ===================== MCP Tool Call Code Generation =====================
 
-MCP_TOOL_CODE_SYSTEM_PROMPT = """你是一个专业的Python代码生成专家，专门负责生成调用MCP（Model Context Protocol）工具的代码。
+MCP_TOOL_CODE_SYSTEM_PROMPT = """You are a professional Python code generation expert, specializing in generating code to call MCP (Model Context Protocol) tools.
 
-# 你的职责
+# Your Responsibilities
 
-根据提供的MCP工具信息和参数，生成正确调用该工具的Python代码。
+Based on the provided MCP tool information and parameters, generate Python code that correctly calls the tool.
 
-# 代码生成要求
+# Code Generation Requirements
 
-1. **代码必须可以直接执行**，使用提供的 `mcp_helper` 模块来调用MCP工具
-2. **使用提供的参数**，确保参数类型和格式正确
-3. **处理可能的错误**，添加适当的错误处理
-4. **代码应该简洁明了**，包含必要的注释
-5. **最后必须设置result变量**，包含执行结果
+1. **Code must be directly executable**, use the provided `mcp_helper` module to call MCP tools
+2. **Use the provided parameters**, ensure parameter types and formats are correct
+3. **Handle possible errors**, add appropriate error handling
+4. **Code should be concise and clear**, include necessary comments
+5. **Must set result variable at the end**, containing execution results
 
-# MCP工具调用方式
+# MCP Tool Call Method
 
-**重要：必须使用 `mcp_helper.invoke_mcp_tool_sync` 函数来调用MCP工具。**
+**Important: Must use `mcp_helper.invoke_mcp_tool_sync` function to call MCP tools.**
 
-标准调用模式：
+Standard call pattern:
 ```python
 from agent.utils.mcp_helper import invoke_mcp_tool_sync
 
-# 调用MCP工具
+# Call MCP tool
 tool_result = invoke_mcp_tool_sync(
-    tool_name="工具名称",
+    tool_name="tool_name",
     parameters={
-        "参数名1": "参数值1",
-        "参数名2": "参数值2"
+        "param1": "value1",
+        "param2": "value2"
     }
 )
 
-# 处理结果
+# Process result
 if tool_result["status"] == "success":
     result = {
         "status": "success",
@@ -54,21 +54,21 @@ else:
     }
 ```
 
-# 输出格式
+# Output Format
 
-你必须只返回可执行的Python代码，不要包含任何解释、markdown代码块标记或其他文字。
-代码应该：
-- 导入 `from agent.utils.mcp_helper import invoke_mcp_tool_sync`
-- 使用 `invoke_mcp_tool_sync` 调用MCP工具
-- 处理执行结果
-- 设置result变量（字典格式，包含status、output等字段）
+You must only return executable Python code, do not include any explanations, markdown code block markers, or other text.
+Code should:
+- Import `from agent.utils.mcp_helper import invoke_mcp_tool_sync`
+- Use `invoke_mcp_tool_sync` to call MCP tools
+- Process execution results
+- Set result variable (dictionary format, containing status, output, etc.)
 
-# 注意事项
+# Notes
 
-- **必须使用 `invoke_mcp_tool_sync` 函数，不要尝试直接导入 `mcp_client` 或其他不存在的模块**
-- 参数值应该直接使用提供的参数，不要修改
-- 如果参数中有文件路径，确保正确处理路径
-- `invoke_mcp_tool_sync` 返回的字典包含 `status`（"success"或"failed"）、`output`（执行结果）和 `error`（错误信息，如果有）
+- **Must use `invoke_mcp_tool_sync` function, do not try to directly import `mcp_client` or other non-existent modules**
+- Parameter values should directly use provided parameters, do not modify
+- If parameters contain file paths, ensure proper path handling
+- `invoke_mcp_tool_sync` returns a dictionary containing `status` ("success" or "failed"), `output` (execution result), and `error` (error message, if any)
 """
 
 
@@ -79,43 +79,43 @@ def get_mcp_tool_code_user_prompt(
     task_description: str
 ) -> str:
     """
-    生成MCP工具调用代码的用户提示词
+    Generate user prompt for MCP tool call code
     
     Args:
-        tool_name: 工具名称
-        tool_description: 工具描述
-        parameters: 工具参数
-        task_description: 任务描述
+        tool_name: Tool name
+        tool_description: Tool description
+        parameters: Tool parameters
+        task_description: Task description
     
     Returns:
-        用户提示词
+        User prompt
     """
     params_str = json.dumps(parameters, ensure_ascii=False, indent=2)
     
-    return f"""请生成调用以下MCP工具的Python代码：
+    return f"""Please generate Python code to call the following MCP tool:
 
-# 工具信息
-工具名称: {tool_name}
-工具描述: {tool_description}
+# Tool Information
+Tool name: {tool_name}
+Tool description: {tool_description}
 
-# 任务描述
+# Task Description
 {task_description}
 
-# 参数
+# Parameters
 {params_str}
 
-# 要求
-1. 使用 `from agent.utils.mcp_helper import invoke_mcp_tool_sync` 导入MCP工具调用函数
-2. 使用 `invoke_mcp_tool_sync(tool_name="{tool_name}", parameters=<参数字典>)` 调用工具
-3. 处理执行结果（检查 `tool_result["status"]`）
-4. 设置result变量，格式如下：
+# Requirements
+1. Use `from agent.utils.mcp_helper import invoke_mcp_tool_sync` to import MCP tool call function
+2. Use `invoke_mcp_tool_sync(tool_name="{tool_name}", parameters=<parameter_dict>)` to call the tool
+3. Process execution result (check `tool_result["status"]`)
+4. Set result variable in the following format:
    result = {{
-       "status": "success" 或 "failed",
-       "output": <执行结果>,
-       "error": <错误信息，如果有>
+       "status": "success" or "failed",
+       "output": <execution_result>,
+       "error": <error_message, if any>
    }}
 
-# 示例代码结构
+# Example Code Structure
 ```python
 from agent.utils.mcp_helper import invoke_mcp_tool_sync
 
@@ -130,39 +130,39 @@ else:
     result = {{"status": "failed", "error": tool_result["error"]}}
 ```
 
-只返回Python代码，不要包含任何解释或markdown代码块标记。"""
+Return only Python code, do not include any explanations or markdown code block markers."""
 
 
-# ===================== 普通代码生成 =====================
+# ===================== General Code Generation =====================
 
-CODEACT_SYSTEM_PROMPT = """你是一个专业的Python代码生成专家，专门负责根据任务描述生成可执行的Python代码。
+CODEACT_SYSTEM_PROMPT = """You are a professional Python code generation expert, specializing in generating executable Python code based on task descriptions.
 
-# 你的职责
+# Your Responsibilities
 
-根据用户的任务描述，生成完整、可执行的Python代码来完成该任务。
+Based on the user's task description, generate complete, executable Python code to complete the task.
 
-# 代码生成原则
+# Code Generation Principles
 
-1. **代码必须可以直接执行**，包含所有必要的导入和依赖
-2. **代码应该健壮**，包含适当的错误处理
-3. **代码应该清晰**，包含必要的注释
-4. **优先使用Python标准库**，如果必须使用第三方库，请使用常用的库（如pandas、numpy等）
-5. **最后必须设置result变量**，包含执行结果
+1. **Code must be directly executable**, include all necessary imports and dependencies
+2. **Code should be robust**, include appropriate error handling
+3. **Code should be clear**, include necessary comments
+4. **Prioritize Python standard library**, if third-party libraries are necessary, use common ones (such as pandas, numpy, etc.)
+5. **Must set result variable at the end**, containing execution results
 
-# 输出格式
+# Output Format
 
-你必须只返回可执行的Python代码，不要包含任何解释、markdown代码块标记或其他文字。
-代码应该：
-- 导入必要的库
-- 实现任务所需的功能
-- 处理可能的错误
-- 设置result变量（字典格式，包含status、output等字段）
+You must only return executable Python code, do not include any explanations, markdown code block markers, or other text.
+Code should:
+- Import necessary libraries
+- Implement functionality required by the task
+- Handle possible errors
+- Set result variable (dictionary format, containing status, output, etc.)
 
-# 注意事项
+# Notes
 
-- 如果任务涉及文件操作，确保正确处理文件路径和编码
-- 如果任务涉及数据处理，确保数据格式正确
-- 代码应该能够独立运行，不依赖外部状态
+- If task involves file operations, ensure proper file path and encoding handling
+- If task involves data processing, ensure data format is correct
+- Code should be able to run independently, not dependent on external state
 """
 
 
@@ -172,74 +172,74 @@ def get_codeact_user_prompt(
     outputs: Optional[List[str]] = None
 ) -> str:
     """
-    生成普通代码的用户提示词
+    Generate user prompt for general code
     
     Args:
-        task_description: 任务描述
-        inputs: 输入参数列表
-        outputs: 输出参数列表
+        task_description: Task description
+        inputs: Input parameter list
+        outputs: Output parameter list
     
     Returns:
-        用户提示词
+        User prompt
     """
-    prompt = f"""请生成完成以下任务的Python代码：
+    prompt = f"""Please generate Python code to complete the following task:
 
-# 任务描述
+# Task Description
 {task_description}
 """
     
     if inputs:
-        prompt += f"\n# 输入参数\n" + "\n".join([f"- {inp}" for inp in inputs])
+        prompt += f"\n# Input Parameters\n" + "\n".join([f"- {inp}" for inp in inputs])
     
     if outputs:
-        prompt += f"\n# 输出要求\n" + "\n".join([f"- {out}" for out in outputs])
+        prompt += f"\n# Output Requirements\n" + "\n".join([f"- {out}" for out in outputs])
     
     prompt += """
-# 要求
-1. 生成完整、可执行的Python代码
-2. 包含所有必要的导入
-3. 处理可能的错误
-4. 设置result变量，格式如下：
+# Requirements
+1. Generate complete, executable Python code
+2. Include all necessary imports
+3. Handle possible errors
+4. Set result variable in the following format:
    result = {
-       "status": "success" 或 "failed",
-       "output": <执行结果>,
-       "error": <错误信息，如果有>
+       "status": "success" or "failed",
+       "output": <execution_result>,
+       "error": <error_message, if any>
    }
 
-只返回Python代码，不要包含任何解释。"""
+Return only Python code, do not include any explanations."""
     
     return prompt
 
 
-# ===================== 代码修复 =====================
+# ===================== Code Fixing =====================
 
-FIX_CODE_SYSTEM_PROMPT = """你是一个专业的Python代码修复专家，专门负责修复代码中的错误。
+FIX_CODE_SYSTEM_PROMPT = """You are a professional Python code fixing expert, specializing in fixing errors in code.
 
-# 你的职责
+# Your Responsibilities
 
-根据提供的错误信息和原始代码，生成修复后的正确代码。
+Based on the provided error information and original code, generate corrected code after fixing.
 
-# 代码修复原则
+# Code Fixing Principles
 
-1. **保持代码的原有逻辑**，只修复错误部分
-2. **确保修复后的代码可以执行**，不会产生新的错误
-3. **添加必要的错误处理**，避免类似错误再次发生
-4. **代码应该清晰**，包含必要的注释
-5. **最后必须设置result变量**，包含执行结果
+1. **Maintain the original logic of the code**, only fix the error parts
+2. **Ensure fixed code can execute**, will not produce new errors
+3. **Add necessary error handling**, avoid similar errors from occurring again
+4. **Code should be clear**, include necessary comments
+5. **Must set result variable at the end**, containing execution results
 
-# 输出格式
+# Output Format
 
-你必须只返回修复后的Python代码，不要包含任何解释、markdown代码块标记或其他文字。
-代码应该：
-- 修复所有错误
-- 保持原有功能
-- 设置result变量（字典格式，包含status、output等字段）
+You must only return fixed Python code, do not include any explanations, markdown code block markers, or other text.
+Code should:
+- Fix all errors
+- Maintain original functionality
+- Set result variable (dictionary format, containing status, output, etc.)
 
-# 注意事项
+# Notes
 
-- 仔细分析错误原因，确保修复正确
-- 不要改变代码的核心逻辑
-- 如果错误是由于缺少依赖或配置，请在代码中处理
+- Carefully analyze error causes, ensure fixes are correct
+- Do not change the core logic of the code
+- If errors are due to missing dependencies or configuration, handle them in the code
 """
 
 
@@ -249,77 +249,77 @@ def get_fix_code_user_prompt(
     error_category: Optional[str] = None
 ) -> str:
     """
-    生成代码修复的用户提示词
+    Generate user prompt for code fixing
     
     Args:
-        previous_code: 之前的代码
-        previous_error: 之前的错误信息
-        error_category: 错误分类
+        previous_code: Previous code
+        previous_error: Previous error message
+        error_category: Error category
     
     Returns:
-        用户提示词
+        User prompt
     """
-    prompt = f"""请修复以下代码中的错误：
+    prompt = f"""Please fix the errors in the following code:
 
-# 原始代码
+# Original Code
 ```python
 {previous_code}
 ```
 
-# 错误信息
+# Error Message
 {previous_error}
 """
     
     if error_category:
-        prompt += f"\n# 错误分类\n{error_category}\n"
+        prompt += f"\n# Error Category\n{error_category}\n"
     
     prompt += """
-# 要求
-1. 修复代码中的所有错误
-2. 保持代码的原有功能和逻辑
-3. 确保修复后的代码可以正确执行
-4. 设置result变量，格式如下：
+# Requirements
+1. Fix all errors in the code
+2. Maintain the original functionality and logic of the code
+3. Ensure fixed code can execute correctly
+4. Set result variable in the following format:
    result = {
-       "status": "success" 或 "failed",
-       "output": <执行结果>,
-       "error": <错误信息，如果有>
+       "status": "success" or "failed",
+       "output": <execution_result>,
+       "error": <error_message, if any>
    }
 
-只返回修复后的Python代码，不要包含任何解释。"""
+Return only the fixed Python code, do not include any explanations."""
     
     return prompt
 
 
-# ===================== 参数修复 =====================
+# ===================== Parameter Fixing =====================
 
-FIX_PARAMETER_SYSTEM_PROMPT = """你是一个专业的Python代码修复专家，专门负责修复代码中的参数错误。
+FIX_PARAMETER_SYSTEM_PROMPT = """You are a professional Python code fixing expert, specializing in fixing parameter errors in code.
 
-# 你的职责
+# Your Responsibilities
 
-根据提供的错误信息和原始代码，修复参数相关的问题（如参数类型错误、参数值错误、缺少参数等）。
+Based on the provided error information and original code, fix parameter-related issues (such as parameter type errors, parameter value errors, missing parameters, etc.).
 
-# 参数修复原则
+# Parameter Fixing Principles
 
-1. **保持代码的原有逻辑**，只修复参数问题
-2. **确保修复后的代码可以执行**，参数类型和值都正确
-3. **添加必要的参数验证**，避免类似错误再次发生
-4. **代码应该清晰**，包含必要的注释
-5. **最后必须设置result变量**，包含执行结果
+1. **Maintain the original logic of the code**, only fix parameter issues
+2. **Ensure fixed code can execute**, parameter types and values are all correct
+3. **Add necessary parameter validation**, avoid similar errors from occurring again
+4. **Code should be clear**, include necessary comments
+5. **Must set result variable at the end**, containing execution results
 
-# 输出格式
+# Output Format
 
-你必须只返回修复后的Python代码，不要包含任何解释、markdown代码块标记或其他文字。
-代码应该：
-- 修复所有参数错误
-- 保持原有功能
-- 设置result变量（字典格式，包含status、output等字段）
+You must only return fixed Python code, do not include any explanations, markdown code block markers, or other text.
+Code should:
+- Fix all parameter errors
+- Maintain original functionality
+- Set result variable (dictionary format, containing status, output, etc.)
 
-# 注意事项
+# Notes
 
-- 仔细分析参数错误的原因，确保修复正确
-- 如果参数类型错误，进行适当的类型转换
-- 如果参数值错误，使用合理的默认值或修正值
-- 如果缺少参数，添加必要的参数
+- Carefully analyze the causes of parameter errors, ensure fixes are correct
+- If parameter type is wrong, perform appropriate type conversion
+- If parameter value is wrong, use reasonable default values or corrected values
+- If parameters are missing, add necessary parameters
 """
 
 
@@ -330,48 +330,48 @@ def get_fix_parameter_user_prompt(
     parameters: Optional[Dict[str, Any]] = None
 ) -> str:
     """
-    生成参数修复的用户提示词
+    Generate user prompt for parameter fixing
     
     Args:
-        previous_code: 之前的代码
-        previous_error: 之前的错误信息
-        error_category: 错误分类
-        parameters: 可用的参数（如果有）
+        previous_code: Previous code
+        previous_error: Previous error message
+        error_category: Error category
+        parameters: Available parameters (if any)
     
     Returns:
-        用户提示词
+        User prompt
     """
-    prompt = f"""请修复以下代码中的参数错误：
+    prompt = f"""Please fix the parameter errors in the following code:
 
-# 原始代码
+# Original Code
 ```python
 {previous_code}
 ```
 
-# 错误信息
+# Error Message
 {previous_error}
 """
     
     if error_category:
-        prompt += f"\n# 错误分类\n{error_category}\n"
+        prompt += f"\n# Error Category\n{error_category}\n"
     
     if parameters:
         params_str = json.dumps(parameters, ensure_ascii=False, indent=2)
-        prompt += f"\n# 可用参数\n{params_str}\n"
+        prompt += f"\n# Available Parameters\n{params_str}\n"
     
     prompt += """
-# 要求
-1. 修复代码中的所有参数错误
-2. 保持代码的原有功能和逻辑
-3. 确保修复后的代码可以正确执行，参数类型和值都正确
-4. 设置result变量，格式如下：
+# Requirements
+1. Fix all parameter errors in the code
+2. Maintain the original functionality and logic of the code
+3. Ensure fixed code can execute correctly, parameter types and values are all correct
+4. Set result variable in the following format:
    result = {
-       "status": "success" 或 "failed",
-       "output": <执行结果>,
-       "error": <错误信息，如果有>
+       "status": "success" or "failed",
+       "output": <execution_result>,
+       "error": <error_message, if any>
    }
 
-只返回修复后的Python代码，不要包含任何解释。"""
+Return only the fixed Python code, do not include any explanations."""
     
     return prompt
 

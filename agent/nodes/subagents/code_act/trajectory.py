@@ -1,7 +1,7 @@
 """
-CodeAct 轨迹记录系统
+CodeAct Trajectory Recording System
 
-参考 SE-Agent 的轨迹系统，实现代码生成和执行的轨迹记录、压缩和复用。
+Reference SE-Agent's trajectory system, implement trajectory recording, compression, and reuse for code generation and execution.
 """
 
 from typing import Dict, List, Any, Optional
@@ -15,77 +15,77 @@ import hashlib
 
 
 class TrajectoryStatus(str, Enum):
-    """轨迹状态"""
-    SUCCESS = "success"  # 执行成功
-    FAILED = "failed"  # 执行失败
-    PARTIAL = "partial"  # 部分成功
+    """Trajectory status"""
+    SUCCESS = "success"  # Execution successful
+    FAILED = "failed"  # Execution failed
+    PARTIAL = "partial"  # Partially successful
 
 
 class CodeTrajectory(BaseModel):
     """
-    代码轨迹模型
+    Code trajectory model
     
-    记录一次完整的代码生成和执行过程，包括：
-    - 代码生成信息
-    - 执行结果
-    - 错误信息（如果有）
-    - 性能指标
-    - 时间戳
+    Records a complete code generation and execution process, including:
+    - Code generation information
+    - Execution results
+    - Error information (if any)
+    - Performance metrics
+    - Timestamp
     """
-    # 基本信息
-    trajectory_id: str = Field(description="轨迹唯一ID（基于时间戳和内容哈希）")
-    task_id: str = Field(description="关联的任务ID")
-    execution_mode: str = Field(description="执行模式（mcp_tool/codeact/fix_code/fix_parameter）")
-    timestamp: datetime = Field(default_factory=datetime.now, description="轨迹创建时间")
+    # Basic information
+    trajectory_id: str = Field(description="Unique trajectory ID (based on timestamp and content hash)")
+    task_id: str = Field(description="Associated task ID")
+    execution_mode: str = Field(description="Execution mode (mcp_tool/codeact/fix_code/fix_parameter)")
+    timestamp: datetime = Field(default_factory=datetime.now, description="Trajectory creation time")
     
-    # 代码生成信息
-    generated_code: str = Field(description="生成的代码")
-    code_generation_prompt: Optional[str] = Field(default=None, description="代码生成提示词（可选，用于调试）")
-    code_generation_time: float = Field(default=0.0, description="代码生成耗时（秒）")
+    # Code generation information
+    generated_code: str = Field(description="Generated code")
+    code_generation_prompt: Optional[str] = Field(default=None, description="Code generation prompt (optional, for debugging)")
+    code_generation_time: float = Field(default=0.0, description="Code generation time (seconds)")
     
-    # 执行信息
-    execution_result: Optional[Dict[str, Any]] = Field(default=None, description="执行结果")
-    execution_time: float = Field(default=0.0, description="执行耗时（秒）")
-    status: TrajectoryStatus = Field(description="执行状态")
+    # Execution information
+    execution_result: Optional[Dict[str, Any]] = Field(default=None, description="Execution result")
+    execution_time: float = Field(default=0.0, description="Execution time (seconds)")
+    status: TrajectoryStatus = Field(description="Execution status")
     
-    # 错误信息（如果失败）
-    error_type: Optional[str] = Field(default=None, description="错误类型")
-    error_message: Optional[str] = Field(default=None, description="错误消息")
-    error_traceback: Optional[str] = Field(default=None, description="错误堆栈（完整）")
-    error_category: Optional[str] = Field(default=None, description="错误分类（code_error/parameter_error/system_error）")
+    # Error information (if failed)
+    error_type: Optional[str] = Field(default=None, description="Error type")
+    error_message: Optional[str] = Field(default=None, description="Error message")
+    error_traceback: Optional[str] = Field(default=None, description="Error stack trace (complete)")
+    error_category: Optional[str] = Field(default=None, description="Error category (code_error/parameter_error/system_error)")
     
-    # 性能指标
-    code_length: int = Field(default=0, description="代码长度（字符数）")
-    memory_usage: Optional[float] = Field(default=None, description="内存使用（MB，如果可测量）")
-    sandbox_used: bool = Field(default=False, description="是否使用沙盒环境")
+    # Performance metrics
+    code_length: int = Field(default=0, description="Code length (character count)")
+    memory_usage: Optional[float] = Field(default=None, description="Memory usage (MB, if measurable)")
+    sandbox_used: bool = Field(default=False, description="Whether sandbox environment was used")
     
-    # 上下文信息
-    parameters: Dict[str, Any] = Field(default_factory=dict, description="使用的参数")
-    tools: List[Dict[str, Any]] = Field(default_factory=list, description="使用的工具")
-    inputs: List[str] = Field(default_factory=list, description="输入参数列表")
+    # Context information
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameters used")
+    tools: List[Dict[str, Any]] = Field(default_factory=list, description="Tools used")
+    inputs: List[str] = Field(default_factory=list, description="Input parameter list")
     
-    # 元数据
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="其他元数据")
+    # Metadata
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Other metadata")
     
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典（用于序列化）"""
+        """Convert to dictionary (for serialization)"""
         data = self.model_dump()
-        # 将 datetime 转换为字符串
+        # Convert datetime to string
         if isinstance(data.get("timestamp"), datetime):
             data["timestamp"] = data["timestamp"].isoformat()
         return data
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CodeTrajectory":
-        """从字典创建（用于反序列化）"""
-        # 将字符串转换为 datetime
+        """Create from dictionary (for deserialization)"""
+        # Convert string to datetime
         if isinstance(data.get("timestamp"), str):
             data["timestamp"] = datetime.fromisoformat(data["timestamp"])
         return cls(**data)
     
     def get_hash(self) -> str:
-        """获取轨迹的哈希值（用于去重和比较）"""
-        # 基于关键信息生成哈希
+        """Get trajectory hash value (for deduplication and comparison)"""
+        # Generate hash based on key information
         key_info = {
             "code": self.generated_code,
             "parameters": self.parameters,
@@ -96,33 +96,33 @@ class CodeTrajectory(BaseModel):
     
     def is_similar_to(self, other: "CodeTrajectory", threshold: float = 0.8) -> bool:
         """
-        判断两个轨迹是否相似
+        Determine if two trajectories are similar
         
         Args:
-            other: 另一个轨迹
-            threshold: 相似度阈值（0-1）
+            other: Another trajectory
+            threshold: Similarity threshold (0-1)
         
         Returns:
-            是否相似
+            Whether similar
         """
-        # 简单的相似度判断：基于代码和参数的相似度
+        # Simple similarity judgment: based on code and parameter similarity
         if self.execution_mode != other.execution_mode:
             return False
         
-        # 代码相似度（简单的字符串比较）
+        # Code similarity (simple string comparison)
         code_similarity = self._calculate_similarity(self.generated_code, other.generated_code)
         
-        # 参数相似度
+        # Parameter similarity
         param_similarity = self._calculate_dict_similarity(self.parameters, other.parameters)
         
-        # 综合相似度
+        # Overall similarity
         overall_similarity = (code_similarity * 0.7 + param_similarity * 0.3)
         
         return overall_similarity >= threshold
     
     @staticmethod
     def _calculate_similarity(str1: str, str2: str) -> float:
-        """计算两个字符串的相似度（简单的Jaccard相似度）"""
+        """Calculate similarity between two strings (simple Jaccard similarity)"""
         if not str1 or not str2:
             return 0.0
         
@@ -139,7 +139,7 @@ class CodeTrajectory(BaseModel):
     
     @staticmethod
     def _calculate_dict_similarity(dict1: Dict, dict2: Dict) -> float:
-        """计算两个字典的相似度"""
+        """Calculate similarity between two dictionaries"""
         if not dict1 and not dict2:
             return 1.0
         if not dict1 or not dict2:
@@ -152,7 +152,7 @@ class CodeTrajectory(BaseModel):
         if not common_keys:
             return 0.0
         
-        # 计算共同键的值相似度
+        # Calculate value similarity for common keys
         similarities = []
         for key in common_keys:
             val1 = dict1[key]
@@ -169,67 +169,67 @@ class CodeTrajectory(BaseModel):
 
 class TrajectoryPool:
     """
-    轨迹池管理器
+    Trajectory pool manager
     
-    负责管理多个轨迹，支持：
-    - 轨迹存储和检索
-    - 轨迹压缩（减少80%存储空间）
-    - 轨迹查询和分析
-    - 跨任务的知识复用
+    Responsible for managing multiple trajectories, supports:
+    - Trajectory storage and retrieval
+    - Trajectory compression (reduce 80% storage space)
+    - Trajectory query and analysis
+    - Cross-task knowledge reuse
     """
     
     def __init__(self, pool_id: str, storage_dir: Optional[Path] = None):
         """
-        初始化轨迹池
+        Initialize trajectory pool
         
         Args:
-            pool_id: 轨迹池ID
-            storage_dir: 存储目录（如果为None，使用默认目录）
+            pool_id: Trajectory pool ID
+            storage_dir: Storage directory (if None, use default directory)
         """
         self.pool_id = pool_id
         self.trajectories: List[CodeTrajectory] = []
         
-        # 设置存储目录
+        # Set storage directory
         if storage_dir is None:
             agent_dir = Path(__file__).parent.parent.parent.parent
             storage_dir = agent_dir / "trajectories" / "codeact"
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         
-        # 索引：用于快速查询
+        # Index: for fast querying
         self._task_index: Dict[str, List[str]] = {}  # task_id -> trajectory_ids
         self._status_index: Dict[TrajectoryStatus, List[str]] = {}  # status -> trajectory_ids
         self._mode_index: Dict[str, List[str]] = {}  # execution_mode -> trajectory_ids
     
     def add_trajectory(self, trajectory: CodeTrajectory) -> str:
         """
-        添加轨迹到池中
+        Add trajectory to pool
         
         Args:
-            trajectory: 要添加的轨迹
+            trajectory: Trajectory to add
         
         Returns:
-            轨迹ID
+            Trajectory ID
         """
-        # 生成轨迹ID（如果还没有）
+        # Generate trajectory ID (if not already)
         if not trajectory.trajectory_id:
             trajectory.trajectory_id = self._generate_trajectory_id(trajectory)
         
-        # 添加到列表
+        # Add to list
         self.trajectories.append(trajectory)
         
-        # 更新索引
+        # Update indexes
         self._update_indexes(trajectory)
         
         return trajectory.trajectory_id
     
     def get_trajectories_by_task(self, task_id: str) -> List[CodeTrajectory]:
-        """根据任务ID获取轨迹"""
+        """Get trajectories by task ID"""
         trajectory_ids = self._task_index.get(task_id, [])
         return [t for t in self.trajectories if t.trajectory_id in trajectory_ids]
     
     def get_successful_trajectories(self, execution_mode: Optional[str] = None) -> List[CodeTrajectory]:
-        """获取成功的轨迹"""
+        """Get successful trajectories"""
         trajectory_ids = self._status_index.get(TrajectoryStatus.SUCCESS, [])
         trajectories = [t for t in self.trajectories if t.trajectory_id in trajectory_ids]
         
@@ -239,7 +239,7 @@ class TrajectoryPool:
         return trajectories
     
     def get_failed_trajectories(self, execution_mode: Optional[str] = None) -> List[CodeTrajectory]:
-        """获取失败的轨迹"""
+        """Get failed trajectories"""
         trajectory_ids = self._status_index.get(TrajectoryStatus.FAILED, [])
         trajectories = [t for t in self.trajectories if t.trajectory_id in trajectory_ids]
         
@@ -249,7 +249,7 @@ class TrajectoryPool:
         return trajectories
     
     def find_similar_trajectories(self, trajectory: CodeTrajectory, threshold: float = 0.8) -> List[CodeTrajectory]:
-        """查找相似的轨迹"""
+        """Find similar trajectories"""
         similar = []
         for t in self.trajectories:
             if t.is_similar_to(trajectory, threshold):
@@ -258,15 +258,15 @@ class TrajectoryPool:
     
     def save(self, compressed: bool = True) -> Path:
         """
-        保存轨迹池到文件
+        Save trajectory pool to file
         
         Args:
-            compressed: 是否压缩（默认True，可减少80%空间）
+            compressed: Whether to compress (default True, can reduce 80% space)
         
         Returns:
-            保存的文件路径
+            Saved file path
         """
-        # 准备数据
+        # Prepare data
         data = {
             "pool_id": self.pool_id,
             "trajectories": [t.to_dict() for t in self.trajectories],
@@ -276,18 +276,18 @@ class TrajectoryPool:
             }
         }
         
-        # 序列化为JSON
+        # Serialize to JSON
         json_str = json.dumps(data, ensure_ascii=False, indent=2)
         
-        # 确定文件路径
+        # Determine file path
         if compressed:
             file_path = self.storage_dir / f"{self.pool_id}.tra.gz"
-            # 压缩保存
+            # Save compressed
             with gzip.open(file_path, 'wt', encoding='utf-8') as f:
                 f.write(json_str)
         else:
             file_path = self.storage_dir / f"{self.pool_id}.tra.json"
-            # 直接保存
+            # Save directly
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(json_str)
         
@@ -296,28 +296,28 @@ class TrajectoryPool:
     @classmethod
     def load(cls, file_path: Path) -> "TrajectoryPool":
         """
-        从文件加载轨迹池
+        Load trajectory pool from file
         
         Args:
-            file_path: 文件路径（.tra.json 或 .tra.gz）
+            file_path: File path (.tra.json or .tra.gz)
         
         Returns:
-            轨迹池实例
+            Trajectory pool instance
         """
-        # 判断是否压缩
+        # Check if compressed
         if file_path.suffix == '.gz':
-            # 解压加载
+            # Decompress and load
             with gzip.open(file_path, 'rt', encoding='utf-8') as f:
                 data = json.load(f)
         else:
-            # 直接加载
+            # Load directly
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
         
-        # 创建轨迹池
+        # Create trajectory pool
         pool = cls(pool_id=data["pool_id"], storage_dir=file_path.parent)
         
-        # 恢复轨迹
+        # Restore trajectories
         for traj_data in data.get("trajectories", []):
             trajectory = CodeTrajectory.from_dict(traj_data)
             pool.add_trajectory(trajectory)
@@ -326,14 +326,14 @@ class TrajectoryPool:
     
     def compress(self, use_llm: bool = True, similarity_threshold: float = 0.85) -> Dict[str, Any]:
         """
-        压缩轨迹池（使用LLM总结，减少80%空间）
+        Compress trajectory pool (use LLM summarization, reduce 80% space)
         
         Args:
-            use_llm: 是否使用LLM进行智能压缩（默认True）
-            similarity_threshold: 相似度阈值，超过此阈值的轨迹将被合并（默认0.85）
+            use_llm: Whether to use LLM for intelligent compression (default True)
+            similarity_threshold: Similarity threshold, trajectories exceeding this will be merged (default 0.85)
         
         Returns:
-            压缩统计信息
+            Compression statistics
         """
         original_size = len(self.trajectories)
         original_total_size = sum(len(t.generated_code) for t in self.trajectories)
@@ -347,10 +347,10 @@ class TrajectoryPool:
             }
         
         if use_llm:
-            # 使用LLM进行智能压缩
+            # Use LLM for intelligent compression
             compressed_trajectories = self._compress_with_llm(similarity_threshold)
         else:
-            # 简单去重压缩
+            # Simple deduplication compression
             compressed_trajectories = self._compress_simple()
         
         self.trajectories = compressed_trajectories
@@ -367,7 +367,7 @@ class TrajectoryPool:
         }
     
     def _compress_simple(self) -> List[CodeTrajectory]:
-        """简单去重压缩"""
+        """Simple deduplication compression"""
         unique_trajectories = []
         seen_hashes = set()
         
@@ -381,54 +381,54 @@ class TrajectoryPool:
     
     def _compress_with_llm(self, similarity_threshold: float = 0.85) -> List[CodeTrajectory]:
         """
-        使用LLM进行智能轨迹压缩
+        Use LLM for intelligent trajectory compression
         
-        策略：
-        1. 按相似度分组轨迹
-        2. 对每组相似轨迹，使用LLM生成摘要
-        3. 保留一个代表性轨迹，其他用摘要替代
-        4. 对于失败轨迹，保留所有关键错误信息
+        Strategy:
+        1. Group trajectories by similarity
+        2. For each group of similar trajectories, use LLM to generate summary
+        3. Keep one representative trajectory, replace others with summaries
+        4. For failed trajectories, keep all key error information
         
         Args:
-            similarity_threshold: 相似度阈值
+            similarity_threshold: Similarity threshold
         
         Returns:
-            压缩后的轨迹列表
+            Compressed trajectory list
         """
         try:
             from agent.utils.llm_factory import create_reasoning_advanced_llm
             llm = create_reasoning_advanced_llm()
         except ImportError:
-            # 如果无法导入，使用简单压缩
-            print("  ⚠ 无法导入LLM工厂，使用简单压缩")
+            # If cannot import, use simple compression
+            print("  ⚠ Cannot import LLM factory, using simple compression")
             return self._compress_simple()
         
         if not llm:
-            print("  ⚠ LLM不可用，使用简单压缩")
+            print("  ⚠ LLM unavailable, using simple compression")
             return self._compress_simple()
         
-        # 1. 按相似度分组
+        # 1. Group by similarity
         groups = self._group_similar_trajectories(similarity_threshold)
         
         compressed = []
         for group in groups:
             if len(group) == 1:
-                # 单个轨迹，直接保留
+                # Single trajectory, keep directly
                 compressed.append(group[0])
             else:
-                # 多个相似轨迹，使用LLM生成摘要
+                # Multiple similar trajectories, use LLM to generate summary
                 summary_traj = self._summarize_trajectory_group(llm, group)
                 if summary_traj:
                     compressed.append(summary_traj)
                 else:
-                    # LLM摘要失败，保留第一个
+                    # LLM summary failed, keep first one
                     compressed.append(group[0])
         
-        print(f"  ✓ LLM压缩完成: {len(self.trajectories)} -> {len(compressed)} 轨迹")
+        print(f"  ✓ LLM compression completed: {len(self.trajectories)} -> {len(compressed)} trajectories")
         return compressed
     
     def _group_similar_trajectories(self, threshold: float) -> List[List[CodeTrajectory]]:
-        """按相似度分组轨迹"""
+        """Group trajectories by similarity"""
         groups = []
         used = set()
         
@@ -453,69 +453,69 @@ class TrajectoryPool:
     
     def _summarize_trajectory_group(self, llm, group: List[CodeTrajectory]) -> Optional[CodeTrajectory]:
         """
-        使用LLM总结一组相似轨迹
+        Use LLM to summarize a group of similar trajectories
         
         Args:
-            llm: LLM实例
-            group: 相似轨迹组
+            llm: LLM instance
+            group: Similar trajectory group
         
         Returns:
-            总结后的代表性轨迹
+            Representative trajectory after summarization
         """
         if not group:
             return None
         
-        # 选择最成功的轨迹作为基础
+        # Select most successful trajectory as base
         base_traj = max(group, key=lambda t: 1 if t.status == TrajectoryStatus.SUCCESS else 0)
         
-        # 如果只有1-2个轨迹，直接返回基础轨迹
+        # If only 1-2 trajectories, return base trajectory directly
         if len(group) <= 2:
             return base_traj
         
         try:
             from langchain_core.messages import SystemMessage, HumanMessage
             
-            # 构建提示词
-            system_prompt = """你是一个代码执行轨迹分析专家。你的任务是将多个相似的代码执行轨迹合并为一个代表性的轨迹摘要。
+            # Build prompt
+            system_prompt = """You are a code execution trajectory analysis expert. Your task is to merge multiple similar code execution trajectories into one representative trajectory summary.
 
-要求：
-1. 保留所有关键信息：任务ID、执行模式、核心代码逻辑、执行结果
-2. 合并相似代码的变体，提取共同模式
-3. 对于失败轨迹，保留所有不同的错误类型和原因
-4. 生成一个简洁但完整的轨迹摘要
+Requirements:
+1. Preserve all key information: task ID, execution mode, core code logic, execution results
+2. Merge variants of similar code, extract common patterns
+3. For failed trajectories, preserve all different error types and causes
+4. Generate a concise but complete trajectory summary
 
-输出格式：JSON格式的轨迹摘要，包含：
-- task_id: 任务ID（从第一个轨迹获取）
-- execution_mode: 执行模式
-- generated_code: 合并后的代表性代码（提取共同模式）
-- status: 状态（如果所有都成功则为success，否则为failed）
-- execution_result: 合并后的执行结果
-- error_summary: 如果有失败，总结所有错误类型和原因
-- trajectory_count: 被合并的轨迹数量"""
+Output Format: Trajectory summary in JSON format, containing:
+- task_id: Task ID (from first trajectory)
+- execution_mode: Execution mode
+- generated_code: Representative code after merging (extract common patterns)
+- status: Status (success if all successful, otherwise failed)
+- execution_result: Merged execution result
+- error_summary: If there are failures, summarize all error types and causes
+- trajectory_count: Number of merged trajectories"""
             
-            # 准备轨迹信息
+            # Prepare trajectory information
             traj_summaries = []
-            for i, traj in enumerate(group[:5]):  # 最多处理5个轨迹
+            for i, traj in enumerate(group[:5]):  # Process at most 5 trajectories
                 traj_info = {
                     "index": i + 1,
-                    "code": traj.generated_code[:500],  # 限制长度
+                    "code": traj.generated_code[:500],  # Limit length
                     "status": traj.status.value,
                     "error": traj.error_message[:200] if traj.error_message else None,
                     "error_type": traj.error_type
                 }
                 traj_summaries.append(traj_info)
             
-            user_prompt = f"""请将以下 {len(group)} 个相似的代码执行轨迹合并为一个代表性摘要：
+            user_prompt = f"""Please merge the following {len(group)} similar code execution trajectories into one representative summary:
 
-轨迹列表：
+Trajectory List:
 {json.dumps(traj_summaries, ensure_ascii=False, indent=2)}
 
-基础轨迹信息：
+Base Trajectory Information:
 - task_id: {base_traj.task_id}
 - execution_mode: {base_traj.execution_mode}
-- 基础代码: {base_traj.generated_code[:300]}
+- Base code: {base_traj.generated_code[:300]}
 
-请生成合并后的轨迹摘要（JSON格式）。"""
+Please generate merged trajectory summary (JSON format)."""
             
             messages = [
                 SystemMessage(content=system_prompt),
@@ -525,7 +525,7 @@ class TrajectoryPool:
             response = llm.invoke(messages)
             summary_text = response.content.strip()
             
-            # 解析JSON响应
+            # Parse JSON response
             if summary_text.startswith("```json"):
                 summary_text = summary_text[7:]
             if summary_text.startswith("```"):
@@ -536,7 +536,7 @@ class TrajectoryPool:
             
             summary_data = json.loads(summary_text)
             
-            # 创建摘要轨迹
+            # Create summary trajectory
             summary_traj = CodeTrajectory(
                 trajectory_id=f"{base_traj.trajectory_id}_summary",
                 task_id=summary_data.get("task_id", base_traj.task_id),
@@ -558,39 +558,39 @@ class TrajectoryPool:
             return summary_traj
             
         except Exception as e:
-            print(f"  ⚠ LLM轨迹摘要失败: {e}，保留基础轨迹")
+            print(f"  ⚠ LLM trajectory summary failed: {e}, keeping base trajectory")
             return base_traj
     
     def _generate_trajectory_id(self, trajectory: CodeTrajectory) -> str:
-        """生成轨迹ID"""
+        """Generate trajectory ID"""
         timestamp_str = trajectory.timestamp.isoformat()
         code_hash = hashlib.md5(trajectory.generated_code.encode()).hexdigest()[:8]
         return f"{trajectory.task_id}_{timestamp_str}_{code_hash}"
     
     def _update_indexes(self, trajectory: CodeTrajectory):
-        """更新索引"""
+        """Update index"""
         traj_id = trajectory.trajectory_id
         
-        # 任务索引
+        # Task index
         if trajectory.task_id not in self._task_index:
             self._task_index[trajectory.task_id] = []
         if traj_id not in self._task_index[trajectory.task_id]:
             self._task_index[trajectory.task_id].append(traj_id)
         
-        # 状态索引
+        # Status index
         if trajectory.status not in self._status_index:
             self._status_index[trajectory.status] = []
         if traj_id not in self._status_index[trajectory.status]:
             self._status_index[trajectory.status].append(traj_id)
         
-        # 模式索引
+        # Mode index
         if trajectory.execution_mode not in self._mode_index:
             self._mode_index[trajectory.execution_mode] = []
         if traj_id not in self._mode_index[trajectory.execution_mode]:
             self._mode_index[trajectory.execution_mode].append(traj_id)
     
     def get_statistics(self) -> Dict[str, Any]:
-        """获取轨迹池统计信息"""
+        """Get trajectory pool statistics"""
         total = len(self.trajectories)
         successful = len(self.get_successful_trajectories())
         failed = len(self.get_failed_trajectories())

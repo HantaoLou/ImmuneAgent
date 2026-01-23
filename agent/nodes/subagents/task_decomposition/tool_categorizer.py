@@ -1,7 +1,7 @@
 """
-工具分类模块
+Tool Categorization Module
 
-对MCP工具按service进行分类，支持基于service_id的筛选。
+Categorize MCP tools by service, supporting filtering based on service_id.
 """
 
 from typing import Dict, List, Any, Optional
@@ -9,7 +9,7 @@ from pathlib import Path
 import json
 import sys
 
-# 添加agent目录到路径
+# Add agent directory to path
 agent_dir = Path(__file__).parent.parent.parent.parent
 if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
@@ -17,10 +17,10 @@ if str(agent_dir) not in sys.path:
 
 def load_service_list() -> List[Dict[str, Any]]:
     """
-    加载service列表
+    Load service list
     
     Returns:
-        service列表，每个service包含 service_id 和 description
+        Service list, each service contains service_id and description
     """
     service_list_path = agent_dir / "config" / "service_list.json"
     
@@ -29,10 +29,10 @@ def load_service_list() -> List[Dict[str, Any]]:
             with open(service_list_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         else:
-            print(f"警告：service_list.json 不存在: {service_list_path}")
+            print(f"Warning: service_list.json does not exist: {service_list_path}")
             return []
     except Exception as e:
-        print(f"警告：加载service_list.json失败: {e}")
+        print(f"Warning: Failed to load service_list.json: {e}")
         return []
 
 
@@ -41,19 +41,19 @@ def get_tools_by_service_ids(
     required_service_ids: List[str]
 ) -> List[Dict[str, Any]]:
     """
-    根据需要的service_id筛选工具
+    Filter tools based on required service_ids
     
     Args:
-        all_tools: 所有工具列表
-        required_service_ids: 需要的service_id列表
+        all_tools: All tools list
+        required_service_ids: List of required service_ids
     
     Returns:
-        筛选后的工具列表
+        Filtered tools list
     """
     if not required_service_ids:
         return []
     
-    # 筛选工具
+    # Filter tools
     selected_tools = []
     for tool in all_tools:
         tool_service = tool.get("service", "")
@@ -65,26 +65,26 @@ def get_tools_by_service_ids(
 
 def get_service_summary(service_list: List[Dict[str, Any]]) -> str:
     """
-    生成service列表摘要（用于提示词）
+    Generate service list summary (for prompts)
     
     Args:
-        service_list: service列表
+        service_list: Service list
     
     Returns:
-        格式化的service摘要文本
+        Formatted service summary text
     """
     summary_parts = []
     for service in service_list:
-        # 处理 service 可能是字符串或字典的情况
+        # Handle case where service may be string or dict
         if isinstance(service, str):
-            # 如果是字符串，直接使用
+            # If it's a string, use directly
             summary_parts.append(f"- {service}")
         elif isinstance(service, dict):
             service_id = service.get("service_id", "")
             description = service.get("description", "")
             summary_parts.append(f"- {service_id}: {description}")
         else:
-            # 其他类型，转换为字符串
+            # Other types, convert to string
             summary_parts.append(f"- {str(service)}")
     
     return "\n".join(summary_parts)
@@ -92,13 +92,13 @@ def get_service_summary(service_list: List[Dict[str, Any]]) -> str:
 
 def get_service_summary_by_id(service_id: str) -> Optional[str]:
     """
-    根据 service_id 获取单个服务的描述
+    Get description of a single service by service_id
     
     Args:
-        service_id: 服务ID
+        service_id: Service ID
     
     Returns:
-        服务描述，如果找不到则返回 None
+        Service description, returns None if not found
     """
     service_list = load_service_list()
     for service in service_list:
@@ -108,4 +108,3 @@ def get_service_summary_by_id(service_id: str) -> Optional[str]:
         elif isinstance(service, str) and service == service_id:
             return service
     return None
-

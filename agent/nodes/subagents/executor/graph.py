@@ -1,19 +1,19 @@
 """
-Executor Agent 子图（优化版）
+Executor Agent Subgraph (Optimized Version)
 
-负责执行任务列表中的任务，主要职责：
-1. 任务初始化：无依赖任务标记为就绪，有依赖任务标记为等待依赖
-2. 参数推断：使用 LLM 推断任务参数值，无法推断的触发 HITL
-3. 并行执行：并行执行就绪任务（有并行上限）
-4. 结果推理：使用 LLM 评估结果是否满足要求，不满足触发 HITL
-5. 依赖管理：任务完成后激活依赖任务
-6. 任务调度：并行数量空缺时从就绪任务中取出执行
-7. 结果汇总：所有任务完成后汇总结果
+Responsible for executing tasks in the task list, main responsibilities:
+1. Task initialization: Mark tasks without dependencies as ready, mark tasks with dependencies as waiting for dependencies
+2. Parameter inference: Use LLM to infer task parameter values, trigger HITL if inference fails
+3. Parallel execution: Execute ready tasks in parallel (with parallel limit)
+4. Result reasoning: Use LLM to evaluate if results meet requirements, trigger HITL if not satisfied
+5. Dependency management: Activate dependent tasks after task completion
+6. Task scheduling: Take tasks from ready queue when parallel slots are available
+7. Result summarization: Summarize results after all tasks are completed
 
-充分利用 LangGraph 1.0+ 特性：
-- 使用 interrupt 机制实现真正的 HITL
-- 使用 checkpoint 实现状态持久化
-- 优化异步执行和状态管理
+Fully utilize LangGraph 1.0+ features:
+- Use interrupt mechanism to implement true HITL
+- Use checkpoint for state persistence
+- Optimize asynchronous execution and state management
 """
 
 from typing import Dict, List, Any, Optional, Literal, Union
@@ -23,63 +23,71 @@ try:
     from langgraph.types import interrupt, Command
     INTERRUPT_AVAILABLE = True
 except ImportError:
-    # 如果 interrupt 不可用，定义一个占位函数
+    # If interrupt is not available, define a placeholder function
     INTERRUPT_AVAILABLE = False
     def interrupt(value: Any = None):
-        """占位 interrupt 函数（如果 LangGraph 版本不支持）"""
-        raise NotImplementedError("interrupt 功能需要 LangGraph 支持，请确保已安装正确版本")
+        """Placeholder interrupt function (if LangGraph version doesn't support it)"""
+        raise NotImplementedError("interrupt functionality requires LangGraph support, please ensure correct version is installed")
     Command = None
 
 
-# ===================== Interrupt 辅助函数 =====================
+# ===================== Interrupt Helper Functions =====================
 
 def safe_interrupt(interrupt_value: Any = None) -> Optional[Any]:
     """
-    安全调用 interrupt 函数
+    Safely call interrupt function
     
-    LangGraph 的 interrupt 机制：
-    - 首次调用时：抛出 GraphInterrupt 异常，LangGraph 会捕获并保存状态
-    - 恢复时：interrupt() 会返回 Command(resume=...) 中的 resume 值
+    LangGraph's interrupt mechanism:
+    - On first call: Raises GraphInterrupt exception, LangGraph will catch and save state
+    - On resume: interrupt() returns the resume value from Command(resume=...)
     
     Args:
-        interrupt_value: 中断时传递的值（用于标识中断原因）
+        interrupt_value: Value passed during interrupt (used to identify interrupt reason)
     
     Returns:
-        如果是恢复执行，返回 resume 值；如果是首次调用，返回 None（但会抛出异常）
+        If resuming execution, returns resume value; if first call, returns None (but will raise exception)
     """
     if not INTERRUPT_AVAILABLE:
         return None
     
     try:
-        # 尝试调用 interrupt
-        # 如果是首次调用，这会抛出 GraphInterrupt 异常
-        # 如果是恢复执行，这会返回 resume 值
+        # Try to call interrupt
+        # If first call, this will raise GraphInterrupt exception
+        # If resuming execution, this will return resume value
         resume_value = interrupt(interrupt_value)
         return resume_value
     except Exception as e:
-        # 首次调用时，interrupt 会抛出异常（这是正常行为）
-        # LangGraph 会捕获这个异常并保存状态
-        # 我们不需要在这里处理，让异常向上传播
+        # On first call, interrupt will raise exception (this is normal behavior)
+        # LangGraph will catch this exception and save state
+        # We don't need to handle it here, let the exception propagate upward
         raise
 try:
     from langgraph.checkpoint.memory import MemorySaver
 except ImportError:
-    # 如果 MemorySaver 不存在，使用简单的内存存储
+    # If MemorySaver doesn't exist, use simple memory storage
     MemorySaver = None
 import sys
 import json
 from pathlib import Path
 from enum import Enum
+
+# Module-level variable to store current parent_state
+# This allows nodes to access it (because parent_state is excluded during serialization)
+_current_parent_state = None
 import time
 
-# 导入主图状态和任务模型
+# Import main graph state and task models
 agent_dir = Path(__file__).parent.parent.parent.parent
 if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
 from agent.state import SubTask, TaskStatus, UserTaskType, GlobalState, ParallelTaskGroup
 
-# 导入 CodeAct 子图
+# Module-level variable to store current parent_state
+# This allows nodes to access it (because parent_state is excluded during serialization)
+_current_parent_state = None
+
+# Import CodeAct subgraph
 from agent.nodes.subagents.code_act.graph import (
     build_codeact_subgraph,
     codeact_input_mapper,
@@ -88,52 +96,53 @@ from agent.nodes.subagents.code_act.graph import (
     CodeActState
 )
 
-# 导入 LLM 工厂
+# Import LLM factory
 from agent.utils.llm_factory import create_reasoning_advanced_llm, create_reasoning_llm
 
-# ===================== Executor 子图状态模型 =====================
+# ===================== Executor Subgraph State Model =====================
 
 class ExecutorTaskStatus(str, Enum):
-    """Executor内部任务状态"""
-    READY = "就绪"  # 无依赖或依赖已完成，可以执行
-    RUNNING = "执行中"  # 正在执行
-    COMPLETED = "已完成"  # 执行成功
-    FAILED = "失败"  # 执行失败
-    WAITING_DEPENDENCY = "等待依赖"  # 等待依赖任务完成
-    WAITING_HITL_PARAMS = "等待HITL参数"  # 等待用户提供参数
-    WAITING_HITL_CONFIRM = "等待HITL确认"  # 等待用户确认是否继续
+    """Executor internal task status"""
+    READY = "ready"  # No dependencies or dependencies completed, can execute
+    RUNNING = "running"  # Currently executing
+    COMPLETED = "completed"  # Execution successful
+    FAILED = "failed"  # Execution failed
+    WAITING_DEPENDENCY = "waiting_dependency"  # Waiting for dependent tasks to complete
+    WAITING_HITL_PARAMS = "waiting_hitl_params"  # Waiting for user to provide parameters
+    WAITING_HITL_CONFIRM = "waiting_hitl_confirm"  # Waiting for user confirmation to continue
 
 
 class ErrorCategory(str, Enum):
-    """错误分类"""
-    RETRYABLE = "可重试"  # 网络错误、超时等，可以重试
-    CODE_ERROR = "代码错误"  # 代码逻辑错误，需要修改代码
-    PARAMETER_ERROR = "参数错误"  # 参数不正确，需要修改参数
-    SYSTEM_ERROR = "系统错误"  # 系统级错误，可能需要人工干预
+    """Error category"""
+    RETRYABLE = "retryable"  # Network errors, timeouts, etc., can retry
+    NETWORK_ERROR = "network_error"  # Network-related errors, need special handling (re-add to task pool)
+    CODE_ERROR = "code_error"  # Code logic errors, need to modify code
+    PARAMETER_ERROR = "parameter_error"  # Incorrect parameters, need to modify parameters
+    SYSTEM_ERROR = "system_error"  # System-level errors, may require manual intervention
 
 
 class TaskExecutionResult(BaseModel):
-    """任务执行结果"""
+    """Task execution result"""
     task_id: str
     status: ExecutorTaskStatus
-    execution_mode: str  # "mcp_tool" 或 "codeact"
-    parameters: Dict[str, Any] = Field(default_factory=dict, description="解析后的参数")
-    missing_parameters: List[str] = Field(default_factory=list, description="缺失的参数列表")
+    execution_mode: str  # "mcp_tool" or "codeact"
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Parsed parameters")
+    missing_parameters: List[str] = Field(default_factory=list, description="List of missing parameters")
     code: Optional[str] = None
     output: Optional[Any] = None
     error: Optional[str] = None
     error_category: Optional[ErrorCategory] = None
     retry_count: int = 0
     execution_time: float = 0.0
-    confidence_score: Optional[float] = Field(default=None, description="结果置信度（0-1）")
-    failure_analysis: Optional[str] = Field(default=None, description="失败原因分析")
-    suggestions: Optional[List[str]] = Field(default_factory=list, description="改进建议")
-    result_satisfied: Optional[bool] = Field(default=None, description="结果是否满足要求")
-    user_continue: Optional[bool] = Field(default=None, description="用户是否选择继续执行")
+    confidence_score: Optional[float] = Field(default=None, description="Result confidence score (0-1)")
+    failure_analysis: Optional[str] = Field(default=None, description="Failure reason analysis")
+    suggestions: Optional[List[str]] = Field(default_factory=list, description="Improvement suggestions")
+    result_satisfied: Optional[bool] = Field(default=None, description="Whether result meets requirements")
+    user_continue: Optional[bool] = Field(default=None, description="Whether user chose to continue execution")
 
 
 class ExecutorState(BaseModel):
-    """Executor子图状态"""
+    """Executor subgraph state"""
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
         validate_assignment=True,
@@ -141,59 +150,59 @@ class ExecutorState(BaseModel):
         from_attributes=True
     )
     
-    # 输入：来自task_decomposition的任务列表
-    subtasks: List[SubTask] = Field(default_factory=list, description="待执行的子任务列表")
-    parallel_task_groups: Dict[str, Any] = Field(default_factory=dict, description="并行任务组")
+    # Input: Task list from task_decomposition
+    subtasks: List[SubTask] = Field(default_factory=list, description="List of subtasks to execute")
+    parallel_task_groups: Dict[str, Any] = Field(default_factory=dict, description="Parallel task groups")
     
-    # 任务状态管理
-    task_status_map: Dict[str, ExecutorTaskStatus] = Field(default_factory=dict, description="任务ID→状态映射")
-    task_results: Dict[str, TaskExecutionResult] = Field(default_factory=dict, description="任务执行结果")
-    running_tasks: List[str] = Field(default_factory=list, description="当前正在运行的任务ID列表")
+    # Task status management
+    task_status_map: Dict[str, ExecutorTaskStatus] = Field(default_factory=dict, description="Task ID -> status mapping")
+    task_results: Dict[str, TaskExecutionResult] = Field(default_factory=dict, description="Task execution results")
+    running_tasks: List[str] = Field(default_factory=list, description="List of currently running task IDs")
     
-    # 执行配置
-    max_parallel_tasks: int = Field(default=3, description="最大并行任务数")
-    max_retries: int = Field(default=2, description="最大重试次数")
-    sandbox_dir: str = Field(default="DEFAULT_SANDBOX_DIR", description="沙盒目录")
+    # Execution configuration
+    max_parallel_tasks: int = Field(default=3, description="Maximum number of parallel tasks")
+    max_retries: int = Field(default=5, description="Maximum retry count")
+    sandbox_dir: str = Field(default="DEFAULT_SANDBOX_DIR", description="Sandbox directory")
     
-    # 执行统计
+    # Execution statistics
     total_tasks: int = 0
     completed_count: int = 0
     failed_count: int = 0
     
-    # 循环检测（防止无限循环）
-    activate_iteration_count: int = Field(default=0, description="连续激活迭代次数（用于检测死循环）")
-    max_activate_iterations: int = Field(default=10, description="最大连续激活迭代次数")
+    # Loop detection (prevent infinite loops)
+    activate_iteration_count: int = Field(default=0, description="Consecutive activation iteration count (for deadlock detection)")
+    max_activate_iterations: int = Field(default=10, description="Maximum consecutive activation iterations")
     
-    # HITL相关
-    hitl_requests: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="HITL请求（task_id -> 请求信息）")
-    hitl_responses: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="HITL响应（task_id -> 响应信息）")
+    # HITL related
+    hitl_requests: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="HITL requests (task_id -> request info)")
+    hitl_responses: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="HITL responses (task_id -> response info)")
     
-    # 父状态引用（用于访问全局状态和更新HITL状态）
-    # 注意：exclude=True 避免 LangGraph 序列化时验证失败，但保留在模型中供节点使用
-    # 使用 Union 类型允许在验证时接受 GlobalState 实例或 None
-    parent_state: Optional[GlobalState] = Field(default=None, exclude=True, description="主图状态引用")
+    # Parent state reference (for accessing global state and updating HITL state)
+    # Note: exclude=True to avoid LangGraph serialization validation failure, but keep in model for node use
+    # Use Union type to allow accepting GlobalState instance or None during validation
+    parent_state: Optional[GlobalState] = Field(default=None, exclude=True, description="Main graph state reference")
     
     @field_validator('parent_state', mode='before')
     @classmethod
     def validate_parent_state(cls, v: Any) -> Optional[GlobalState]:
-        """验证 parent_state，允许 GlobalState 实例或 None"""
-        # 如果是 GlobalState 实例或 None，直接返回
+        """Validate parent_state, allow GlobalState instance or None"""
+        # If it's a GlobalState instance or None, return directly
         if v is None or isinstance(v, GlobalState):
             return v
-        # 如果是字典（反序列化时），尝试转换为 GlobalState
+        # If it's a dict (during deserialization), try to convert to GlobalState
         if isinstance(v, dict):
             try:
                 return GlobalState.model_validate(v)
             except:
                 return None
-        # 其他情况返回 None
+        # Other cases return None
         return None
 
 
-# ===================== 工具函数 =====================
+# ===================== Utility Functions =====================
 
 def _load_tools_params_table() -> Dict[str, Dict[str, Any]]:
-    """加载工具参数表"""
+    """Load tools parameters table"""
     tools_params_path = agent_dir / "config" / "tools_params_table.json"
     
     if not tools_params_path.exists():
@@ -214,24 +223,34 @@ def _load_tools_params_table() -> Dict[str, Dict[str, Any]]:
         
         return tools_params_map
     except Exception as e:
-        print(f"⚠ 加载工具参数表失败: {e}")
+        print(f"⚠ Failed to load tools parameters table: {e}")
         return {}
 
 
 def classify_error(error: str, error_type: str) -> ErrorCategory:
-    """分类错误类型"""
+    """Classify error type"""
     error_lower = error.lower()
     error_type_lower = error_type.lower()
     
-    # 可重试的错误
+    # Network errors (prioritize identification, need special handling)
+    network_keywords = [
+        "connection", "network", "dns", "socket", "timeout", "timed out",
+        "connection refused", "connection reset", "connection aborted",
+        "network unreachable", "host unreachable", "no route to host",
+        "502", "503", "504", "connection error", "network error"
+    ]
+    if any(keyword in error_lower or keyword in error_type_lower for keyword in network_keywords):
+        return ErrorCategory.NETWORK_ERROR
+    
+    # Retryable errors (other temporary errors)
     retryable_keywords = [
-        "timeout", "timed out", "connection", "network", "temporary",
-        "rate limit", "429", "503", "502", "retry", "busy"
+        "rate limit", "429", "retry", "busy", "temporary",
+        "service unavailable", "too many requests", "throttle"
     ]
     if any(keyword in error_lower or keyword in error_type_lower for keyword in retryable_keywords):
         return ErrorCategory.RETRYABLE
     
-    # 参数错误
+    # Parameter errors
     param_keywords = [
         "parameter", "argument", "invalid argument", "missing required",
         "type error", "value error", "keyerror", "attributeerror"
@@ -239,7 +258,7 @@ def classify_error(error: str, error_type: str) -> ErrorCategory:
     if any(keyword in error_lower or keyword in error_type_lower for keyword in param_keywords):
         return ErrorCategory.PARAMETER_ERROR
     
-    # 代码错误
+    # Code errors
     code_keywords = [
         "syntax", "indentation", "nameerror", "not defined",
         "logic error", "indexerror", "zerodivisionerror"
@@ -247,95 +266,235 @@ def classify_error(error: str, error_type: str) -> ErrorCategory:
     if any(keyword in error_lower or keyword in error_type_lower for keyword in code_keywords):
         return ErrorCategory.CODE_ERROR
     
-    # 默认：系统错误
+    # Default: system error
     return ErrorCategory.SYSTEM_ERROR
 
 
-# ===================== Executor 节点 =====================
+def _analyze_failure(error: str, error_type: str, error_category: ErrorCategory) -> str:
+    """
+    Analyze failure reason
+    
+    Args:
+        error: Error message
+        error_type: Error type
+        error_category: Error category
+    
+    Returns:
+        Failure reason analysis
+    """
+    analysis = f"Error type: {error_category.value}\n"
+    analysis += f"Error category: {error_type}\n"
+    
+    if error_category == ErrorCategory.NETWORK_ERROR:
+        analysis += "Reason: Network connection issue, may be temporary network failure.\n"
+        analysis += "Suggestion: System will automatically retry, network issues usually recover quickly."
+    elif error_category == ErrorCategory.RETRYABLE:
+        analysis += "Reason: Temporary error, may be service busy or rate limited.\n"
+        analysis += "Suggestion: System will automatically retry, may succeed after waiting."
+    elif error_category == ErrorCategory.PARAMETER_ERROR:
+        analysis += "Reason: Incorrect parameters or missing required parameters.\n"
+        analysis += "Suggestion: Check task parameter configuration, ensure all required parameters are provided and format is correct."
+    elif error_category == ErrorCategory.CODE_ERROR:
+        analysis += "Reason: Code logic error or syntax error.\n"
+        analysis += "Suggestion: Check generated code, fix syntax or logic issues."
+    else:
+        analysis += "Reason: System-level error, may require manual intervention.\n"
+        analysis += "Suggestion: Check system status, may need to restart service or contact administrator."
+    
+    return analysis
+
+
+def _detect_deadlock(waiting_tasks: List[SubTask], state: ExecutorState) -> bool:
+    """
+    Detect deadlock: Check if waiting tasks form circular dependencies
+    
+    Args:
+        waiting_tasks: List of tasks waiting for dependencies
+        state: Executor state
+    
+    Returns:
+        Whether deadlock is detected
+    """
+    # Build dependency graph
+    task_ids = {task.task_id for task in waiting_tasks}
+    dependency_graph = {}
+    
+    for task in waiting_tasks:
+        # Only consider dependencies in the waiting task list
+        deps = [dep_id for dep_id in task.dependencies if dep_id in task_ids]
+        dependency_graph[task.task_id] = deps
+    
+    # Use DFS to detect cycles
+    visited = set()
+    rec_stack = set()
+    
+    def has_cycle(node: str) -> bool:
+        visited.add(node)
+        rec_stack.add(node)
+        
+        for neighbor in dependency_graph.get(node, []):
+            if neighbor not in visited:
+                if has_cycle(neighbor):
+                    return True
+            elif neighbor in rec_stack:
+                return True
+        
+        rec_stack.remove(node)
+        return False
+    
+    # Check all nodes
+    for task_id in task_ids:
+        if task_id not in visited:
+            if has_cycle(task_id):
+                return True
+    
+    return False
+
+
+def _generate_suggestions(
+    error_category: ErrorCategory,
+    error: str,
+    retry_count: int,
+    max_retries: int
+) -> List[str]:
+    """
+    Generate improvement suggestions
+    
+    Args:
+        error_category: Error category
+        error: Error message
+        retry_count: Current retry count
+        max_retries: Maximum retry count
+    
+    Returns:
+        List of suggestions
+    """
+    suggestions = []
+    
+    if error_category == ErrorCategory.NETWORK_ERROR:
+        suggestions.append("Network error: System will automatically retry")
+        if retry_count < max_retries:
+            suggestions.append(f"Current retry count: {retry_count}/{max_retries}")
+            suggestions.append("Suggestion: Check network connection, wait for automatic retry")
+        else:
+            suggestions.append("Maximum retry count reached, please check network connection or retry manually later")
+    
+    elif error_category == ErrorCategory.RETRYABLE:
+        suggestions.append("Retryable error: System will automatically retry")
+        if retry_count < max_retries:
+            suggestions.append(f"Current retry count: {retry_count}/{max_retries}")
+            suggestions.append("Suggestion: Wait for service recovery and automatic retry")
+        else:
+            suggestions.append("Maximum retry count reached, please retry manually later")
+    
+    elif error_category == ErrorCategory.PARAMETER_ERROR:
+        suggestions.append("Parameter error: Need to correct task parameters")
+        suggestions.append("Suggestion: Check task configuration, ensure parameter format is correct")
+        suggestions.append("Suggestion: Check tools parameters table, confirm required parameters")
+    
+    elif error_category == ErrorCategory.CODE_ERROR:
+        suggestions.append("Code error: Need to fix code logic")
+        suggestions.append("Suggestion: Check generated code, fix syntax or logic issues")
+        suggestions.append("Suggestion: Check error stack trace, locate specific problem")
+    
+    else:
+        suggestions.append("System error: May require manual intervention")
+        suggestions.append("Suggestion: Check system status and logs")
+        suggestions.append("Suggestion: Contact system administrator")
+    
+    return suggestions
+
+
+# ===================== Executor Nodes =====================
 
 def initialize_tasks_node(state: ExecutorState) -> ExecutorState:
     """
-    初始化任务节点
+    Initialize tasks node
     
-    1. 展开并行任务组，将所有任务合并到subtasks中
-    2. 初始化任务状态映射
-    3. 标记无依赖任务为就绪态
-    4. 标记有依赖任务为等待依赖态
+    1. Expand parallel task groups, merge all tasks into subtasks
+    2. Initialize task status mapping
+    3. Mark tasks without dependencies as ready
+    4. Mark tasks with dependencies as waiting for dependencies
     """
-    # 展开并行任务组中的任务，合并到subtasks中
-    all_tasks = list(state.subtasks)  # 复制列表，避免修改原列表
+    # Expand tasks in parallel task groups, merge into subtasks
+    all_tasks = list(state.subtasks)  # Copy list to avoid modifying original
     
-    # 从并行任务组中提取所有任务
-    # 注意：parallel_task_groups 中的值可能是 ParallelTaskGroup 对象或字典
+    # Extract all tasks from parallel task groups
+    # Note: Values in parallel_task_groups may be ParallelTaskGroup objects or dicts
     parallel_tasks_count = 0
     for group_id, group in state.parallel_task_groups.items():
         group_subtasks = None
         
-        # 处理 group 可能是对象或字典的情况
+        # Handle case where group may be object or dict
         if isinstance(group, dict):
-            # 如果是字典，尝试获取 subtasks
+            # If it's a dict, try to get subtasks
             group_subtasks = group.get('subtasks', [])
-            # 如果 subtasks 是字典列表，需要转换为 SubTask 对象
+            # If subtasks is a list of dicts, need to convert to SubTask objects
             if group_subtasks and isinstance(group_subtasks[0], dict):
                 try:
                     from agent.state import SubTask
                     group_subtasks = [SubTask.model_validate(task_dict) for task_dict in group_subtasks]
                 except Exception as e:
-                    print(f"  ⚠ 无法将并行任务组 {group_id} 的任务转换为 SubTask 对象: {e}")
+                    print(f"  ⚠ Failed to convert tasks in parallel task group {group_id} to SubTask objects: {e}")
                     continue
         elif hasattr(group, 'subtasks'):
-            # 如果是对象，直接获取 subtasks
+            # If it's an object, directly get subtasks
             group_subtasks = group.subtasks
         
         if group_subtasks:
             for task in group_subtasks:
-                # 确保 task 是 SubTask 对象
+                # Ensure task is a SubTask object
                 if isinstance(task, dict):
                     try:
                         from agent.state import SubTask
                         task = SubTask.model_validate(task)
                     except Exception as e:
-                        print(f"  ⚠ 无法将任务 {task.get('task_id', 'unknown')} 转换为 SubTask 对象: {e}")
+                        print(f"  ⚠ Failed to convert task {task.get('task_id', 'unknown')} to SubTask object: {e}")
                         continue
                 
-                # 检查任务是否已经在subtasks中（避免重复）
+                # Check if task is already in subtasks (avoid duplicates)
                 if not any(t.task_id == task.task_id for t in all_tasks):
                     all_tasks.append(task)
                     parallel_tasks_count += 1
-                    print(f"  [DEBUG] 从并行任务组 {group_id} 添加任务 {task.task_id}")
+                    print(f"  [DEBUG] Added task {task.task_id} from parallel task group {group_id}")
     
-    # 更新subtasks为包含所有任务的完整列表
+    # Update subtasks to complete list containing all tasks
     state.subtasks = all_tasks
     state.total_tasks = len(state.subtasks)
     
     serial_tasks_count = len(state.subtasks) - parallel_tasks_count
-    print(f"✓ 初始化任务：共 {state.total_tasks} 个任务（串行: {serial_tasks_count} 个，并行: {parallel_tasks_count} 个，并行组数: {len(state.parallel_task_groups)}）")
+    print(f"✓ Initialized tasks: {state.total_tasks} tasks total (serial: {serial_tasks_count}, parallel: {parallel_tasks_count}, parallel groups: {len(state.parallel_task_groups)})")
     
-    # 初始化所有任务的状态
+    # Initialize status for all tasks
     for task in state.subtasks:
         if not task.dependencies:
-            # 无依赖任务，直接标记为就绪
+            # Tasks without dependencies, directly mark as ready
             state.task_status_map[task.task_id] = ExecutorTaskStatus.READY
         else:
-            # 有依赖任务，标记为等待依赖
+            # Tasks with dependencies, mark as waiting for dependencies
             state.task_status_map[task.task_id] = ExecutorTaskStatus.WAITING_DEPENDENCY
     
     ready_count = sum(1 for s in state.task_status_map.values() if s == ExecutorTaskStatus.READY)
-    print(f"  就绪任务: {ready_count} 个，等待依赖: {state.total_tasks - ready_count} 个")
+    print(f"  Ready tasks: {ready_count}, waiting for dependencies: {state.total_tasks - ready_count}")
     
     return state
 
 
 def infer_parameters_node(state: ExecutorState) -> ExecutorState:
     """
-    参数推断节点
+    Parameter inference node (optimized version)
     
-    优先使用 task_decomposition 中已推断的参数结果。
-    对于已推断的参数：
-    - source_type 为 DETERMINED：直接使用推断值
-    - source_type 为 FROM_TASK：等待依赖任务完成后获取
-    - source_type 为 USER_REQUIRED：标记为缺失参数，触发 HITL
-    对于没有推断结果的参数，使用 LLM 重新推断。
+    Prioritize using parameter inference results from task_decomposition.
+    For already inferred parameters:
+    - source_type is DETERMINED: directly use inferred value
+    - source_type is FROM_TASK: wait for dependent task completion to get value
+    - source_type is USER_REQUIRED: mark as missing parameter, trigger HITL
+    For parameters without inference results, use LLM to re-infer (with caching mechanism).
+    
+    Optimizations:
+    1. Batch process parameter inference to reduce LLM calls
+    2. Cache inference results to avoid duplicate inference
+    3. Prioritize using results from completed dependent tasks
     """
     ready_tasks = [
         task for task in state.subtasks
@@ -346,16 +505,19 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
     if not ready_tasks:
         return state
     
-    # 从 global_state 中获取参数推断结果
+    # Get parameter inference results from global_state
     parameter_inference_results = {}
     if state.parent_state and state.parent_state.merged_result:
         parameter_inference_results = state.parent_state.merged_result.get("parameter_inference_results", {})
+    
+    # Parameter inference cache (avoid duplicate inference for same parameters)
+    inference_cache = {}
     
     llm = create_reasoning_llm()
     tools_params_map = _load_tools_params_table()
     
     for task in ready_tasks:
-        # 初始化任务结果
+        # Initialize task result
         if task.task_id not in state.task_results:
             state.task_results[task.task_id] = TaskExecutionResult(
                 task_id=task.task_id,
@@ -369,16 +531,16 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
         inputs = task_result.get("inputs", [])
         
         if not tools:
-            # 无工具任务，参数为空
+            # Tasks without tools, parameters are empty
             result.parameters = {}
             result.missing_parameters = []
             continue
         
-        # 收集所有工具的参数需求
+        # Collect parameter requirements for all tools
         all_params = {}
         missing_params = []
         
-        # 首先使用 task_decomposition 的参数推断结果
+        # First use parameter inference results from task_decomposition
         task_inference = parameter_inference_results.get(task.task_id)
         if task_inference:
             inference_params = task_inference.get("parameters", {})
@@ -386,33 +548,33 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
                 source_type = param_info.get("source_type", "")
                 
                 if source_type == "determined":
-                    # 直接使用推断值
+                    # Directly use inferred value
                     param_value = param_info.get("value")
                     if param_value is not None:
                         all_params[param_name] = param_value
-                        print(f"  ✓ 任务 {task.task_id} 参数 {param_name} 使用推断值: {param_value}")
+                        print(f"  ✓ Task {task.task_id} parameter {param_name} using inferred value: {param_value}")
                     else:
-                        # 推断值为空，标记为缺失
+                        # Inferred value is empty, mark as missing
                         tool_name = task_inference.get("tool_name", "").split(",")[0].strip() if task_inference.get("tool_name") else ""
                         missing_params.append(f"{tool_name}.{param_name}" if tool_name else param_name)
                 
                 elif source_type == "from_task":
-                    # 参数值来自依赖任务，需要等待依赖任务完成
+                    # Parameter value comes from dependent task, need to wait for dependent task completion
                     source_task_id = param_info.get("source_task_id")
                     source_output_key = param_info.get("source_output_key", param_name)
                     
-                    # 检查依赖任务是否已完成
+                    # Check if dependent task is completed
                     if source_task_id in state.task_results:
                         dep_result = state.task_results[source_task_id]
                         if dep_result.status == ExecutorTaskStatus.COMPLETED:
-                            # 从依赖任务的结果中获取参数值
+                            # Get parameter value from dependent task result
                             if isinstance(dep_result.output, dict):
                                 param_value = dep_result.output.get(source_output_key)
                             elif isinstance(dep_result.output, str):
-                                # 尝试解析字符串输出
+                                # Try to parse string output
                                 try:
-                                    import json
-                                    output_dict = json.loads(dep_result.output)
+                                    import json as json_module
+                                    output_dict = json_module.loads(dep_result.output)
                                     param_value = output_dict.get(source_output_key)
                                 except:
                                     param_value = dep_result.output
@@ -421,21 +583,21 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
                             
                             if param_value is not None:
                                 all_params[param_name] = param_value
-                                print(f"  ✓ 任务 {task.task_id} 参数 {param_name} 从任务 {source_task_id} 获取: {param_value}")
+                                print(f"  ✓ Task {task.task_id} parameter {param_name} obtained from task {source_task_id}: {param_value}")
                             else:
                                 tool_name = task_inference.get("tool_name", "").split(",")[0].strip() if task_inference.get("tool_name") else ""
                                 missing_params.append(f"{tool_name}.{param_name}" if tool_name else param_name)
                         else:
-                            # 依赖任务未完成，标记为缺失（但这是正常的，等待依赖）
-                            print(f"  ⏳ 任务 {task.task_id} 参数 {param_name} 等待依赖任务 {source_task_id} 完成")
-                            # 不添加到 missing_params，因为这是依赖关系，不是真正的缺失
+                            # Dependent task not completed, mark as missing (but this is normal, waiting for dependency)
+                            print(f"  ⏳ Task {task.task_id} parameter {param_name} waiting for dependent task {source_task_id} to complete")
+                            # Don't add to missing_params, as this is a dependency relationship, not truly missing
                     else:
-                        # 依赖任务不存在或未执行，标记为缺失
+                        # Dependent task doesn't exist or hasn't been executed, mark as missing
                         tool_name = task_inference.get("tool_name", "").split(",")[0].strip() if task_inference.get("tool_name") else ""
                         missing_params.append(f"{tool_name}.{param_name}" if tool_name else param_name)
                 
                 elif source_type == "user_required":
-                    # 需要用户提供，标记为缺失参数
+                    # Requires user input, mark as missing parameter
                     tool_name = task_inference.get("tool_name", "").split(",")[0].strip() if task_inference.get("tool_name") else ""
                     missing_params.append(f"{tool_name}.{param_name}" if tool_name else param_name)
         
@@ -449,37 +611,37 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
             if not tool_name:
                 continue
             
-            # 查找工具参数定义
+            # Find tool parameter definition
             tool_params = tools_params_map.get(tool_name)
             
-            # 如果工具不在参数表中，使用 inputs 字段来推断参数
+            # If tool is not in parameter table, use inputs field to infer parameters
             if not tool_params:
-                # 从 inputs 字段推断参数
+                # Infer parameters from inputs field
                 for input_param in inputs:
                     if input_param not in all_params:
-                        # 尝试从任务描述中推断
+                        # Try to infer from task description
                         if llm:
                             try:
                                 from langchain_core.messages import SystemMessage, HumanMessage
                                 inference_prompt = f"""
-请根据以下信息推断参数值：
+Please infer parameter value based on the following information:
 
-任务描述: {task.content}
-工具名称: {tool_name}
-参数名称: {input_param}
-任务输入列表: {inputs}
+Task description: {task.content}
+Tool name: {tool_name}
+Parameter name: {input_param}
+Task input list: {inputs}
 
-请推断该参数的值。如果无法从任务描述中推断，或者需要用户提供（如文件路径、用户选择等），请返回 null。
+Please infer the value of this parameter. If it cannot be inferred from the task description, or requires user input (such as file paths, user selections, etc.), return null.
 
-返回JSON格式：
+Return JSON format:
 {{
-    "value": <参数值或null>,
+    "value": <parameter value or null>,
     "can_infer": <true/false>,
-    "reason": "<推断理由或为什么需要用户提供>"
+    "reason": "<inference reason or why user input is required>"
 }}
 """
                                 messages = [
-                                    SystemMessage(content="你是一个专业的参数推断专家，能够从任务描述中提取参数值。"),
+                                    SystemMessage(content="You are a professional parameter inference expert, able to extract parameter values from task descriptions."),
                                     HumanMessage(content=inference_prompt)
                                 ]
                                 response = llm.invoke(messages)
@@ -488,7 +650,9 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
                                 import re
                                 json_match = re.search(r'\{[^}]+\}', response_text, re.DOTALL)
                                 if json_match:
-                                    inference_data = json.loads(json_match.group())
+                                    # Ensure using global json module
+                                    import json as json_module
+                                    inference_data = json_module.loads(json_match.group())
                                     param_value = inference_data.get("value")
                                     can_infer = inference_data.get("can_infer", False)
                                     
@@ -499,10 +663,10 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
                                 else:
                                     missing_params.append(f"{tool_name}.{input_param}")
                             except Exception as e:
-                                print(f"  ⚠ 推断参数 {input_param} 失败: {e}")
+                                print(f"  ⚠ Failed to infer parameter {input_param}: {e}")
                                 missing_params.append(f"{tool_name}.{input_param}")
                         else:
-                            # 没有 LLM，直接标记为缺失
+                            # No LLM, directly mark as missing
                             missing_params.append(f"{tool_name}.{input_param}")
                 continue
             
@@ -516,47 +680,49 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
                 if not param_name:
                     continue
                 
-                # 如果参数已经在参数推断结果中，跳过（已经处理过了）
+                # If parameter is already in inference results, skip (already processed)
                 if param_name in all_params or any(p.endswith(f".{param_name}") or p == param_name for p in missing_params):
                     continue
                 
-                # 使用 LLM 推断参数值（只对没有推断结果的参数）
+                # Use LLM to infer parameter value (only for parameters without inference results)
                 if llm and param_name not in all_params:
                     try:
                         from langchain_core.messages import SystemMessage, HumanMessage
                         
                         inference_prompt = f"""
-请根据以下信息推断参数值：
+Please infer parameter value based on the following information:
 
-任务描述: {task.content}
-工具名称: {tool_name}
-参数名称: {param_name}
-参数类型: {param_type}
-参数描述: {param_desc}
-任务输入列表: {inputs}
+Task description: {task.content}
+Tool name: {tool_name}
+Parameter name: {param_name}
+Parameter type: {param_type}
+Parameter description: {param_desc}
+Task input list: {inputs}
 
-请推断该参数的值。如果无法从任务描述中推断，或者需要用户提供（如文件路径、用户选择等），请返回 null。
+Please infer the value of this parameter. If it cannot be inferred from the task description, or requires user input (such as file paths, user selections, etc.), return null.
 
-返回JSON格式：
+Return JSON format:
 {{
-    "value": <参数值或null>,
+    "value": <parameter value or null>,
     "can_infer": <true/false>,
-    "reason": "<推断理由或为什么需要用户提供>"
+    "reason": "<inference reason or why user input is required>"
 }}
 """
                         messages = [
-                            SystemMessage(content="你是一个专业的参数推断专家，能够从任务描述中提取参数值。"),
+                            SystemMessage(content="You are a professional parameter inference expert, able to extract parameter values from task descriptions."),
                             HumanMessage(content=inference_prompt)
                         ]
                         
                         response = llm.invoke(messages)
                         response_text = response.content.strip()
                         
-                        # 解析响应
+                        # Parse response
                         import re
                         json_match = re.search(r'\{[^}]+\}', response_text, re.DOTALL)
                         if json_match:
-                            inference_data = json.loads(json_match.group())
+                            # Ensure using global json module
+                            import json as json_module
+                            inference_data = json_module.loads(json_match.group())
                             param_value = inference_data.get("value")
                             can_infer = inference_data.get("can_infer", False)
                             
@@ -568,72 +734,90 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
                             if not is_optional:
                                 missing_params.append(f"{tool_name}.{param_name}")
                     except Exception as e:
-                        print(f"  ⚠ 推断参数 {param_name} 失败: {e}")
+                        print(f"  ⚠ Failed to infer parameter {param_name}: {e}")
                         if not is_optional:
                             missing_params.append(f"{tool_name}.{param_name}")
         
-        # 更新任务结果
+        # Update task result
         result.parameters = all_params
         result.missing_parameters = missing_params
         
-        # 如果有缺失参数，触发 HITL
+        # If there are missing parameters, trigger HITL
         if missing_params:
             state.hitl_requests[task.task_id] = {
                 "type": "missing_parameters",
                 "task_id": task.task_id,
                 "task_description": task.content,
                 "missing_parameters": missing_params,
-                "message": f"任务 {task.task_id} 需要以下参数，请提供：{', '.join(missing_params)}"
+                "message": f"Task {task.task_id} requires the following parameters, please provide: {', '.join(missing_params)}"
             }
+            # Important: Set task status to WAITING_HITL_PARAMS, not READY
+            # This prevents execute_tasks_node from trying to execute these tasks
             state.task_status_map[task.task_id] = ExecutorTaskStatus.WAITING_HITL_PARAMS
-            print(f"  ⚠ 任务 {task.task_id} 需要用户提供参数: {', '.join(missing_params)}")
+            print(f"  ⚠ Task {task.task_id} requires user-provided parameters: {', '.join(missing_params)}")
+            print(f"  → Task status set to WAITING_HITL_PARAMS")
     
     return state
 
 
 def check_hitl_params_node(state: ExecutorState) -> Literal["hitl_params", "execute"]:
-    """检查是否需要 HITL 参数"""
+    """Check if HITL parameters are needed"""
     pending_hitl = [
         task_id for task_id, request in state.hitl_requests.items()
         if request.get("type") == "missing_parameters" and task_id not in state.hitl_responses
     ]
     
+    print(f"  🔍 [check_hitl_params] HITL requests: {len(state.hitl_requests)}, pending: {len(pending_hitl)}")
     if pending_hitl:
+        print(f"  → Routing to hitl_params node")
         return "hitl_params"
     else:
+        print(f"  → Routing to execute node")
         return "execute"
 
 
 def hitl_params_node(state: ExecutorState) -> ExecutorState:
     """
-    HITL 参数请求节点
+    HITL parameter request node
     
-    向用户请求参数，并等待响应（使用 interrupt）
-    支持从 interrupt 恢复时接收 resume 值
+    Request parameters from user and wait for response (using interrupt)
+    Supports receiving resume value when resuming from interrupt
     
-    工作流程：
-    1. 首次执行：检查是否有未响应的 HITL 请求，如果有则触发 interrupt
-    2. 恢复执行：从 interrupt 的 resume 值中获取用户响应，更新参数，继续执行
+    Workflow:
+    1. First execution: Check if there are unresponded HITL requests, if so trigger interrupt
+    2. Resume execution: Get user response from interrupt's resume value, update parameters, continue execution
     """
-    # 尝试获取 resume 值（如果是恢复执行）
-    # 注意：在恢复执行时，interrupt() 会返回 Command(resume=...) 中的值
-    # 首次调用时，interrupt() 会抛出异常（这是正常的）
+    global _current_parent_state
+    
+    print(f"  🔍 [hitl_params_node] Node called")
+    
+    # If parent_state doesn't exist, try to get from module variable
+    if state.parent_state is None and _current_parent_state is not None:
+        print(f"  ✓ [hitl_params_node] Restored parent_state from module variable")
+        object.__setattr__(state, 'parent_state', _current_parent_state)
+    
+    # Try to get resume value (if resuming execution)
+    # Note: When resuming execution, interrupt() returns the value from Command(resume=...)
+    # On first call, interrupt() raises an exception (this is normal)
     resume_value = None
     if INTERRUPT_AVAILABLE:
         try:
-            # 先尝试获取 resume 值（不传参数）
-            # 如果是恢复执行，这会返回 resume 值
-            # 如果是首次调用，这会抛出异常，我们会在后面处理
+            # First try to get resume value (no parameters)
+            # If resuming execution, this returns resume value
+            # If first call, this raises exception, we'll handle it later
+            print(f"  🔍 [hitl_params_node] Attempting to get resume value...")
             resume_value = interrupt()
-        except Exception:
-            # 首次调用时，interrupt() 会抛出异常（正常行为）
-            # 我们会在后面需要中断时再次调用 interrupt(value)
+            print(f"  ✓ [hitl_params_node] Got resume value: {resume_value}")
+        except Exception as e:
+            # On first call, interrupt() raises exception (normal behavior)
+            # We'll call interrupt(value) again later when we need to interrupt
+            print(f"  ✓ [hitl_params_node] interrupt() raised exception (normal on first call): {type(e).__name__}")
             resume_value = None
     
-    # 如果有 resume 值，说明这是从中断恢复，处理用户响应
+    # If there's a resume value, this is resuming from interrupt, process user response
     if resume_value is not None:
-        # resume_value 可能是 Command 对象或字典
-        # 如果是 Command 对象，需要提取 resume 字段
+        # resume_value may be Command object or dict
+        # If Command object, need to extract resume field
         if hasattr(resume_value, 'resume'):
             resume_data = resume_value.resume
         elif isinstance(resume_value, dict) and 'resume' in resume_value:
@@ -646,65 +830,147 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
             for task_id, response_data in responses.items():
                 if task_id in state.hitl_requests and task_id not in state.hitl_responses:
                     state.hitl_responses[task_id] = response_data
-                    # 更新参数
+                    # Update parameters
                     if task_id in state.task_results:
                         result = state.task_results[task_id]
                         if "parameters" in response_data:
-                            # 更新参数
-                            result.parameters.update(response_data["parameters"])
-                            # 从 missing_parameters 中移除已提供的参数
-                            # missing_parameters 格式可能是 "tool_name.param_name" 或 "param_name"
-                            provided_params = set(response_data["parameters"].keys())
+                            # Intelligent parameter mapping: map user-provided parameter names to tool-required parameter names
+                            # Example: input_file -> input_file_path
+                            param_mapping = {
+                                "input_file": "input_file_path",
+                                "output_file": "output_file_path",
+                                "input_path": "input_file_path",
+                                "output_path": "output_file_path",
+                            }
+                            
+                            # Process parameter mapping
+                            mapped_parameters = {}
+                            for user_param_name, param_value in response_data["parameters"].items():
+                                # Check if mapping is needed
+                                # If parameter name contains tool prefix (e.g., "tool_name.param_name"), need separate handling
+                                if '.' in user_param_name:
+                                    parts = user_param_name.split('.', 1)
+                                    tool_prefix = parts[0]
+                                    param_name = parts[1]
+                                    # Try to map parameter name
+                                    mapped_param_name = param_mapping.get(param_name, param_name)
+                                    mapped_parameters[f"{tool_prefix}.{mapped_param_name}"] = param_value
+                                    # Also keep original parameter name (in case tool accepts it)
+                                    mapped_parameters[user_param_name] = param_value
+                                else:
+                                    # Try to map parameter name
+                                    mapped_param_name = param_mapping.get(user_param_name, user_param_name)
+                                    mapped_parameters[mapped_param_name] = param_value
+                                    # Also keep original parameter name (in case tool accepts it)
+                                    mapped_parameters[user_param_name] = param_value
+                            
+                            # Update parameters
+                            result.parameters.update(mapped_parameters)
+                            
+                            # Remove provided parameters from missing_parameters
+                            # missing_parameters format may be "tool_name.param_name" or "param_name"
+                            provided_params = set(mapped_parameters.keys())
+                            # Also check original parameter names
+                            provided_params.update(response_data["parameters"].keys())
+                            
                             result.missing_parameters = [
                                 p for p in result.missing_parameters
                                 if not any(
-                                    p == param_name or p.endswith(f".{param_name}")
+                                    # Exact match
+                                    p == param_name or 
+                                    # Suffix match (e.g., "tool.input_file_path" matches "input_file_path")
+                                    p.endswith(f".{param_name}") or
+                                    # Prefix match (e.g., "input_file_path" matches "tool.input_file_path")
+                                    ('.' in p and p.split('.', 1)[1] == param_name) or
+                                    # Parameter name mapping match (e.g., "input_file" matches "input_file_path")
+                                    (param_name in param_mapping and (
+                                        p == param_mapping[param_name] or
+                                        p.endswith(f".{param_mapping[param_name]}")
+                                    ))
                                     for param_name in provided_params
                                 )
                             ]
-                        # 如果所有必需参数都已提供，标记为就绪
+                        # If all required parameters are provided, mark as ready
                         if not result.missing_parameters:
                             state.task_status_map[task_id] = ExecutorTaskStatus.READY
-                            print(f"  ✓ 任务 {task_id} 已获得所有必需参数，标记为就绪")
+                            print(f"  ✓ Task {task_id} has all required parameters, marked as ready")
     
-    # 先检查是否有 HITL 响应（从 parent_state 中获取，作为降级方案）
+    # First check if there are HITL responses (get from parent_state as fallback)
     if state.parent_state and state.parent_state.hitl_status:
         try:
-            hitl_data = json.loads(state.parent_state.hitl_status)
+            # Ensure using global json module
+            import json as json_module
+            hitl_data = json_module.loads(state.parent_state.hitl_status)
             if hitl_data.get("type") == "response_parameters":
-                # 处理用户响应（降级方案：通过 parent_state 传递）
+                # Process user response (fallback: passed through parent_state)
                 responses = hitl_data.get("responses", {})
                 for task_id, response_data in responses.items():
                     if task_id in state.hitl_requests and task_id not in state.hitl_responses:
                         state.hitl_responses[task_id] = response_data
-                        # 更新参数
+                        # Update parameters
                         if task_id in state.task_results:
                             result = state.task_results[task_id]
                             if "parameters" in response_data:
-                                result.parameters.update(response_data["parameters"])
-                                provided_params = set(response_data["parameters"].keys())
+                                # Use same intelligent parameter mapping logic
+                                param_mapping = {
+                                    "input_file": "input_file_path",
+                                    "output_file": "output_file_path",
+                                    "input_path": "input_file_path",
+                                    "output_path": "output_file_path",
+                                }
+                                
+                                mapped_parameters = {}
+                                for user_param_name, param_value in response_data["parameters"].items():
+                                    if '.' in user_param_name:
+                                        parts = user_param_name.split('.', 1)
+                                        tool_prefix = parts[0]
+                                        param_name = parts[1]
+                                        mapped_param_name = param_mapping.get(param_name, param_name)
+                                        mapped_parameters[f"{tool_prefix}.{mapped_param_name}"] = param_value
+                                        mapped_parameters[user_param_name] = param_value
+                                    else:
+                                        mapped_param_name = param_mapping.get(user_param_name, user_param_name)
+                                        mapped_parameters[mapped_param_name] = param_value
+                                        mapped_parameters[user_param_name] = param_value
+                                
+                                result.parameters.update(mapped_parameters)
+                                provided_params = set(mapped_parameters.keys())
+                                provided_params.update(response_data["parameters"].keys())
+                                
                                 result.missing_parameters = [
                                     p for p in result.missing_parameters
                                     if not any(
-                                        p == param_name or p.endswith(f".{param_name}")
+                                        p == param_name or 
+                                        p.endswith(f".{param_name}") or
+                                        ('.' in p and p.split('.', 1)[1] == param_name) or
+                                        (param_name in param_mapping and (
+                                            p == param_mapping[param_name] or
+                                            p.endswith(f".{param_mapping[param_name]}")
+                                        ))
                                         for param_name in provided_params
                                     )
                                 ]
                             if not result.missing_parameters:
                                 state.task_status_map[task_id] = ExecutorTaskStatus.READY
-                                print(f"  ✓ 任务 {task_id} 已获得所有必需参数，标记为就绪")
+                                print(f"  ✓ Task {task_id} has all required parameters, marked as ready")
         except Exception as e:
-            print(f"  ⚠ 解析HITL响应失败: {e}")
+            print(f"  ⚠ Failed to parse HITL response: {e}")
     
-    # 如果还有未响应的请求，设置 HITL 请求信息并触发 interrupt
+    # If there are still unresponded requests, set HITL request info and trigger interrupt
+    print(f"  🔍 [hitl_params_node] Checking unresponded requests...")
     remaining_requests = [
         task_id for task_id in state.hitl_requests.keys()
         if task_id not in state.hitl_responses
     ]
+    print(f"  🔍 [hitl_params_node] Unresponded requests: {len(remaining_requests)}, request list: {remaining_requests}")
+    print(f"  🔍 [hitl_params_node] parent_state exists: {state.parent_state is not None}")
+    
     if remaining_requests and state.parent_state:
+        print(f"  ✓ [hitl_params_node] Conditions met, starting to build hitl_messages")
         hitl_messages = []
         for task_id in remaining_requests:
             request = state.hitl_requests[task_id]
+            print(f"  🔍 [hitl_params_node] Processing request {task_id}: type={request.get('type')}")
             if request.get("type") == "missing_parameters":
                 hitl_messages.append({
                     "task_id": task_id,
@@ -712,51 +978,94 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                     "type": request["type"],
                     "missing_parameters": request.get("missing_parameters", [])
                 })
+            else:
+                print(f"  ⚠ [hitl_params_node] Request {task_id} type is not missing_parameters: {request.get('type')}")
+        
+        print(f"  🔍 [hitl_params_node] hitl_messages count: {len(hitl_messages)}")
         
         if hitl_messages:
-            state.parent_state.hitl_status = json.dumps({
+            import json as json_module
+            state.parent_state.hitl_status = json_module.dumps({
                 "type": "missing_parameters",
                 "requests": hitl_messages
             }, ensure_ascii=False)
             
             print(f"\n{'='*60}")
-            print(f"HITL请求：需要用户提供参数")
+            print(f"HITL Request: User needs to provide parameters")
             print(f"{'='*60}")
             for msg in hitl_messages:
-                print(f"任务 {msg['task_id']}: {msg['message']}")
+                print(f"Task {msg['task_id']}: {msg['message']}")
             print(f"{'='*60}\n")
             
-            # 触发 interrupt，暂停执行等待用户响应
-            # 首次调用时，interrupt() 会抛出 GraphInterrupt 异常
-            # LangGraph 会捕获这个异常，保存状态，并返回带有 __interrupt__ 字段的结果
-            # 恢复时，调用者需要使用 Command(resume=...) 传递用户响应
+            # Trigger interrupt, pause execution and wait for user response
+            # On first call, interrupt() raises GraphInterrupt exception
+            # LangGraph will catch this exception, save state, and return result with __interrupt__ field
+            # On resume, caller needs to use Command(resume=...) to pass user response
             if INTERRUPT_AVAILABLE:
+                interrupt_value = {
+                    "type": "missing_parameters",
+                    "requests": hitl_messages,
+                    "message": "Waiting for user to provide parameters"
+                }
+                print(f"  🔔 [hitl_params_node] Preparing to trigger interrupt...")
+                print(f"     Interrupt info: {len(hitl_messages)} tasks need parameters")
+                print(f"     Interrupt value: {interrupt_value}")
+                # interrupt will raise exception (this is normal behavior)
+                # LangGraph will catch and save state
+                # Exception will propagate upward for LangGraph to handle
+                # Note: This exception should not be caught, let it propagate to LangGraph
                 try:
-                    interrupt({
-                        "type": "missing_parameters",
-                        "requests": hitl_messages,
-                        "message": "等待用户提供参数"
-                    })
-                except Exception as e:
-                    # interrupt 会抛出异常（这是正常行为）
-                    # LangGraph 会捕获并保存状态
-                    # 异常会向上传播，让 LangGraph 处理
+                    interrupt(interrupt_value)
+                    print(f"  ⚠ [hitl_params_node] interrupt() did not raise exception, this may be abnormal")
+                except Exception as interrupt_e:
+                    # interrupt should raise exception, this is normal
+                    print(f"  ✓ [hitl_params_node] interrupt() raised exception (normal): {type(interrupt_e).__name__}")
+                    print(f"     Exception value: {getattr(interrupt_e, 'value', None)}")
+                    # Re-raise exception for LangGraph to handle
                     raise
             else:
-                # 降级方案：使用状态标记
-                print("  ⚠ 注意：interrupt 功能不可用，将使用状态标记方式")
+                # Fallback: use state marker
+                print("  ⚠ Note: interrupt functionality unavailable, will use state marker method")
     
     return state
 
 
+# Note: Resource checking is now done inside execute_tasks_node, no longer needs separate node
+# Keep this function as helper (if needed)
+def _check_resources_available(state: ExecutorState) -> bool:
+    """
+    Check if there are enough resources to execute tasks (helper function)
+    
+    Returns:
+        True: Has resources to execute tasks
+        False: No resources, need to wait
+    """
+    # Get all ready tasks (excluding running ones)
+    ready_tasks = [
+        task for task in state.subtasks
+        if state.task_status_map.get(task.task_id) == ExecutorTaskStatus.READY
+        and task.task_id not in state.running_tasks
+    ]
+    
+    if not ready_tasks:
+        return False
+    
+    # Calculate number of executable tasks (considering parallel limit)
+    available_slots = state.max_parallel_tasks - len(state.running_tasks)
+    if available_slots <= 0:
+        return False
+    
+    return True
+
+
 def execute_tasks_node(state: ExecutorState) -> ExecutorState:
     """
-    执行任务节点
+    Execute tasks node
     
-    1. 获取所有就绪任务（排除正在运行的）
-    2. 限制并行数量
-    3. 并行执行任务
-    4. 更新任务状态
+    1. Get all ready tasks (excluding running ones)
+    2. Limit parallel count
+    3. Execute tasks in parallel
+    4. Update task status
     """
     ready_tasks = [
         task for task in state.subtasks
@@ -767,40 +1076,510 @@ def execute_tasks_node(state: ExecutorState) -> ExecutorState:
     if not ready_tasks:
         return state
     
-    # 计算可执行的任务数量（考虑并行上限）
+    # Filter out tasks missing parameters (these tasks should wait for HITL response)
+    # Note: Task status may be READY, but if parameters are missing, should not execute
+    tasks_with_params = []
+    for task in ready_tasks:
+        task_result = state.task_results.get(task.task_id)
+        if task_result and task_result.missing_parameters:
+            # Task missing parameters, should not execute, should wait for HITL response
+            print(f"  ⏸ Task {task.task_id} missing parameters, skipping execution: {task_result.missing_parameters}")
+            # Ensure status is WAITING_HITL_PARAMS
+            if state.task_status_map.get(task.task_id) != ExecutorTaskStatus.WAITING_HITL_PARAMS:
+                state.task_status_map[task.task_id] = ExecutorTaskStatus.WAITING_HITL_PARAMS
+            continue
+        tasks_with_params.append(task)
+    
+    if not tasks_with_params:
+        if ready_tasks:
+            print(f"  ⚠ {len(ready_tasks)} ready tasks, but all missing parameters, waiting for HITL response")
+        return state
+    
+    # Calculate number of executable tasks (considering parallel limit)
     available_slots = state.max_parallel_tasks - len(state.running_tasks)
     if available_slots <= 0:
         return state
     
-    tasks_to_execute = ready_tasks[:available_slots]
-    print(f"🔄 开始执行 {len(tasks_to_execute)} 个任务（当前运行: {len(state.running_tasks)}, 最大并行: {state.max_parallel_tasks}）")
+    tasks_to_execute = tasks_with_params[:available_slots]
+    print(f"🔄 Starting execution of {len(tasks_to_execute)} tasks (currently running: {len(state.running_tasks)}, max parallel: {state.max_parallel_tasks})")
     
-    # 执行任务
+    # Execute tasks
     for task in tasks_to_execute:
-        # 标记为运行中
+        # Mark as running
         state.task_status_map[task.task_id] = ExecutorTaskStatus.RUNNING
         state.running_tasks.append(task.task_id)
         
-        # 执行任务
+        # Execute task
         result = _execute_single_task(task, state)
         
-        # 更新任务结果和状态
+        # Update task result and status
         state.task_results[result.task_id] = result
-        state.task_status_map[result.task_id] = result.status
         state.running_tasks.remove(task.task_id)
         
         if result.status == ExecutorTaskStatus.COMPLETED:
             state.completed_count += 1
-            print(f"  ✓ 任务 {result.task_id} 执行成功（耗时 {result.execution_time:.2f}秒）")
+            state.task_status_map[result.task_id] = ExecutorTaskStatus.COMPLETED
+            print(f"  ✓ Task {result.task_id} executed successfully (took {result.execution_time:.2f}s)")
         else:
-            state.failed_count += 1
-            print(f"  ✗ 任务 {result.task_id} 执行失败: {result.error}")
+            # Handle failed tasks: decide whether to re-add to task pool based on error type and retry count
+            should_retry = False
+            
+            if result.error_category == ErrorCategory.NETWORK_ERROR:
+                # Network error: always re-add to task pool (until max retries reached)
+                if result.retry_count < state.max_retries:
+                    should_retry = True
+                    result.retry_count += 1
+                    state.task_status_map[result.task_id] = ExecutorTaskStatus.READY
+                    print(f"  ⚠ Task {result.task_id} network error, re-adding to task pool (retry {result.retry_count}/{state.max_retries})")
+                else:
+                    state.failed_count += 1
+                    state.task_status_map[result.task_id] = ExecutorTaskStatus.FAILED
+                    print(f"  ✗ Task {result.task_id} network error, max retries reached, marked as failed")
+            
+            elif result.error_category == ErrorCategory.RETRYABLE:
+                # Other retryable errors: if max retries not reached, re-add to task pool
+                if result.retry_count < state.max_retries:
+                    should_retry = True
+                    result.retry_count += 1
+                    state.task_status_map[result.task_id] = ExecutorTaskStatus.READY
+                    print(f"  ⚠ Task {result.task_id} retryable error, re-adding to task pool (retry {result.retry_count}/{state.max_retries})")
+                else:
+                    state.failed_count += 1
+                    state.task_status_map[result.task_id] = ExecutorTaskStatus.FAILED
+                    print(f"  ✗ Task {result.task_id} retryable error, max retries reached, marked as failed")
+            
+            else:
+                # Non-retryable errors: directly mark as failed
+                state.failed_count += 1
+                state.task_status_map[result.task_id] = ExecutorTaskStatus.FAILED
+                print(f"  ✗ Task {result.task_id} execution failed ({result.error_category.value}): {result.error}")
+            
+            # If task needs retry, record error info but keep ready status
+            if should_retry:
+                # Save error info for later analysis
+                result.failure_analysis = f"Error type: {result.error_category.value}, Error message: {result.error[:200]}"
+                result.suggestions = [
+                    "Task will automatically retry",
+                    f"Current retry count: {result.retry_count}/{state.max_retries}"
+                ]
     
     return state
 
 
+def _check_and_handle_streaming_task(output: Any, task: SubTask) -> Optional[Dict[str, Any]]:
+    """
+    Check and handle streaming task (streaming_task)
+    
+    Args:
+        output: Tool execution output
+        task: Task object
+        
+    Returns:
+        If streaming task detected and successfully handled, returns processing result dict; otherwise returns None
+    """
+    try:
+        # Parse output, find streaming_task type
+        import json as json_module
+        import re
+        import ast
+        
+        # First try to convert output to Python object (if it's a stringified dict)
+        parsed_output = None
+        if isinstance(output, str):
+            # Try to parse with ast.literal_eval (safe, supports Python literals)
+            try:
+                parsed_output = ast.literal_eval(output)
+                print(f"  🔍 [streaming_task] Successfully parsed string output as Python object")
+            except (ValueError, SyntaxError) as e:
+                # If failed, keep as string
+                parsed_output = output
+                print(f"  🔍 [streaming_task] Cannot parse as Python object, keeping string format: {e}")
+        else:
+            parsed_output = output
+        
+        output_str = str(parsed_output)
+        
+        # Search for streaming_task keyword
+        if "streaming_task" not in output_str:
+            return None
+        
+        print(f"  🔍 [streaming_task] Detected output that may contain streaming_task")
+        
+        # Method 1: If parsed_output is dict, check directly
+        if isinstance(parsed_output, dict):
+            # Check top level
+            if parsed_output.get("type") == "streaming_task":
+                task_id = parsed_output.get("task_id")
+                service_id = parsed_output.get("service_id")
+                if task_id and service_id:
+                    print(f"  🔍 [streaming_task] Detected streaming task: service_id={service_id}, task_id={task_id}")
+                    return _handle_streaming_task(service_id, task_id, task)
+            
+            # Check output field
+            if "output" in parsed_output:
+                output_value = parsed_output["output"]
+                if isinstance(output_value, list):
+                    for item in output_value:
+                        if isinstance(item, dict):
+                            item_text = item.get("text", "")
+                            if item_text and "streaming_task" in item_text:
+                                try:
+                                    # Try to parse JSON
+                                    streaming_info = json_module.loads(item_text)
+                                    if streaming_info.get("type") == "streaming_task":
+                                        task_id = streaming_info.get("task_id")
+                                        service_id = streaming_info.get("service_id")
+                                        if task_id and service_id:
+                                            print(f"  🔍 [streaming_task] Detected streaming task: service_id={service_id}, task_id={task_id}")
+                                            return _handle_streaming_task(service_id, task_id, task)
+                                except (json_module.JSONDecodeError, TypeError):
+                                    # If JSON parsing fails, try regex extraction
+                                    task_id_match = re.search(r'"task_id"\s*:\s*"([^"]+)"', item_text)
+                                    service_id_match = re.search(r'"service_id"\s*:\s*"([^"]+)"', item_text)
+                                    if task_id_match and service_id_match:
+                                        task_id = task_id_match.group(1)
+                                        service_id = service_id_match.group(1)
+                                        print(f"  🔍 [streaming_task] Detected streaming task via regex: service_id={service_id}, task_id={task_id}")
+                                        return _handle_streaming_task(service_id, task_id, task)
+        
+        # Method 2: If parsed_output is list, check elements
+        if isinstance(parsed_output, list):
+            for item in parsed_output:
+                if isinstance(item, dict):
+                    # Check text field
+                    item_text = item.get("text", "")
+                    if item_text and "streaming_task" in item_text:
+                        try:
+                            streaming_info = json_module.loads(item_text)
+                            if streaming_info.get("type") == "streaming_task":
+                                task_id = streaming_info.get("task_id")
+                                service_id = streaming_info.get("service_id")
+                                if task_id and service_id:
+                                    print(f"  🔍 [streaming_task] Detected streaming task: service_id={service_id}, task_id={task_id}")
+                                    return _handle_streaming_task(service_id, task_id, task)
+                        except (json_module.JSONDecodeError, TypeError):
+                            # If JSON parsing fails, try regex extraction
+                            task_id_match = re.search(r'"task_id"\s*:\s*"([^"]+)"', item_text)
+                            service_id_match = re.search(r'"service_id"\s*:\s*"([^"]+)"', item_text)
+                            if task_id_match and service_id_match:
+                                task_id = task_id_match.group(1)
+                                service_id = service_id_match.group(1)
+                                print(f"  🔍 [streaming_task] Detected streaming task via regex: service_id={service_id}, task_id={task_id}")
+                                return _handle_streaming_task(service_id, task_id, task)
+        
+        # Method 3: If still string, try regex extraction directly
+        if isinstance(output, str) or (isinstance(parsed_output, str) and parsed_output == output):
+            # Find task_id and service_id (supports single and double quotes)
+            task_id_match = re.search(r'["\']task_id["\']\s*:\s*["\']([^"\']+)["\']', output_str)
+            service_id_match = re.search(r'["\']service_id["\']\s*:\s*["\']([^"\']+)["\']', output_str)
+            type_match = re.search(r'["\']type["\']\s*:\s*["\']streaming_task["\']', output_str)
+            
+            if task_id_match and service_id_match and type_match:
+                task_id = task_id_match.group(1)
+                service_id = service_id_match.group(1)
+                print(f"  🔍 [streaming_task] Detected streaming task from string via regex: service_id={service_id}, task_id={task_id}")
+                return _handle_streaming_task(service_id, task_id, task)
+        
+        return None
+    except Exception as e:
+        print(f"  ⚠ [streaming_task] Error checking streaming task: {e}")
+        return None
+
+
+def _handle_streaming_task(service_id: str, task_id: str, task: SubTask) -> Dict[str, Any]:
+    """
+    Handle streaming task: establish SSE connection and receive messages
+    
+    Args:
+        service_id: Service ID
+        task_id: Task ID
+        task: Task object
+        
+    Returns:
+        Processing result dictionary
+    """
+    try:
+        # Load MCP server configuration
+        from pathlib import Path
+        import json as json_module
+        
+        agent_dir = Path(__file__).parent.parent.parent
+        mcp_servers_path = agent_dir / "config" / "mcp_servers.json"
+        
+        if not mcp_servers_path.exists():
+            return {
+                "status": ExecutorTaskStatus.FAILED,
+                "error": f"MCP server configuration file does not exist: {mcp_servers_path}",
+                "output": None
+            }
+        
+        with open(mcp_servers_path, "r", encoding="utf-8") as f:
+            mcp_servers = json_module.load(f)
+        
+        if service_id not in mcp_servers:
+            return {
+                "status": ExecutorTaskStatus.FAILED,
+                "error": f"Service {service_id} not in configuration",
+                "output": None
+            }
+        
+        server_config = mcp_servers[service_id]
+        base_url = server_config.get("url", "")
+        
+        # Extract host and port from base_url
+        # Format: http://host:port/sse
+        from urllib.parse import urlparse
+        parsed_url = urlparse(base_url)
+        host = parsed_url.hostname
+        port = parsed_url.port
+        
+        if not host or not port:
+            return {
+                "status": ExecutorTaskStatus.FAILED,
+                "error": f"Cannot extract host and port from service configuration: {base_url}",
+                "output": None
+            }
+        
+        # Build SSE endpoint URL
+        sse_url = f"http://{host}:{port}/stream/{task_id}"
+        print(f"  🔍 [streaming_task] Built SSE URL: {sse_url}")
+        print(f"  🔍 [streaming_task] Service configuration: host={host}, port={port}, base_url={base_url}")
+        
+        # Establish SSE connection and receive messages
+        try:
+            result = _receive_sse_messages(sse_url, task_id, service_id, timeout=3600)  # Default 1 hour timeout
+            print(f"  🔍 [streaming_task] SSE processing returned result: status={result.get('status')}")
+            return result
+        except Exception as e:
+            import traceback
+            error_traceback = traceback.format_exc()
+            print(f"  ✗ [streaming_task] Exception occurred when calling _receive_sse_messages: {e}")
+            print(f"  {error_traceback[:500]}")
+            return {
+                "status": ExecutorTaskStatus.FAILED,
+                "error": f"Exception occurred when calling SSE receive function: {str(e)}",
+                "output": None
+            }
+        
+    except Exception as e:
+        import traceback
+        error_traceback = traceback.format_exc()
+        print(f"  ✗ [streaming_task] Failed to process streaming task: {e}")
+        print(f"  {error_traceback[:500]}")
+        return {
+            "status": ExecutorTaskStatus.FAILED,
+            "error": f"Failed to process streaming task: {str(e)}",
+            "output": None
+        }
+
+
+def _receive_sse_messages(sse_url: str, task_id: str, service_id: str, timeout: int = 3600) -> Dict[str, Any]:
+    """
+    Receive SSE messages until task completion
+    
+    Args:
+        sse_url: SSE endpoint URL
+        task_id: Task ID
+        service_id: Service ID
+        timeout: Timeout in seconds
+        
+    Returns:
+        Processing result dictionary
+    """
+    try:
+        import requests
+        import time
+        from datetime import datetime
+        
+        print(f"  🔍 [streaming_task] Starting to receive SSE messages: {sse_url}")
+        print(f"  🔍 [streaming_task] Timeout setting: {timeout} seconds")
+        
+        start_time = time.time()
+        all_messages = []
+        final_result = None
+        task_completed = False
+        task_failed = False
+        
+        # Establish SSE connection
+        headers = {
+            "Accept": "text/event-stream",
+            "Cache-Control": "no-cache"
+        }
+        
+        try:
+            print(f"  🔍 [streaming_task] Establishing SSE connection: {sse_url}")
+            print(f"  🔍 [streaming_task] Request headers: {headers}")
+            response = requests.get(sse_url, headers=headers, stream=True, timeout=timeout)
+            print(f"  🔍 [streaming_task] Received response, status code: {response.status_code}")
+            response.raise_for_status()
+            
+            print(f"  ✓ [streaming_task] SSE connection established, status code: {response.status_code}")
+            
+            # Read SSE messages line by line
+            for line in response.iter_lines(decode_unicode=True):
+                if time.time() - start_time > timeout:
+                    print(f"  ⚠ [streaming_task] Message reception timeout")
+                    break
+                
+                if not line:
+                    continue
+                
+                # Parse SSE message format
+                # SSE format: data: {...}
+                if line.startswith("data: "):
+                    data_str = line[6:]  # Remove "data: " prefix
+                    try:
+                        import json as json_module
+                        message_data = json_module.loads(data_str)
+                        
+                        message_type = message_data.get("type", "")
+                        message_content = message_data.get("content", message_data.get("message", ""))
+                        
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        all_messages.append({
+                            "timestamp": timestamp,
+                            "type": message_type,
+                            "content": message_content,
+                            "raw": message_data
+                        })
+                        
+                        print(f"  📨 [streaming_task] [{timestamp}] {message_type}: {message_content[:100]}")
+                        
+                        # Check task status
+                        if message_type == "task_completed" or message_data.get("status") == "completed":
+                            task_completed = True
+                            final_result = message_data
+                            print(f"  ✓ [streaming_task] Task completed")
+                            break
+                        elif message_type == "task_failed" or message_data.get("status") == "failed":
+                            task_failed = True
+                            final_result = message_data
+                            error_msg = message_data.get("error", message_data.get("message", "Task failed"))
+                            print(f"  ✗ [streaming_task] Task failed: {error_msg}")
+                            break
+                        elif message_type == "progress" or message_type == "status":
+                            # Update progress information
+                            progress = message_data.get("progress", message_data.get("percentage", 0))
+                            print(f"  📊 [streaming_task] Progress: {progress}%")
+                        
+                    except json_module.JSONDecodeError:
+                        # If not JSON, treat as text message
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        all_messages.append({
+                            "timestamp": timestamp,
+                            "type": "text",
+                            "content": data_str,
+                            "raw": data_str
+                        })
+                        print(f"  📨 [streaming_task] [{timestamp}] text: {data_str[:100]}")
+                
+                elif line.startswith("event: "):
+                    # SSE event type
+                    event_type = line[7:]
+                    print(f"  🔔 [streaming_task] Event type: {event_type}")
+                
+                elif line.startswith("id: "):
+                    # SSE message ID
+                    msg_id = line[4:]
+                    # Can be used for resuming
+        
+        except requests.exceptions.Timeout:
+            return {
+                "status": ExecutorTaskStatus.FAILED,
+                "error": f"SSE message reception timeout ({timeout} seconds)",
+                "output": {
+                    "messages": all_messages,
+                    "final_result": final_result
+                }
+            }
+        except requests.exceptions.RequestException as e:
+            import traceback
+            error_traceback = traceback.format_exc()
+            print(f"  ✗ [streaming_task] SSE connection error: {str(e)}")
+            print(f"  {error_traceback[:500]}")
+            return {
+                "status": ExecutorTaskStatus.FAILED,
+                "error": f"SSE connection error: {str(e)}",
+                "output": {
+                    "messages": all_messages,
+                    "final_result": final_result
+                }
+            }
+        except Exception as e:
+            import traceback
+            error_traceback = traceback.format_exc()
+            print(f"  ✗ [streaming_task] Exception occurred while receiving SSE messages: {str(e)}")
+            print(f"  {error_traceback[:500]}")
+            return {
+                "status": ExecutorTaskStatus.FAILED,
+                "error": f"Exception occurred while receiving SSE messages: {str(e)}",
+                "output": {
+                    "messages": all_messages,
+                    "final_result": final_result
+                }
+            }
+        
+        # Return result based on task status
+        if task_completed:
+            print(f"  ✓ [streaming_task] Task completed successfully, received {len(all_messages)} messages")
+            return {
+                "status": ExecutorTaskStatus.COMPLETED,  # Use ExecutorTaskStatus enum
+                "output": {
+                    "task_id": task_id,
+                    "service_id": service_id,
+                    "messages": all_messages,
+                    "final_result": final_result,
+                    "total_messages": len(all_messages)
+                },
+                "error": None
+            }
+        elif task_failed:
+            error_msg = final_result.get("error", final_result.get("message", "Task failed")) if final_result else "Task failed"
+            print(f"  ✗ [streaming_task] Task failed: {error_msg}")
+            return {
+                "status": ExecutorTaskStatus.FAILED,  # Use ExecutorTaskStatus enum
+                "error": error_msg,
+                "output": {
+                    "task_id": task_id,
+                    "service_id": service_id,
+                    "messages": all_messages,
+                    "final_result": final_result
+                }
+            }
+        else:
+            # Timeout or connection interrupted, but may have partial messages
+            print(f"  ⚠ [streaming_task] Task not completed (may have timed out or connection interrupted), received {len(all_messages)} messages")
+            return {
+                "status": ExecutorTaskStatus.FAILED,  # Use ExecutorTaskStatus enum
+                "error": "Task not completed (may have timed out or connection interrupted)",
+                "output": {
+                    "task_id": task_id,
+                    "service_id": service_id,
+                    "messages": all_messages,
+                    "final_result": final_result,
+                    "partial": True
+                }
+            }
+            
+    except Exception as e:
+        import traceback
+        error_traceback = traceback.format_exc()
+        print(f"  ✗ [streaming_task] Failed to receive SSE messages: {e}")
+        print(f"  {error_traceback[:500]}")
+        return {
+            "status": ExecutorTaskStatus.FAILED,
+            "error": f"Failed to receive SSE messages: {str(e)}",
+            "output": {
+                "task_id": task_id,
+                "service_id": service_id,
+                "error": str(e),
+                "traceback": error_traceback[:500]
+            }
+        }
+
+
 def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionResult:
-    """执行单个任务"""
+    """Execute a single task"""
     start_time = time.time()
     result = state.task_results.get(task.task_id, TaskExecutionResult(
         task_id=task.task_id,
@@ -811,7 +1590,7 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
     result.status = ExecutorTaskStatus.RUNNING
     
     try:
-        # 确定执行模式
+        # Determine execution mode
         task_result = task.result if isinstance(task.result, dict) else {}
         tools = task_result.get("tools", [])
         
@@ -822,10 +1601,10 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
         
         result.execution_mode = execution_mode.value
         
-        # 获取已解析的参数
+        # Get parsed parameters
         parameters = result.parameters
         
-        # 构建 CodeAct 子图输入
+        # Build CodeAct subgraph input
         codeact_input = codeact_input_mapper(
             executor_state=state,
             task=task,
@@ -833,41 +1612,96 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
             parameters=parameters
         )
         
-        # 调用 CodeAct 子图
+        # Call CodeAct subgraph
         codeact_graph = build_codeact_subgraph()
         codeact_output = codeact_graph.invoke(codeact_input)
         
-        # 将字典输出转换为 CodeActState 对象（LangGraph 返回字典）
+        # Convert dict output to CodeActState object (LangGraph returns dict)
         if isinstance(codeact_output, dict):
             codeact_state = CodeActState.model_validate(codeact_output)
         else:
             codeact_state = codeact_output
         
-        # 处理执行结果
+        # Process execution result
         exec_result = codeact_output_mapper(codeact_state)
         if exec_result.get("status") == "success":
-            result.status = ExecutorTaskStatus.COMPLETED
+            output = exec_result.get("output")
+            
+            print(f"  🔍 [execute_task] Checking if output is streaming task, output type: {type(output)}")
+            if isinstance(output, str):
+                print(f"  🔍 [execute_task] Output string length: {len(output)}, first 200 chars: {output[:200]}")
+            
+            # Check if it's a streaming task (streaming_task)
+            streaming_result = _check_and_handle_streaming_task(output, task)
+            if streaming_result:
+                print(f"  ✓ [execute_task] Detected streaming task, starting SSE connection processing...")
+                # If streaming task, use streaming processing result
+                # Note: Streaming tasks must wait for SSE connection to complete, only mark as COMPLETED when truly completed
+                streaming_status = streaming_result.get("status")
+                # Handle status (may be ExecutorTaskStatus enum or string)
+                if isinstance(streaming_status, ExecutorTaskStatus):
+                    result.status = streaming_status
+                elif streaming_status == ExecutorTaskStatus.COMPLETED:
+                    result.status = ExecutorTaskStatus.COMPLETED
+                elif streaming_status == ExecutorTaskStatus.FAILED:
+                    result.status = ExecutorTaskStatus.FAILED
+                elif isinstance(streaming_status, str):
+                    # If string, convert to enum
+                    if streaming_status == "completed" or streaming_status == "COMPLETED":
+                        result.status = ExecutorTaskStatus.COMPLETED
+                    elif streaming_status == "failed" or streaming_status == "FAILED":
+                        result.status = ExecutorTaskStatus.FAILED
+                    else:
+                        # If status unclear, mark as failed (should not happen)
+                        result.status = ExecutorTaskStatus.FAILED
+                        result.error = f"Streaming task returned unknown status: {streaming_status}"
+                else:
+                    # If status unclear, mark as failed (should not happen)
+                    result.status = ExecutorTaskStatus.FAILED
+                    result.error = f"Streaming task returned unknown status type: {type(streaming_status)}"
+                
+                result.output = streaming_result.get("output", output)
+                if streaming_result.get("error"):
+                    result.error = streaming_result.get("error")
+                    result.status = ExecutorTaskStatus.FAILED
+                
+                if result.status:
+                    print(f"  ✓ [streaming_task] Streaming task processing completed, status: {result.status.value}")
+                else:
+                    print(f"  ⚠ [streaming_task] Streaming task processing completed, but status is None")
+            else:
+                # Normal task, directly use original result
+                result.status = ExecutorTaskStatus.COMPLETED
+                result.output = output
+            
             result.code = exec_result.get("code")
-            result.output = exec_result.get("output")
         else:
             result.status = ExecutorTaskStatus.FAILED
-            result.error = exec_result.get("error", "执行失败")
-            result.error_category = classify_error(
-                result.error,
-                exec_result.get("error_type", "UnknownError")
-            )
+            result.error = exec_result.get("error", "Execution failed")
+            error_type = exec_result.get("error_type", "UnknownError")
+            result.error_category = classify_error(result.error, error_type)
+            
+            # Generate error analysis and suggestions
+            result.failure_analysis = _analyze_failure(result.error, error_type, result.error_category)
+            result.suggestions = _generate_suggestions(result.error_category, result.error, result.retry_count, state.max_retries)
     
     except Exception as e:
         result.status = ExecutorTaskStatus.FAILED
         error_msg = str(e)
-        result.error_category = classify_error(error_msg, type(e).__name__)
-        # 记录详细的错误信息以便调试
+        error_type = type(e).__name__
+        result.error_category = classify_error(error_msg, error_type)
+        # Record detailed error info for debugging
         import traceback
         error_traceback = traceback.format_exc()
         if len(error_traceback) > 1000:
             error_traceback = error_traceback[:1000] + "..."
         result.error = f"{error_msg}\n{error_traceback}"
-        print(f"  ✗ 任务 {task.task_id} 执行异常: {error_msg}")
+        
+        # Generate error analysis and suggestions
+        result.failure_analysis = _analyze_failure(error_msg, error_type, result.error_category)
+        result.suggestions = _generate_suggestions(result.error_category, error_msg, result.retry_count, state.max_retries)
+        
+        print(f"  ✗ Task {task.task_id} execution exception: {error_msg}")
     
     result.execution_time = time.time() - start_time
     return result
@@ -875,20 +1709,20 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
 
 def analyze_results_node(state: ExecutorState) -> ExecutorState:
     """
-    结果推理节点
+    Result reasoning node
     
-    使用 LLM 对任务执行结果进行推理，确定是否满足要求。
-    如果不满足，触发 HITL 询问用户是否继续。
+    Use LLM to reason about task execution results and determine if requirements are met.
+    If not satisfied, trigger HITL to ask user if they want to continue.
     """
     llm = create_reasoning_advanced_llm()
     
-    # 分析已完成的任务
+    # Analyze completed tasks
     for task in state.subtasks:
         result = state.task_results.get(task.task_id)
         if not result or result.status != ExecutorTaskStatus.COMPLETED:
             continue
         
-        # 如果已经分析过，跳过
+        # If already analyzed, skip
         if result.result_satisfied is not None:
             continue
         
@@ -897,39 +1731,41 @@ def analyze_results_node(state: ExecutorState) -> ExecutorState:
                 from langchain_core.messages import SystemMessage, HumanMessage
                 
                 analysis_prompt = f"""
-请评估以下任务执行结果是否满足要求：
+Please evaluate whether the following task execution result meets requirements:
 
-任务ID: {result.task_id}
-任务描述: {task.content}
-执行模式: {result.execution_mode}
-执行结果: {str(result.output)[:1000]}
+Task ID: {result.task_id}
+Task description: {task.content}
+Execution mode: {result.execution_mode}
+Execution result: {str(result.output)[:1000]}
 
-请返回JSON格式：
+Please return JSON format:
 {{
     "satisfied": <true/false>,
-    "confidence": <0-1之间的浮点数>,
-    "reason": "<评估理由>",
+    "confidence": <float between 0-1>,
+    "reason": "<evaluation reason>",
     "needs_user_confirmation": <true/false>
 }}
 """
                 messages = [
-                    SystemMessage(content="你是一个专业的任务执行结果评估专家。"),
+                    SystemMessage(content="You are a professional task execution result evaluation expert."),
                     HumanMessage(content=analysis_prompt)
                 ]
                 
                 response = llm.invoke(messages)
                 response_text = response.content.strip()
                 
-                # 解析响应
+                # Parse response
                 import re
                 json_match = re.search(r'\{[^}]+\}', response_text, re.DOTALL)
                 if json_match:
-                    analysis_data = json.loads(json_match.group())
+                    # Ensure using global json module
+                    import json as json_module
+                    analysis_data = json_module.loads(json_match.group())
                     result.result_satisfied = analysis_data.get("satisfied", True)
                     result.confidence_score = analysis_data.get("confidence", 0.5)
                     needs_confirmation = analysis_data.get("needs_user_confirmation", False)
                     
-                    # 如果不满足要求或需要用户确认，触发 HITL
+                    # If not satisfied or needs user confirmation, trigger HITL
                     if not result.result_satisfied or needs_confirmation:
                         state.hitl_requests[task.task_id] = {
                             "type": "result_confirmation",
@@ -937,19 +1773,19 @@ def analyze_results_node(state: ExecutorState) -> ExecutorState:
                             "task_description": task.content,
                             "result": str(result.output)[:500],
                             "reason": analysis_data.get("reason", ""),
-                            "message": f"任务 {task.task_id} 的执行结果可能不满足要求。是否继续执行后续任务？"
+                            "message": f"Task {task.task_id} execution result may not meet requirements. Continue executing subsequent tasks?"
                         }
                         state.task_status_map[task.task_id] = ExecutorTaskStatus.WAITING_HITL_CONFIRM
-                        print(f"  ⚠ 任务 {task.task_id} 结果需要用户确认")
+                        print(f"  ⚠ Task {task.task_id} result needs user confirmation")
             except Exception as e:
-                print(f"  ⚠ 分析结果失败: {e}")
-                result.result_satisfied = True  # 默认认为满足要求
+                print(f"  ⚠ Failed to analyze result: {e}")
+                result.result_satisfied = True  # Default to satisfied
     
     return state
 
 
 def check_hitl_confirm_node(state: ExecutorState) -> Literal["hitl_confirm", "activate"]:
-    """检查是否需要 HITL 确认"""
+    """Check if HITL confirmation is needed"""
     pending_hitl = [
         task_id for task_id, request in state.hitl_requests.items()
         if request.get("type") == "result_confirmation" and task_id not in state.hitl_responses
@@ -963,27 +1799,27 @@ def check_hitl_confirm_node(state: ExecutorState) -> Literal["hitl_confirm", "ac
 
 def hitl_confirm_node(state: ExecutorState) -> ExecutorState:
     """
-    HITL 确认节点
+    HITL confirmation node
     
-    向用户请求确认是否继续执行，并等待响应
-    支持从 interrupt 恢复时接收 resume 值
+    Request user confirmation whether to continue execution and wait for response
+    Supports receiving resume value when resuming from interrupt
     
-    工作流程：
-    1. 首次执行：检查是否有未响应的 HITL 确认请求，如果有则触发 interrupt
-    2. 恢复执行：从 interrupt 的 resume 值中获取用户确认，更新状态，继续执行
+    Workflow:
+    1. First execution: Check if there are unresponded HITL confirmation requests, if so trigger interrupt
+    2. Resume execution: Get user confirmation from interrupt's resume value, update status, continue execution
     """
-    # 尝试获取 resume 值（如果是恢复执行）
+    # Try to get resume value (if resuming execution)
     resume_value = None
     if INTERRUPT_AVAILABLE:
         try:
             resume_value = interrupt()
         except Exception:
-            # 首次调用时，interrupt() 会抛出异常（正常行为）
+            # On first call, interrupt() raises exception (normal behavior)
             resume_value = None
     
-    # 如果有 resume 值，处理用户确认响应
+    # If there's a resume value, process user confirmation response
     if resume_value is not None:
-        # resume_value 可能是 Command 对象或字典
+        # resume_value may be Command object or dict
         if hasattr(resume_value, 'resume'):
             resume_data = resume_value.resume
         elif isinstance(resume_value, dict) and 'resume' in resume_value:
@@ -996,13 +1832,13 @@ def hitl_confirm_node(state: ExecutorState) -> ExecutorState:
             for task_id, response_data in responses.items():
                 if task_id in state.hitl_requests and task_id not in state.hitl_responses:
                     state.hitl_responses[task_id] = response_data
-                    # 更新用户选择
+                    # Update user choice
                     if task_id in state.task_results:
                         result = state.task_results[task_id]
                         result.user_continue = response_data.get("continue", True)
-                        # 标记为已完成（无论用户选择继续与否）
+                        # Mark as completed (regardless of user choice to continue or stop)
                         state.task_status_map[task_id] = ExecutorTaskStatus.COMPLETED
-                        print(f"  ✓ 任务 {task_id} 用户确认: {'继续' if result.user_continue else '停止'}")
+                        print(f"  ✓ Task {task_id} user confirmation: {'continue' if result.user_continue else 'stop'}")
     
     pending_requests = [
         (task_id, request) for task_id, request in state.hitl_requests.items()
@@ -1012,25 +1848,27 @@ def hitl_confirm_node(state: ExecutorState) -> ExecutorState:
     if not pending_requests:
         return state
     
-    # 先检查是否有 HITL 响应（从 parent_state 中获取，作为降级方案）
+    # First check if there are HITL responses (get from parent_state as fallback)
     if state.parent_state and state.parent_state.hitl_status:
         try:
-            hitl_data = json.loads(state.parent_state.hitl_status)
+            # Ensure using global json module
+            import json as json_module
+            hitl_data = json_module.loads(state.parent_state.hitl_status)
             if hitl_data.get("type") == "response_confirmation":
                 responses = hitl_data.get("responses", {})
                 for task_id, response_data in responses.items():
                     if task_id in state.hitl_requests and task_id not in state.hitl_responses:
                         state.hitl_responses[task_id] = response_data
-                        # 更新用户选择
+                        # Update user choice
                         if task_id in state.task_results:
                             result = state.task_results[task_id]
                             result.user_continue = response_data.get("continue", True)
                             state.task_status_map[task_id] = ExecutorTaskStatus.COMPLETED
-                            print(f"  ✓ 任务 {task_id} 用户确认: {'继续' if result.user_continue else '停止'}")
+                            print(f"  ✓ Task {task_id} user confirmation: {'continue' if result.user_continue else 'stop'}")
         except Exception as e:
-            print(f"  ⚠ 解析HITL响应失败: {e}")
+            print(f"  ⚠ Failed to parse HITL response: {e}")
     
-    # 如果还有未响应的请求，设置 HITL 请求信息并触发 interrupt
+    # If there are still unresponded requests, set HITL request info and trigger interrupt
     remaining_requests = [
         task_id for task_id in state.hitl_requests.keys()
         if task_id not in state.hitl_responses
@@ -1055,36 +1893,36 @@ def hitl_confirm_node(state: ExecutorState) -> ExecutorState:
             }, ensure_ascii=False)
             
             print(f"\n{'='*60}")
-            print(f"HITL请求：需要用户确认是否继续")
+            print(f"HITL Request: User needs to confirm whether to continue")
             print(f"{'='*60}")
             for msg in hitl_messages:
-                print(f"任务 {msg['task_id']}: {msg['message']}")
+                print(f"Task {msg['task_id']}: {msg['message']}")
             print(f"{'='*60}\n")
             
-            # 触发 interrupt，暂停执行等待用户确认
+            # Trigger interrupt, pause execution and wait for user confirmation
             if INTERRUPT_AVAILABLE:
                 try:
                     interrupt({
                         "type": "result_confirmation",
                         "requests": hitl_messages,
-                        "message": "等待用户确认是否继续"
+                        "message": "Waiting for user confirmation whether to continue"
                     })
                 except Exception as e:
-                    # interrupt 会抛出异常（这是正常行为）
-                    # LangGraph 会捕获并保存状态
+                    # interrupt will raise exception (this is normal behavior)
+                    # LangGraph will catch and save state
                     raise
             else:
-                print("  ⚠ 注意：interrupt 功能不可用，将使用状态标记方式")
+                print("  ⚠ Note: interrupt functionality unavailable, will use state marker method")
     
     return state
 
 
 def activate_dependent_tasks_node(state: ExecutorState) -> ExecutorState:
     """
-    激活依赖任务节点
+    Activate dependent tasks node
     
-    检查所有等待依赖的任务，如果其依赖都已完成，则标记为就绪
-    如果依赖任务失败，也标记为就绪（允许继续执行，但可能失败）
+    Check all tasks waiting for dependencies, if all dependencies are completed, mark as ready
+    If dependent tasks failed, also mark as ready (allow continued execution, but may fail)
     """
     waiting_tasks = [
         task for task in state.subtasks
@@ -1093,8 +1931,8 @@ def activate_dependent_tasks_node(state: ExecutorState) -> ExecutorState:
     
     activated_count = 0
     for task in waiting_tasks:
-        # 检查所有依赖是否都已完成或失败
-        # 注意：即使依赖失败，也允许后续任务继续执行（可能用于错误处理或清理）
+        # Check if all dependencies are completed or failed
+        # Note: Even if dependencies failed, allow subsequent tasks to continue (may be for error handling or cleanup)
         all_deps_finished = all(
             dep_id in state.task_results and
             state.task_results[dep_id].status in [
@@ -1105,7 +1943,7 @@ def activate_dependent_tasks_node(state: ExecutorState) -> ExecutorState:
         )
         
         if all_deps_finished:
-            # 检查是否有依赖失败
+            # Check if any dependencies failed
             has_failed_deps = any(
                 dep_id in state.task_results and
                 state.task_results[dep_id].status == ExecutorTaskStatus.FAILED
@@ -1113,48 +1951,48 @@ def activate_dependent_tasks_node(state: ExecutorState) -> ExecutorState:
             )
             
             if has_failed_deps:
-                # 如果依赖失败，仍然激活任务，但记录警告
-                print(f"  ⚠ 任务 {task.task_id} 的依赖中有失败的任务，但仍将激活（允许错误处理）")
+                # If dependencies failed, still activate task, but log warning
+                print(f"  ⚠ Task {task.task_id} has failed dependencies, but will still activate (allow error handling)")
             
             state.task_status_map[task.task_id] = ExecutorTaskStatus.READY
             activated_count += 1
-            print(f"  ✓ 任务 {task.task_id} 依赖已完成，已激活")
+            print(f"  ✓ Task {task.task_id} dependencies completed, activated")
     
-    # 更新循环计数器
+    # Update loop counter
     if activated_count > 0:
-        # 如果激活了任务，重置计数器
+        # If tasks were activated, reset counter
         state.activate_iteration_count = 0
-        print(f"✓ 激活了 {activated_count} 个新任务")
+        print(f"✓ Activated {activated_count} new tasks")
     else:
-        # 如果没有激活任何任务，增加计数器
+        # If no tasks were activated, increment counter
         state.activate_iteration_count += 1
         if waiting_tasks:
-            print(f"  ⚠ 有 {len(waiting_tasks)} 个任务仍在等待依赖（连续激活迭代: {state.activate_iteration_count}/{state.max_activate_iterations}）")
-            # 打印每个等待任务的依赖状态，便于调试
-            for task in waiting_tasks[:3]:  # 只打印前3个，避免日志过长
+            print(f"  ⚠ {len(waiting_tasks)} tasks still waiting for dependencies (consecutive activation iterations: {state.activate_iteration_count}/{state.max_activate_iterations})")
+            # Print dependency status for each waiting task for debugging
+            for task in waiting_tasks[:3]:  # Only print first 3 to avoid log being too long
                 dep_statuses = []
                 for dep_id in task.dependencies:
                     if dep_id in state.task_results:
                         dep_statuses.append(f"{dep_id}:{state.task_results[dep_id].status.value}")
                     else:
-                        dep_statuses.append(f"{dep_id}:未执行")
-                print(f"    任务 {task.task_id} 依赖状态: {', '.join(dep_statuses)}")
+                        dep_statuses.append(f"{dep_id}:not_executed")
+                print(f"    Task {task.task_id} dependency status: {', '.join(dep_statuses)}")
     
     return state
 
 
 def check_completion_node(state: ExecutorState) -> Literal["infer_params", "activate", "summary"]:
     """
-    检查完成状态节点
+    Check completion status node
     
-    判断是否所有任务都已完成，决定下一步操作
+    Determine if all tasks are completed and decide next action
     
-    返回逻辑：
-    - "summary": 所有任务都已完成或失败，或者没有就绪任务且没有运行中任务（无法继续执行）
-    - "infer_params": 有就绪任务需要执行
-    - "activate": 没有就绪任务，但可能有等待依赖的任务需要激活，且还有运行中的任务（可能后续会有新的依赖任务被激活）
+    Return logic:
+    - "summary": All tasks completed or failed, or no ready tasks and no running tasks (cannot continue execution)
+    - "infer_params": There are ready tasks to execute
+    - "activate": No ready tasks, but there may be tasks waiting for dependencies that need activation, and there are running tasks (may activate new dependent tasks later)
     """
-    # 检查所有任务是否都已完成或失败
+    # Check if all tasks are completed or failed
     all_completed = all(
         state.task_status_map.get(task.task_id) in [
             ExecutorTaskStatus.COMPLETED,
@@ -1164,10 +2002,10 @@ def check_completion_node(state: ExecutorState) -> Literal["infer_params", "acti
     )
     
     if all_completed:
-        print(f"  ✓ 所有任务已完成，准备汇总结果")
+        print(f"  ✓ All tasks completed, preparing to summarize results")
         return "summary"
     
-    # 检查是否还有就绪任务（未运行）
+    # Check if there are still ready tasks (not running)
     ready_tasks = [
         task for task in state.subtasks
         if state.task_status_map.get(task.task_id) == ExecutorTaskStatus.READY
@@ -1175,45 +2013,89 @@ def check_completion_node(state: ExecutorState) -> Literal["infer_params", "acti
     ]
     
     if ready_tasks:
-        # 有新的就绪任务，重置循环计数器
+        # Have new ready tasks, reset loop counter
         state.activate_iteration_count = 0
-        print(f"  ✓ 有 {len(ready_tasks)} 个就绪任务，开始参数推断")
+        print(f"  ✓ {len(ready_tasks)} ready tasks, starting parameter inference")
         return "infer_params"
     
-    # 检查是否有运行中的任务
+    # Check if there are running tasks
     running_tasks = [
         task for task in state.subtasks
         if state.task_status_map.get(task.task_id) == ExecutorTaskStatus.RUNNING
         or task.task_id in state.running_tasks
     ]
     
-    # 检查是否有等待依赖的任务
+    # Check if there are tasks waiting for dependencies
     waiting_tasks = [
         task for task in state.subtasks
         if state.task_status_map.get(task.task_id) == ExecutorTaskStatus.WAITING_DEPENDENCY
     ]
     
-    # 关键逻辑：如果没有就绪任务，也没有运行中的任务，说明不会有新的任务完成，也就不会有新的依赖任务被激活
-    # 此时应该结束执行
+    # Key logic: If no ready tasks and no running tasks, there won't be new task completions, and no new dependent tasks will be activated
+    # Should end execution at this point
     if not running_tasks:
-        # 没有运行中的任务，说明不会有新的任务完成
-        # 如果还有等待依赖的任务，说明它们的依赖永远不会完成（可能是死锁或依赖失败）
+        # No running tasks, means no new tasks will complete
+        # If there are still tasks waiting for dependencies, their dependencies will never complete (may be deadlock or dependency failure)
         if waiting_tasks:
-            print(f"  ⚠ 没有就绪任务和运行中的任务，但有 {len(waiting_tasks)} 个等待依赖的任务，这些任务的依赖可能永远不会完成，标记为失败并结束")
-            # 将所有等待依赖的任务标记为失败
-            for task in waiting_tasks:
-                state.task_status_map[task.task_id] = ExecutorTaskStatus.FAILED
-                if task.task_id not in state.task_results:
-                    state.task_results[task.task_id] = TaskExecutionResult(
-                        task_id=task.task_id,
-                        status=ExecutorTaskStatus.FAILED,
-                        execution_mode="",
-                        error="依赖任务无法完成，导致无法继续执行"
-                    )
+            # Check if it's a deadlock: all waiting tasks depend on each other, or dependency chain forms a cycle
+            deadlock_detected = _detect_deadlock(waiting_tasks, state)
+            
+            if deadlock_detected:
+                print(f"  ⚠ Deadlock detected: {len(waiting_tasks)} tasks form circular dependencies, marking as failed and ending")
+                # Mark all deadlocked tasks as failed
+                for task in waiting_tasks:
+                    state.task_status_map[task.task_id] = ExecutorTaskStatus.FAILED
+                    if task.task_id not in state.task_results:
+                        state.task_results[task.task_id] = TaskExecutionResult(
+                            task_id=task.task_id,
+                            status=ExecutorTaskStatus.FAILED,
+                            execution_mode="",
+                            error="Deadlock detected: task dependency chain forms a cycle"
+                        )
+            else:
+                # Check if all dependent tasks have failed
+                all_deps_failed = True
+                for task in waiting_tasks:
+                    deps_status = [
+                        state.task_results.get(dep_id, TaskExecutionResult(
+                            task_id=dep_id,
+                            status=ExecutorTaskStatus.FAILED,
+                            execution_mode=""
+                        )).status
+                        for dep_id in task.dependencies
+                    ]
+                    # If all dependencies failed, mark as failed
+                    if all(s == ExecutorTaskStatus.FAILED for s in deps_status):
+                        state.task_status_map[task.task_id] = ExecutorTaskStatus.FAILED
+                        if task.task_id not in state.task_results:
+                            state.task_results[task.task_id] = TaskExecutionResult(
+                                task_id=task.task_id,
+                                status=ExecutorTaskStatus.FAILED,
+                                execution_mode="",
+                            error="All dependent tasks have failed, cannot continue execution"
+                        )
+                    else:
+                        all_deps_failed = False
+                
+                if all_deps_failed:
+                    print(f"  ⚠ All dependencies of tasks waiting for dependencies have failed, marking as failed and ending")
+                else:
+                    print(f"  ⚠ No ready tasks and no running tasks, but {len(waiting_tasks)} tasks waiting for dependencies, their dependencies may never complete, marking as failed and ending")
+                    # Mark remaining tasks waiting for dependencies as failed
+                    for task in waiting_tasks:
+                        if state.task_status_map.get(task.task_id) == ExecutorTaskStatus.WAITING_DEPENDENCY:
+                            state.task_status_map[task.task_id] = ExecutorTaskStatus.FAILED
+                            if task.task_id not in state.task_results:
+                                state.task_results[task.task_id] = TaskExecutionResult(
+                                    task_id=task.task_id,
+                                    status=ExecutorTaskStatus.FAILED,
+                                    execution_mode="",
+                                    error="Dependent tasks cannot complete, causing execution to stop"
+                                )
             return "summary"
         else:
-            # 没有就绪任务，没有运行中的任务，也没有等待依赖的任务，但任务未全部完成
-            # 检查是否有未初始化的任务或其他状态的任务
+            # No ready tasks, no running tasks, no tasks waiting for dependencies, but tasks not all completed
+            # Check if there are uninitialized tasks or tasks in other states
             uninitialized_tasks = [
                 task for task in state.subtasks
                 if task.task_id not in state.task_status_map
@@ -1228,7 +2110,7 @@ def check_completion_node(state: ExecutorState) -> Literal["infer_params", "acti
             ]
             
             if uninitialized_tasks:
-                print(f"  ⚠ 检测到 {len(uninitialized_tasks)} 个未初始化的任务，标记为失败并结束")
+                print(f"  ⚠ Detected {len(uninitialized_tasks)} uninitialized tasks, marking as failed and ending")
                 for task in uninitialized_tasks:
                     state.task_status_map[task.task_id] = ExecutorTaskStatus.FAILED
                     if task.task_id not in state.task_results:
@@ -1236,13 +2118,13 @@ def check_completion_node(state: ExecutorState) -> Literal["infer_params", "acti
                             task_id=task.task_id,
                             status=ExecutorTaskStatus.FAILED,
                             execution_mode="",
-                            error="任务未正确初始化"
+                            error="Task not properly initialized"
                         )
                 return "summary"
             elif other_state_tasks:
-                # 有 HITL 等待的任务，但没有运行中的任务，说明这些任务可能永远不会被响应
-                # 为了安全，标记为失败并结束
-                print(f"  ⚠ 检测到 {len(other_state_tasks)} 个 HITL 等待的任务，但没有运行中的任务，标记为失败并结束")
+                # Have HITL waiting tasks, but no running tasks, means these tasks may never be responded to
+                # For safety, mark as failed and end
+                print(f"  ⚠ Detected {len(other_state_tasks)} HITL waiting tasks, but no running tasks, marking as failed and ending")
                 for task in other_state_tasks:
                     state.task_status_map[task.task_id] = ExecutorTaskStatus.FAILED
                     if task.task_id not in state.task_results:
@@ -1250,18 +2132,18 @@ def check_completion_node(state: ExecutorState) -> Literal["infer_params", "acti
                             task_id=task.task_id,
                             status=ExecutorTaskStatus.FAILED,
                             execution_mode="",
-                            error="HITL 等待超时，无法继续执行"
+                            error="HITL wait timeout, cannot continue execution"
                         )
                 return "summary"
             else:
-                # 可能是状态不一致，强制结束
-                print(f"  ⚠ 没有就绪任务、运行中的任务和等待依赖的任务，但任务未全部完成，可能是状态不一致，强制结束")
+                # May be state inconsistency, force end
+                print(f"  ⚠ No ready tasks, no running tasks, no tasks waiting for dependencies, but tasks not all completed, may be state inconsistency, forcing end")
                 return "summary"
     
-    # 有运行中的任务，检查是否有等待依赖的任务可以激活
+    # Have running tasks, check if there are tasks waiting for dependencies that can be activated
     if waiting_tasks:
-        # 检查这些等待任务是否真的可以激活
-        # 注意：即使依赖失败，也允许激活（activate_dependent_tasks_node 会处理）
+        # Check if these waiting tasks can actually be activated
+        # Note: Even if dependencies failed, allow activation (activate_dependent_tasks_node will handle)
         can_activate = False
         for task in waiting_tasks:
             all_deps_finished = all(
@@ -1277,74 +2159,125 @@ def check_completion_node(state: ExecutorState) -> Literal["infer_params", "acti
                 break
         
         if can_activate:
-            print(f"  ✓ 有等待依赖的任务可以激活（当前有 {len(running_tasks)} 个运行中的任务）")
+            print(f"  ✓ Tasks waiting for dependencies can be activated (currently {len(running_tasks)} running tasks)")
             return "activate"
         else:
-            # 所有等待任务都无法激活，但有运行中的任务，继续等待
-            print(f"  ⚠ 有 {len(waiting_tasks)} 个等待依赖的任务，但依赖尚未完成，继续等待（当前有 {len(running_tasks)} 个运行中的任务）")
+            # All waiting tasks cannot be activated, but have running tasks, continue waiting
+            print(f"  ⚠ {len(waiting_tasks)} tasks waiting for dependencies, but dependencies not yet completed, continue waiting (currently {len(running_tasks)} running tasks)")
             return "activate"
     else:
-        # 没有等待依赖的任务，但有运行中的任务，继续等待
-        print(f"  ⚠ 没有等待依赖的任务，但有 {len(running_tasks)} 个运行中的任务，继续等待")
+        # No tasks waiting for dependencies, but have running tasks, continue waiting
+        print(f"  ⚠ No tasks waiting for dependencies, but {len(running_tasks)} running tasks, continue waiting")
         return "activate"
 
 
 def summary_results_node(state: ExecutorState) -> ExecutorState:
     """
-    汇总结果节点
+    Summary results node
     
-    汇总所有任务的执行结果
+    Summarize execution results of all tasks, including:
+    1. Task-level summary
+    2. Group-level summary (if there are parallel task groups)
     """
     print(f"\n{'='*60}")
-    print(f"执行完成汇总")
+    print(f"Execution Completion Summary")
     print(f"{'='*60}")
-    print(f"总任务数: {state.total_tasks}")
-    print(f"已完成: {state.completed_count}")
-    print(f"失败: {state.failed_count}")
+    print(f"Total tasks: {state.total_tasks}")
+    print(f"Completed: {state.completed_count}")
+    print(f"Failed: {state.failed_count}")
+    
+    # Group-level summary
+    if state.parallel_task_groups:
+        print(f"\nParallel Task Groups Summary:")
+        print(f"{'='*60}")
+        
+        for group_id, group in state.parallel_task_groups.items():
+            # Get all tasks in group
+            group_tasks = []
+            if isinstance(group, dict):
+                group_tasks = group.get('subtasks', [])
+            elif hasattr(group, 'subtasks'):
+                group_tasks = group.subtasks
+            
+            if not group_tasks:
+                continue
+            
+            # Count task statuses in group
+            group_completed = 0
+            group_failed = 0
+            group_results = []
+            
+            for task in group_tasks:
+                task_id = task.task_id if hasattr(task, 'task_id') else task.get('task_id', '')
+                result = state.task_results.get(task_id)
+                if result:
+                    if result.status == ExecutorTaskStatus.COMPLETED:
+                        group_completed += 1
+                    elif result.status == ExecutorTaskStatus.FAILED:
+                        group_failed += 1
+                    group_results.append({
+                        'task_id': task_id,
+                        'status': result.status.value,
+                        'output': result.output,
+                        'error': result.error
+                    })
+            
+            print(f"\nGroup {group_id}:")
+            print(f"  Task count: {len(group_tasks)}")
+            print(f"  Completed: {group_completed}")
+            print(f"  Failed: {group_failed}")
+            
+            # If there are failed tasks, show detailed information
+            if group_failed > 0:
+                print(f"  Failed task details:")
+                for task_result in group_results:
+                    if task_result['status'] == ExecutorTaskStatus.FAILED.value:
+                        print(f"    - {task_result['task_id']}: {task_result['error'][:100] if task_result['error'] else 'Unknown error'}")
+    
     print(f"{'='*60}\n")
     
     return state
 
 
-# ===================== 构建 Executor 子图 =====================
+# ===================== Build Executor Subgraph =====================
 
 def build_executor_subgraph():
-    """构建Executor子图（使用 LangGraph 1.0+ 特性）"""
+    """Build Executor subgraph (using LangGraph 1.0+ features)"""
     graph = StateGraph(ExecutorState)
     
-    # 添加节点
+    # Add nodes
     graph.add_node("initialize", initialize_tasks_node)
     graph.add_node("infer_params", infer_parameters_node)
-    graph.add_node("check_hitl_params", check_hitl_params_node)  # 条件节点
+    graph.add_node("check_hitl_params", check_hitl_params_node)  # Conditional node
     graph.add_node("hitl_params", hitl_params_node)
     graph.add_node("execute", execute_tasks_node)
     graph.add_node("analyze_results", analyze_results_node)
-    graph.add_node("check_hitl_confirm", check_hitl_confirm_node)  # 条件节点
+    graph.add_node("check_hitl_confirm", check_hitl_confirm_node)  # Conditional node
     graph.add_node("hitl_confirm", hitl_confirm_node)
     graph.add_node("activate", activate_dependent_tasks_node)
     graph.add_node("summary", summary_results_node)
     
-    # 定义流程
+    # Define flow
     graph.add_edge(START, "initialize")
     graph.add_edge("initialize", "infer_params")
     
-    # 参数推断后，检查是否需要 HITL
+    # After parameter inference, check if HITL is needed
     graph.add_conditional_edges(
         "infer_params",
         check_hitl_params_node,
         {
             "hitl_params": "hitl_params",
-            "execute": "execute"
+            "execute": "execute"  # Direct execution, resource checking done inside execute node
         }
     )
     
-    # HITL 参数请求后，继续执行
+    # After HITL parameter request, directly execute (resource checking done inside execute node)
     graph.add_edge("hitl_params", "execute")
     
-    # 执行后，分析结果
+    # After execution, analyze results
     graph.add_edge("execute", "analyze_results")
     
-    # 结果分析后，检查是否需要 HITL 确认
+    # After result analysis, check if HITL confirmation is needed
     graph.add_conditional_edges(
         "analyze_results",
         check_hitl_confirm_node,
@@ -1354,46 +2287,46 @@ def build_executor_subgraph():
         }
     )
     
-    # HITL 确认后，激活依赖任务
+    # After HITL confirmation, activate dependent tasks
     graph.add_edge("hitl_confirm", "activate")
     
-    # 激活依赖后，检查完成状态
-    # 注意：这里直接路由，不需要额外的 check_completion 节点
+    # After activating dependencies, check completion status
+    # Note: Direct routing here, no need for additional check_completion node
     graph.add_conditional_edges(
         "activate",
         check_completion_node,
         {
             "infer_params": "infer_params",
-            "activate": "activate",  # 如果还有依赖可以激活，继续激活
-            "summary": "summary"  # 所有任务完成或无法继续，结束
+            "activate": "activate",  # If there are still dependencies that can be activated, continue activating
+            "summary": "summary"  # All tasks completed or cannot continue, end
         }
     )
     
     graph.add_edge("summary", END)
     
-    # 使用 MemorySaver 作为 checkpoint（可以替换为持久化存储）
+    # Use MemorySaver as checkpoint (can be replaced with persistent storage)
     if MemorySaver:
         memory = MemorySaver()
         return graph.compile(checkpointer=memory)
     else:
-        # 如果 MemorySaver 不可用，使用默认编译
+        # If MemorySaver unavailable, use default compilation
         return graph.compile()
 
 
-# ===================== 状态映射函数 =====================
+# ===================== State Mapping Functions =====================
 
 def executor_input_mapper(global_state: GlobalState) -> ExecutorState:
     """
-    将主图状态映射到Executor子图状态
+    Map main graph state to Executor subgraph state
     
     Args:
-        global_state: 主图全局状态
+        global_state: Main graph global state
     
     Returns:
-        Executor子图状态
+        Executor subgraph state
     """
-    # 使用 model_construct 来绕过严格的验证，直接使用 SubTask 对象
-    # 这样可以避免 Pydantic v2 对嵌套模型的严格验证问题
+    # Use model_construct to bypass strict validation, directly use SubTask objects
+    # This avoids Pydantic v2 strict validation issues with nested models
     executor_state = ExecutorState.model_construct(
         subtasks=global_state.subtasks,
         parallel_task_groups=global_state.parallel_task_groups,
@@ -1406,30 +2339,30 @@ def executor_input_mapper(global_state: GlobalState) -> ExecutorState:
 
 def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalState) -> GlobalState:
     """
-    将Executor子图状态映射回主图状态
+    Map Executor subgraph state back to main graph state
     
     Args:
-        executor_state: Executor子图状态
-        global_state: 主图全局状态
+        executor_state: Executor subgraph state
+        global_state: Main graph global state
     
     Returns:
-        更新后的主图状态
+        Updated main graph state
     """
-    # 更新任务结果（包括subtasks和并行任务组中的任务）
+    # Update task results (including tasks in subtasks and parallel task groups)
     all_tasks_to_update = list(global_state.subtasks)
     
-    # 从并行任务组中提取所有任务
+    # Extract all tasks from parallel task groups
     for group_id, group in global_state.parallel_task_groups.items():
         if hasattr(group, 'subtasks') and group.subtasks:
             for task in group.subtasks:
                 if not any(t.task_id == task.task_id for t in all_tasks_to_update):
                     all_tasks_to_update.append(task)
     
-    # 更新所有任务的结果
+    # Update results for all tasks
     for task in all_tasks_to_update:
         task_result = executor_state.task_results.get(task.task_id)
         if task_result and task_result.status == ExecutorTaskStatus.COMPLETED:
-            # 更新任务结果
+            # Update task result
             if not task.result:
                 task.result = {}
             if isinstance(task.result, dict):
@@ -1438,10 +2371,10 @@ def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalSt
                 task.result["code"] = task_result.code
                 task.result["confidence_score"] = task_result.confidence_score
             
-            # 标记任务为已完成
+            # Mark task as completed
             global_state.completed_tasks[task.task_id] = task
     
-    # 更新汇总结果
+    # Update summary results
     global_state.merged_result["executor_results"] = {
         "total_tasks": executor_state.total_tasks,
         "completed": executor_state.completed_count,
@@ -1460,7 +2393,7 @@ def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalSt
         }
     }
     
-    # 更新HITL状态（如果有）
+    # Update HITL status (if any)
     if executor_state.hitl_requests:
         pending_hitl = [
             task_id for task_id in executor_state.hitl_requests.keys()
@@ -1478,7 +2411,7 @@ def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalSt
     return global_state
 
 
-# ===================== Executor 子图执行包装函数（支持 Interrupt） =====================
+# ===================== Executor Subgraph Execution Wrapper Function (Supports Interrupt) =====================
 
 def execute_executor_with_interrupt_support(
     executor_graph,
@@ -1487,86 +2420,233 @@ def execute_executor_with_interrupt_support(
     resume_value: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
-    执行 Executor 子图，支持 interrupt 检测和恢复
+    Execute Executor subgraph with interrupt detection and resume support
     
     Args:
-        executor_graph: 编译后的 Executor 子图
-        initial_state: 初始状态
-        thread_id: 线程ID（用于 checkpoint）
-        resume_value: 恢复值（如果是恢复执行）
+        executor_graph: Compiled Executor subgraph
+        initial_state: Initial state
+        thread_id: Thread ID (for checkpoint)
+        resume_value: Resume value (if resuming execution)
     
     Returns:
-        包含执行结果和中断信息的字典：
+        Dictionary containing execution result and interrupt information:
         {
-            "result": ExecutorState,  # 执行结果
-            "interrupted": bool,  # 是否中断
-            "interrupt_data": Any,  # 中断数据（如果有）
-            "needs_resume": bool  # 是否需要恢复
+            "result": ExecutorState,  # Execution result
+            "interrupted": bool,  # Whether interrupted
+            "interrupt_data": Any,  # Interrupt data (if any)
+            "needs_resume": bool  # Whether resume is needed
         }
     """
     config = {"configurable": {"thread_id": thread_id}}
     
-    # 如果是恢复执行，使用 Command(resume=...)
+    # If resuming execution, use Command(resume=...)
     if resume_value is not None and INTERRUPT_AVAILABLE and Command is not None:
         input_data = Command(resume=resume_value)
     else:
-        # 首次执行，使用普通状态
+        # First execution, use normal state
+        # Save parent_state reference so it can be restored in nodes
+        saved_parent_state = None
         if isinstance(initial_state, dict):
             input_data = initial_state
         else:
+            # Save parent_state reference (because it will be excluded)
+            saved_parent_state = getattr(initial_state, 'parent_state', None)
             input_data = initial_state.model_dump(exclude={'parent_state'}, mode='json')
     
-    # 使用 stream() 来检测中断
+    # Use stream() to detect interrupts
     interrupted = False
     interrupt_data = None
     final_result = None
     
+    # Store parent_state in module variable so nodes can access it
+    # Note: This is not thread-safe, but can be used in single-threaded tests
+    global _current_parent_state
+    _current_parent_state = saved_parent_state
+    print(f"  🔍 [execute_executor] Saved parent_state to module variable: {_current_parent_state is not None}")
+    
     try:
-        # 使用 stream 来逐步执行，可以检测中断
+        # Use stream to execute step by step, can detect interrupts
+        # LangGraph interrupt mechanism:
+        # - When interrupt() is called, it raises GraphInterrupt exception
+        # - LangGraph catches this exception, saves state, and returns special format in stream
+        # - Interrupt info may be in chunk's "__interrupt__" field, or propagated as exception
+        
+        print(f"  🔍 [execute_executor] Starting stream execution, config: {config}")
+        print(f"  🔍 [execute_executor] saved_parent_state exists: {saved_parent_state is not None}")
+        chunk_count = 0
         for chunk in executor_graph.stream(input_data, config=config):
-            # 检查是否有中断
+            chunk_count += 1
+            print(f"  🔍 [execute_executor] Received chunk #{chunk_count}: keys={list(chunk.keys()) if isinstance(chunk, dict) else 'not dict'}")
+            
+            # Restore parent_state in each chunk (if exists)
+            # Because parent_state is excluded, it won't be passed in state, need manual restoration
+            for key, value in chunk.items():
+                if isinstance(value, dict):
+                    try:
+                        state_obj = ExecutorState.model_validate(value)
+                        # Restore parent_state (get from module variable)
+                        if saved_parent_state is not None:
+                            object.__setattr__(state_obj, 'parent_state', saved_parent_state)
+                        final_result = state_obj
+                    except:
+                        pass
+            # Check if there's an interrupt (LangGraph may use different field names)
+            # Possible formats:
+            # 1. chunk["__interrupt__"] - direct interrupt field
+            # 2. chunk itself contains interrupt info
+            # 3. Exception caught and included in chunk
+            
+            # Check all possible keys
+            chunk_keys = list(chunk.keys()) if isinstance(chunk, dict) else []
+            
+            # Check if there's interrupt field
             if "__interrupt__" in chunk:
                 interrupted = True
-                interrupt_data = chunk["__interrupt__"]
-                # 获取当前状态（中断前的状态）
-                # 注意：chunk 中可能包含状态信息
+                interrupt_obj = chunk["__interrupt__"]
+                print(f"  ✓ Interrupt detected (via __interrupt__ field)")
+                
+                # Extract actual value from Interrupt object
+                if hasattr(interrupt_obj, 'value'):
+                    interrupt_data = interrupt_obj.value
+                    print(f"  🔍 [execute_executor] Extracted value from Interrupt object: type={type(interrupt_data)}")
+                elif isinstance(interrupt_obj, dict) and 'value' in interrupt_obj:
+                    interrupt_data = interrupt_obj['value']
+                    # If value itself is Interrupt object, continue extracting
+                    if hasattr(interrupt_data, 'value'):
+                        interrupt_data = interrupt_data.value
+                else:
+                    interrupt_data = interrupt_obj
+                
+                # Get current state (state before interrupt)
                 for key, value in chunk.items():
                     if key != "__interrupt__":
-                        # 这可能是状态更新
                         if isinstance(value, dict):
                             try:
                                 final_result = ExecutorState.model_validate(value)
+                                # Restore parent_state
+                                if saved_parent_state is not None:
+                                    object.__setattr__(final_result, 'parent_state', saved_parent_state)
                             except:
                                 pass
                 break
-            else:
-                # 正常的状态更新
+            elif isinstance(chunk, dict) and any("interrupt" in str(k).lower() for k in chunk_keys):
+                # Check if there are keys containing "interrupt"
                 for key, value in chunk.items():
-                    if isinstance(value, dict):
-                        try:
-                            final_result = ExecutorState.model_validate(value)
-                        except:
-                            pass
+                    if "interrupt" in str(key).lower():
+                        interrupted = True
+                        interrupt_data = value
+                        print(f"  ✓ Interrupt detected (via {key} field)")
+                        break
+                if interrupted:
+                    break
+            
+            # Normal state updates
+            for key, value in chunk.items():
+                if isinstance(value, dict):
+                    try:
+                        final_result = ExecutorState.model_validate(value)
+                        # Restore parent_state (because excluded, won't be passed in state)
+                        if saved_parent_state is not None:
+                            object.__setattr__(final_result, 'parent_state', saved_parent_state)
+                    except:
+                        pass
         
-        # 如果没有中断，获取最终结果
+        # If no interrupt, get final result
         if not interrupted and final_result is None:
-            # 使用 invoke 获取最终结果
-            output = executor_graph.invoke(input_data, config=config)
-            if isinstance(output, dict):
-                final_result = ExecutorState.model_validate(output)
-            else:
-                final_result = output
+            # Use invoke to get final result
+            try:
+                output = executor_graph.invoke(input_data, config=config)
+                if isinstance(output, dict):
+                    final_result = ExecutorState.model_validate(output)
+                else:
+                    final_result = output
+            except Exception as invoke_e:
+                # If invoke also raises exception, may be interrupt
+                if "interrupt" in str(invoke_e).lower() or "GraphInterrupt" in str(type(invoke_e).__name__):
+                    interrupted = True
+                    interrupt_data = getattr(invoke_e, 'value', None) or str(invoke_e)
+                    print(f"  ✓ Interrupt detected (via invoke exception)")
+                else:
+                    raise
         
     except Exception as e:
-        # 如果 interrupt 抛出异常，这是正常行为
-        # LangGraph 会在 stream 中处理这个异常
-        if "interrupt" in str(e).lower() or "GraphInterrupt" in str(type(e).__name__):
+        # If interrupt raises exception, this is normal behavior
+        # LangGraph will handle this exception in stream
+        error_str = str(e).lower()
+        error_type = type(e).__name__
+        
+        if "interrupt" in error_str or "GraphInterrupt" in error_type:
             interrupted = True
-            # 尝试从异常中提取中断信息
-            interrupt_data = getattr(e, 'value', None) or str(e)
+            # Try to extract interrupt info from exception
+            interrupt_data = getattr(e, 'value', None)
+            if interrupt_data is None:
+                # Try to extract from exception message
+                if hasattr(e, 'args') and e.args:
+                    interrupt_data = e.args[0]
+                else:
+                    interrupt_data = str(e)
+            print(f"  ✓ Interrupt detected (via exception: {error_type})")
+            print(f"     Interrupt data: {interrupt_data}")
         else:
-            # 其他异常，重新抛出
-            raise
+            # Check if it's other type of exception but may contain interrupt info
+            # Sometimes LangGraph wraps interrupt info in other exceptions
+            if hasattr(e, 'value'):
+                interrupt_data = e.value
+                if interrupt_data and isinstance(interrupt_data, dict):
+                    interrupted = True
+                    print(f"  ✓ Interrupt detected (via exception.value: {error_type})")
+                else:
+                    # Other exception, re-raise
+                    print(f"  ✗ Unexpected exception: {error_type}: {e}")
+                    raise
+            else:
+                # Other exception, re-raise
+                print(f"  ✗ Unexpected exception: {error_type}: {e}")
+                raise
+    
+    # Ensure interrupt_data is dict format (if tuple or other type, convert to dict)
+    if interrupt_data is not None:
+        # First, if interrupt_data is Interrupt object, extract its value
+        if hasattr(interrupt_data, 'value'):
+            interrupt_data = interrupt_data.value
+            print(f"  🔍 [execute_executor] Extracted value from Interrupt object: type={type(interrupt_data)}")
+        
+        # If extracted value is still Interrupt object (nested case), continue extracting
+        if hasattr(interrupt_data, 'value'):
+            interrupt_data = interrupt_data.value
+            print(f"  🔍 [execute_executor] Extracted value from nested Interrupt object: type={type(interrupt_data)}")
+        
+        if isinstance(interrupt_data, tuple):
+            # LangGraph interrupt may return tuple, need to convert to dict
+            if len(interrupt_data) == 2:
+                # May be (key, value) format
+                value = interrupt_data[1]
+                # If value is Interrupt object, extract its value
+                if hasattr(value, 'value'):
+                    value = value.value
+                interrupt_data = {"key": interrupt_data[0], "value": value}
+            elif len(interrupt_data) == 1:
+                # May be single value
+                value = interrupt_data[0]
+                if hasattr(value, 'value'):
+                    value = value.value
+                interrupt_data = {"value": value}
+            else:
+                # Multiple values, convert to dict
+                interrupt_data = {f"arg_{i}": (v.value if hasattr(v, 'value') else v) for i, v in enumerate(interrupt_data)}
+            print(f"  🔍 [execute_executor] Converted interrupt_data from tuple to dict: {interrupt_data}")
+        elif not isinstance(interrupt_data, dict):
+            # If other type (like string), convert to dict
+            if isinstance(interrupt_data, str):
+                # Try to parse JSON string
+                try:
+                    import json as json_module
+                    interrupt_data = json_module.loads(interrupt_data)
+                except:
+                    interrupt_data = {"value": interrupt_data}
+            else:
+                interrupt_data = {"value": interrupt_data}
+            print(f"  🔍 [execute_executor] Converted interrupt_data to dict: {interrupt_data}")
     
     return {
         "result": final_result,
@@ -1582,25 +2662,25 @@ def resume_executor_after_interrupt(
     resume_value: Any
 ) -> Dict[str, Any]:
     """
-    恢复 Executor 子图的执行（在中断后）
+    Resume Executor subgraph execution (after interrupt)
     
     Args:
-        executor_graph: 编译后的 Executor 子图
-        thread_id: 线程ID（必须与中断时相同）
-        resume_value: 恢复值（用户响应）
+        executor_graph: Compiled Executor subgraph
+        thread_id: Thread ID (must be same as when interrupted)
+        resume_value: Resume value (user response)
     
     Returns:
-        执行结果字典（格式同 execute_executor_with_interrupt_support）
+        Execution result dictionary (same format as execute_executor_with_interrupt_support)
     """
     if not INTERRUPT_AVAILABLE or Command is None:
-        raise ValueError("interrupt 功能不可用，无法恢复执行")
+        raise ValueError("interrupt functionality unavailable, cannot resume execution")
     
     config = {"configurable": {"thread_id": thread_id}}
     
-    # 使用 Command(resume=...) 来恢复执行
+    # Use Command(resume=...) to resume execution
     input_data = Command(resume=resume_value)
     
-    # 继续执行
+    # Continue execution
     interrupted = False
     interrupt_data = None
     final_result = None
@@ -1609,7 +2689,16 @@ def resume_executor_after_interrupt(
         for chunk in executor_graph.stream(input_data, config=config):
             if "__interrupt__" in chunk:
                 interrupted = True
-                interrupt_data = chunk["__interrupt__"]
+                interrupt_obj = chunk["__interrupt__"]
+                # Extract actual value from Interrupt object
+                if hasattr(interrupt_obj, 'value'):
+                    interrupt_data = interrupt_obj.value
+                elif isinstance(interrupt_obj, dict) and 'value' in interrupt_obj:
+                    interrupt_data = interrupt_obj['value']
+                    if hasattr(interrupt_data, 'value'):
+                        interrupt_data = interrupt_data.value
+                else:
+                    interrupt_data = interrupt_obj
                 break
             else:
                 for key, value in chunk.items():
@@ -1629,7 +2718,12 @@ def resume_executor_after_interrupt(
     except Exception as e:
         if "interrupt" in str(e).lower() or "GraphInterrupt" in str(type(e).__name__):
             interrupted = True
-            interrupt_data = getattr(e, 'value', None) or str(e)
+            interrupt_data = getattr(e, 'value', None)
+            # If interrupt_data is Interrupt object, extract its value
+            if interrupt_data and hasattr(interrupt_data, 'value'):
+                interrupt_data = interrupt_data.value
+            if interrupt_data is None:
+                interrupt_data = str(e)
         else:
             raise
     

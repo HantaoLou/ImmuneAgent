@@ -1,7 +1,7 @@
 """
-Executor Agent 子图模块
+Executor Agent Subgraph Module
 
-负责执行任务列表中的任务，包括MCP工具调用和codeAct代码生成执行。
+Responsible for executing tasks in the task list, including MCP tool calls and codeAct code generation and execution.
 """
 
 from .graph import (

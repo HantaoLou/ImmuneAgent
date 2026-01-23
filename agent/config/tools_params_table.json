@@ -245,7 +245,7 @@
     }
   },
   {
-    "af3": {
+    "alphafold3": {
       "service_id": "af3",
       "input_params": [
         {
@@ -5425,7 +5425,7 @@
     }
   },
   {
-    "data_integration": {
+    "integrate_bcr_data_complete": {
       "service_id": "r_data_integration",
       "input_params": [
         {

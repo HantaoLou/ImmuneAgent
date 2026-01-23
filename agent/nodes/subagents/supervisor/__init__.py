@@ -1,2 +1,2 @@
-"""Supervisor subagent 模块"""
+"""Supervisor subagent module"""
 
