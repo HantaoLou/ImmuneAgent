@@ -9,7 +9,7 @@
   },
   {
     "service_id": "bindcraft",
-    "description": "BindCraft antibody design service for antibody-antigen binding design, result analysis, and report generation"
+    "description": "BindCraft de novo protein binder design workflow, handling configuration, execution, monitoring, result analysis, and report generation"
   },
   {
     "service_id": "r_communication",
@@ -21,11 +21,11 @@
   },
   {
     "service_id": "r_annotation",
-    "description": "Cell type annotation R service including marker gene annotation, SingleR automatic annotation, annotation validation, etc."
+    "description": "Cell type annotation R service including marker gene annotation, SingleR automatic annotation, annotation validation."
   },
   {
     "service_id": "bioinformatics",
-    "description": "Bioinformatics analysis service including visualization, statistical analysis, data integration, trajectory analysis, etc."
+    "description": "Modular single-cell B-cell analysis platform wrapping R scripts for antigen binding prediction, trajectory inference, SHM analysis, and visualization."
   },
   {
     "service_id": "mpnn",
@@ -37,7 +37,7 @@
   },
   {
     "service_id": "foldseek",
-    "description": "Foldseek protein structure search service for structural similarity search, clustering, and database management"
+    "description": "Foldseek-based structure search and clustering service, supporting sequence-to-structure queries complex analysis and database management"
   },
   {
     "service_id": "nettcr",
@@ -45,7 +45,7 @@
   },
   {
     "service_id": "file_utils",
-    "description": "File utility service including format conversion (CSV/XLSX/FASTA), file download, data merging, etc."
+    "description": "File utility service including format conversion (CSV/XLSX/FASTA), file download, data merging"
   },
   {
     "service_id": "airr",
@@ -56,19 +56,19 @@
     "description": "GEO and IEDB database service for gene expression data, epitope data, and antibody data download and search"
   },
   {
-    "service_id": "mcpas",
-    "description": "McPAS-TCR database service for TCR sequence data download, search, and statistical analysis"
+    "service_id": "mcpas_tcr",
+    "description": "McPAS-TCR pathology-associated database service for TCR sequence data download, search, and statistical analysis"
   },
   {
     "service_id": "sabdab",
-    "description": "SAbDab antibody structure database service for antibody PDB structure download and metadata query"
+    "description": " SAbDab antibody structure database service for antibody PDB structure download, metadata query, and full dataset retrieval."
   },
   {
     "service_id": "lineage_analysis",
-    "description": "Lineage analysis service for integrating experimental data, prediction results, and single-cell data"
+    "description": "Influenza BCR lineage analysis service for integrating experimental data, prediction results, and single-cell data"
   },
   {
-    "service_id": "fdg",
+    "service_id": "foldx_ddg_gearbind ",
     "description": "FoldX/DDG/GearBind analysis service for antibody stability analysis and energy calculation"
   },
   {
@@ -129,7 +129,7 @@
   },
   {
     "service_id": "spired_fitness",
-    "description": "SPIRED-Fitness protein fitness prediction service for predicting protein fitness values"
+    "description": "SPIRED-Fitness protein fitness prediction service"
   },
   {
     "service_id": "protein_energy_design",

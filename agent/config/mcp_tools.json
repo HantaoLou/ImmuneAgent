@@ -251,7 +251,7 @@
   },
   {
     "name": "download_mcpas_database",
-    "service": "mcpas",
+    "service": "mcpas_tcr",
     "description": "Download McPAS-TCR database containing pathology-related TCR sequences, support caching"
   },
   {
@@ -320,8 +320,8 @@
     "description": "Extract UMAP coordinates and cell metadata from Seurat RDS, output CSV files"
   },
   {
-    "name": "fdg",
-    "service": "fdg",
+    "name": "foldx_ddg_gearbind",
+    "service": "foldx_ddg_gearbind",
     "description": "Run FoldX/DDG/GearBind analysis on AlphaFold3 PDB files, output antibody candidates and result CSV"
   },
   {
@@ -391,7 +391,7 @@
   },
   {
     "name": "get_mcpas_statistics",
-    "service": "mcpas",
+    "service": "mcpas_tcr",
     "description": "Get McPAS-TCR database statistics including classifications, species, and MHC distribution"
   },
   {
@@ -451,7 +451,7 @@
   {
     "name": "integrate_predictions_with_experimental_data",
     "service": "lineage_analysis",
-    "description": "Integrate machine learning prediction results with experimental data, output comprehensive datasets with features"
+    "description": "Integrate machine learning Multi-fold results with experimental data, output comprehensive datasets with features"
   },
   {
     "name": "integrate_scbcr_bulk_bcr_data",
@@ -755,7 +755,7 @@
   },
   {
     "name": "search_mcpas_tcr",
-    "service": "mcpas",
+    "service": "mcpas_tcr",
     "description": "Search McPAS-TCR database, support filtering and sequence fuzzy matching"
   },
   {

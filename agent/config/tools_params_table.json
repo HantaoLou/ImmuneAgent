@@ -1,7 +1,7 @@
 [
   {
-    "fdg": {
-      "service_id": "fdg",
+    "foldx_ddg_gearbind": {
+      "service_id": "foldx_ddg_gearbind",
       "input_params": [
         {
           "name": "input_file_path",
@@ -3745,7 +3745,7 @@
   },
   {
     "download_mcpas_database": {
-      "service_id": "mcpas",
+      "service_id": "mcpas_tcr",
       "input_params": [
         {
           "name": "force_refresh",
@@ -3771,7 +3771,7 @@
   },
   {
     "search_mcpas_tcr": {
-      "service_id": "mcpas",
+      "service_id": "mcpas_tcr",
       "input_params": [
         {
           "name": "cdr3_beta",
@@ -3902,7 +3902,7 @@
   },
   {
     "get_mcpas_statistics": {
-      "service_id": "mcpas",
+      "service_id": "mcpas_tcr",
       "input_params": [
         {
           "name": "statistics_type",
