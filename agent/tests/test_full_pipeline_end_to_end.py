@@ -35,7 +35,12 @@ if str(agent_dir) not in sys.path:
 
 from state import GlobalState, UserTaskType
 from main_graph import build_main_graph
-from nodes.subagents.executor.graph import ExecutorTaskStatus
+from nodes.subagents.executor.graph import (
+    ExecutorTaskStatus,
+    resume_executor_after_interrupt,
+    execute_executor_with_interrupt_support
+)
+from utils.hitl_interaction import handle_hitl_interrupt
 
 # 导入测试日志记录器
 try:
@@ -66,6 +71,81 @@ TEST_QUESTIONS = [
     #     "expected_classification": UserTaskType.IMMUNOLOGY_TASK
     # }
 ]
+
+
+def _serialize_interrupt_data(data: Any) -> Dict[str, Any]:
+    """
+    Serialize interrupt_data, converting Interrupt objects to serializable dictionaries
+    
+    Args:
+        data: Data that may contain Interrupt objects
+        
+    Returns:
+        Serializable dictionary
+    """
+    if data is None:
+        return {}
+    
+    # If it's an Interrupt object (usually has value and id attributes)
+    if hasattr(data, 'value') and hasattr(data, 'id'):
+        return {
+            "type": "Interrupt",
+            "id": str(getattr(data, 'id', '')),
+            "value": _serialize_interrupt_data(getattr(data, 'value', {}))
+        }
+    
+    # If it's a dictionary, recursively process
+    if isinstance(data, dict):
+        return {k: _serialize_interrupt_data(v) for k, v in data.items()}
+    
+    # If it's a list, recursively process
+    if isinstance(data, list):
+        return [_serialize_interrupt_data(item) for item in data]
+    
+    # For other types, try to convert to string or return as-is
+    try:
+        json.dumps(data)
+        return data
+    except (TypeError, ValueError):
+        return str(data)
+
+
+def extract_interrupt_value(obj: Any, max_depth: int = 5) -> Any:
+    """
+    Recursively extract interrupt value until a dictionary is obtained
+    
+    Args:
+        obj: Interrupt object or nested structure
+        max_depth: Maximum recursion depth
+        
+    Returns:
+        Extracted interrupt value (usually a dictionary)
+    """
+    if max_depth <= 0:
+        return obj
+    
+    # If it's an Interrupt object, extract its value
+    if hasattr(obj, 'value'):
+        return extract_interrupt_value(obj.value, max_depth - 1)
+    
+    # If it's a dictionary, check if there's a 'value' field
+    if isinstance(obj, dict):
+        if 'value' in obj:
+            return extract_interrupt_value(obj['value'], max_depth - 1)
+        # If it's already in the correct format (has 'type' field), return directly
+        if 'type' in obj:
+            return obj
+        return obj
+    
+    # If it's a tuple, extract the second element
+    if isinstance(obj, tuple):
+        if len(obj) >= 2:
+            return extract_interrupt_value(obj[1], max_depth - 1)
+        elif len(obj) == 1:
+            return extract_interrupt_value(obj[0], max_depth - 1)
+        return obj
+    
+    return obj
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -355,8 +435,7 @@ def _test_full_pipeline(question: Dict[str, Any], main_graph=None, request=None,
         from nodes.subagents.executor.graph import (
             build_executor_subgraph,
             executor_input_mapper,
-            executor_output_mapper,
-            execute_executor_with_interrupt_support
+            executor_output_mapper
         )
         
         executor_subgraph = build_executor_subgraph()
@@ -364,12 +443,105 @@ def _test_full_pipeline(question: Dict[str, Any], main_graph=None, request=None,
         
         # 执行executor（支持中断）
         thread_id = f"full_pipeline_{question['id']}"
+        print(f"开始执行 Executor，线程ID: {thread_id}\n")
+        
+        # 首次执行
         result = execute_executor_with_interrupt_support(
             executor_subgraph,
             executor_input,
             thread_id=thread_id
         )
         
+        # 处理中断循环
+        iteration_count = 0
+        max_iterations = 50  # Prevent infinite loop
+        
+        while result.get("interrupted", False) and iteration_count < max_iterations:
+            iteration_count += 1
+            interrupt_data = result.get("interrupt_data")
+            
+            if not interrupt_data:
+                # Try to get from parent_state
+                if executor_input.parent_state and executor_input.parent_state.hitl_status:
+                    try:
+                        interrupt_data = json.loads(executor_input.parent_state.hitl_status)
+                    except:
+                        pass
+            
+            if interrupt_data:
+                # Extract actual interrupt data (recursively extract until we get a real dictionary)
+                actual_interrupt_data = extract_interrupt_value(interrupt_data)
+                
+                # Ensure actual_interrupt_data is dictionary format
+                if not isinstance(actual_interrupt_data, dict):
+                    actual_interrupt_data = {"value": actual_interrupt_data}
+                
+                print(f"\n{'='*80}")
+                print(f"【HITL Interrupt #{iteration_count}】")
+                print(f"{'='*80}")
+                print(f"Interrupt data type: {type(interrupt_data)}")
+                print(f"Extracted interrupt data type: {type(actual_interrupt_data)}")
+                print(f"Interrupt data content: {actual_interrupt_data}")
+                
+                if logger:
+                    # Serialize interrupt_data to ensure JSON serializable
+                    serialized_data = _serialize_interrupt_data(actual_interrupt_data)
+                    logger.log_hitl_request(
+                        task_id=actual_interrupt_data.get("task_id", "unknown"),
+                        request_type=actual_interrupt_data.get("type", "unknown"),
+                        request_data=serialized_data
+                    )
+                
+                try:
+                    # Use console interaction to get user input
+                    # actual_interrupt_data should be a dictionary containing type, requests, etc.
+                    user_response = handle_hitl_interrupt(
+                        actual_interrupt_data,
+                        callback=None,  # Use default console interaction
+                        use_file=False
+                    )
+                    
+                    if logger:
+                        # Serialize user_response to ensure JSON serializable
+                        serialized_response = _serialize_interrupt_data(user_response)
+                        logger.log_hitl_response(
+                            task_id=actual_interrupt_data.get("task_id", "unknown"),
+                            response_type=user_response.get("type", "unknown"),
+                            response_data=serialized_response
+                        )
+                    
+                    # Update global_state's hitl_status
+                    state_after_decomposition.hitl_status = json.dumps(user_response, ensure_ascii=False)
+                    
+                    # Resume execution
+                    print(f"\nResuming execution...\n")
+                    print(f"  🔍 [test] Resuming execution, thread_id={thread_id}")
+                    print(f"  🔍 [test] resume_value type: {type(user_response)}")
+                    print(f"  🔍 [test] resume_value content: {user_response}")
+                    
+                    result = resume_executor_after_interrupt(
+                        executor_subgraph,
+                        thread_id=thread_id,
+                        resume_value=user_response
+                    )
+                    
+                    print(f"  🔍 [test] Resume execution result: interrupted={result.get('interrupted', False)}")
+                    
+                    if logger:
+                        logger.log_node_execution("executor_subgraph", None, result.get("result"), f"Resume execution #{iteration_count}")
+                    
+                except KeyboardInterrupt:
+                    print("\nUser interrupted, terminating execution")
+                    break
+                except Exception as e:
+                    print(f"\n⚠ HITL interaction failed: {e}")
+                    print(f"Continuing execution, but may not be able to get user input")
+                    break
+            else:
+                print(f"\n⚠ Interrupt detected, but unable to get interrupt data")
+                break
+        
+        # Get final result
         executor_output = result.get("result")
         if executor_output is None:
             executor_output = executor_input

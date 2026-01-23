@@ -1,18 +1,11 @@
 """
 Executor 完整工作流交互式测试用例
 
-测试完整的蛋白抗原优化流程，基于 comprehensive_1.1.3_蛋白抗原优化_工具选择_20260122_215142.md
+测试使用 igblast 和 metabcr 工具的工作流
 
-任务列表（9个任务）：
-1. task_001 - 下载流感NA蛋白序列并转换为FASTA格式（download_url, convert_csv_to_fasta）
-2. task_002 - 使用AlphaFold3预测3D结构（alphafold3）
-3. task_003 - 使用easy_search比较预测结构与已知晶体结构（easy_search）
-4. task_004 - 分析晶体结构并识别功能位点（search_from_sequence）
-5. task_005 - 使用FoldX计算所有单点突变的ΔΔG（mutatex_saturation_scan，并行组）
-6. task_006 - 过滤稳定化突变（merge_csv_by_key）
-7. task_007 - 使用ProteinMPNN设计优化序列（design_with_fixed_positions，并行组）
-8. task_008 - 评估设计序列与骨架的兼容性（score_sequences_on_backbone）
-9. task_009 - 基于稳定性分数和功能位点保护过滤设计序列（merge_csv_by_key）
+任务列表（2个任务）：
+1. task_001 - 使用 igblast 工具批量分析 V(D)J 重组（analyze_vdj_batch）
+2. task_002 - 使用 metabcr 工具预测抗体-抗原结合亲和力（metabcr）
 
 这是一个交互式测试，会在触发HITL时暂停，等待用户在控制台输入参数。
 
@@ -145,210 +138,77 @@ def setup_global_logger():
 
 def create_full_workflow_tasks() -> list[SubTask]:
     """
-    创建完整工作流的任务列表（蛋白抗原优化流程）
-    
-    基于 comprehensive_1.1.3_蛋白抗原优化_工具选择_20260122_215142.md 中的任务列表
+    创建完整工作流的任务列表（使用 igblast 和 metabcr 工具）
     
     流程：
-    1. task_001 - 下载流感NA蛋白序列并转换为FASTA格式
-    2. task_002 - 使用AlphaFold3预测3D结构
-    3. task_003 - 使用easy_search比较预测结构与已知晶体结构
-    4. task_004 - 分析晶体结构并识别功能位点
-    5. task_005 - 使用FoldX计算所有单点突变的ΔΔG（并行组）
-    6. task_006 - 过滤稳定化突变（ΔΔG ≤ -2.0 kcal/mol）
-    7. task_007 - 使用ProteinMPNN设计优化序列（并行组）
-    8. task_008 - 评估设计序列与骨架的兼容性
-    9. task_009 - 基于稳定性分数和功能位点保护过滤设计序列
+    1. task_001 - 使用 igblast 工具批量分析 V(D)J 重组
+    2. task_002 - 使用 metabcr 工具预测抗体-抗原结合亲和力
     """
     tasks = []
     
-    # 阶段2：AlphaFold3结构预测
-    task2 = SubTask(
-        task_id="task_002",
+    # Task 1: 使用 igblast 工具分析 V(D)J 重组
+    task1 = SubTask(
+        task_id="task_001",
         task_type=UserTaskType.EXECUTE_PLAN,
-        content="Use AlphaFold3 to predict 3D structures for each influenza NA strain",
+        content="Use igblast to batch analyze V(D)J recombination from antibody sequences",
         result={
             "tools": [
                 {
-                    "tool_name": "alphafold3",
-                    "name": "alphafold3",
-                    "service": "af3",
-                    "description": "Predict 3D structures from Excel antibody sequences (heavy/light chains) using AlphaFold3, output PDB files with streaming progress"
+                    "tool_name": "analyze_vdj_batch",
+                    "name": "analyze_vdj_batch",
+                    "service": "igblast",
+                    "description": "Batch analyze V(D)J recombination using IgBLAST+ChangeO, output AIRR format results"
                 }
             ],
-            "inputs": ["alphafold3.input_file"],  # 需要Excel格式的序列文件
-            "outputs": ["predicted_pdb_files"]
+            "inputs": [
+                "analyze_vdj_batch.sequences",  # FASTA file with antibody sequences
+                "analyze_vdj_batch.organism",   # human, mouse, rabbit, rat, rhesus, pig
+                "analyze_vdj_batch.receptor_type",  # Ig or TCR
+                "analyze_vdj_batch.locus"  # IGH, IGK, IGL, TRA, TRB, TRG, TRD
+            ],
+            "outputs": ["airr_results"]  # AIRR format results
         },
         dependencies=[]
     )
+    tasks.append(task1)
+    
+    # Task 2: 使用 metabcr 工具预测抗体-抗原结合亲和力
+    task2 = SubTask(
+        task_id="task_002",
+        task_type=UserTaskType.EXECUTE_PLAN,
+        content="Use metabcr to predict antibody-antigen binding affinity",
+        result={
+            "tools": [
+                {
+                    "tool_name": "metabcr",
+                    "name": "metabcr",
+                    "service": "metabcr",
+                    "description": "MetaBCR deep learning model predicts antibody-antigen binding affinity, stream progress"
+                }
+            ],
+            "inputs": [
+                "metabcr.antibody_file",  # CSV file with antibody sequences
+                "metabcr.antigen_file",   # CSV file with antigen sequences
+                "metabcr.antigen_name",   # flu, sars, rsv, hiv
+                "metabcr.output_file_path"  # Output file path
+            ],
+            "outputs": ["binding_affinity_results"]
+        },
+        dependencies=["task_001"]  # May use results from task_001
+    )
     tasks.append(task2)
-    
-    # 阶段3：结构比较验证
-    task3 = SubTask(
-        task_id="task_003",
-        task_type=UserTaskType.EXECUTE_PLAN,
-        content="Compare AlphaFold3 predicted structures with known crystal structures of influenza NA using TM-align to assess prediction accuracy",
-        result={
-            "tools": [
-                {
-                    "tool_name": "easy_search",
-                    "name": "easy_search",
-                    "service": "foldseek",
-                    "description": "Fast protein structure search, 10,000x faster than TMalign, support GPU acceleration, for homology identification"
-                }
-            ],
-            "inputs": ["easy_search.query", "easy_search.target", "easy_search.sensitivity", "easy_search.e_value", "easy_search.alignment_type", "easy_search.max_seqs", "easy_search.coverage", "easy_search.use_gpu", "easy_search.output_format"],
-            "outputs": ["structure_similarity_scores", "alignments"]
-        },
-        dependencies=["task_002"]
-    )
-    tasks.append(task3)
-    
-    # 阶段4：识别功能位点
-    task4 = SubTask(
-        task_id="task_004",
-        task_type=UserTaskType.EXECUTE_PLAN,
-        content="Analyze known crystal structures of influenza NA and perform sequence alignment to identify catalytic residues, substrate binding sites, and other functional regions",
-        result={
-            "tools": [
-                {
-                    "tool_name": "search_from_sequence",
-                    "name": "search_from_sequence",
-                    "service": "foldseek",
-                    "description": "Quickly search structure databases from amino acid sequences based on ProstT5 3Di encoding, completes in minutes"
-                }
-            ],
-            "inputs": ["search_from_sequence.fasta_input", "search_from_sequence.target_database", "search_from_sequence.sensitivity", "search_from_sequence.e_value", "search_from_sequence.use_gpu"],
-            "outputs": ["functional_sites", "conserved_residues"]
-        },
-        dependencies=["task_002", "task_003"]
-    )
-    tasks.append(task4)
-    
-    # 阶段5：FoldX饱和突变扫描（并行组任务1）
-    task5 = SubTask(
-        task_id="task_005",
-        task_type=UserTaskType.EXECUTE_PLAN,
-        content="Use FoldX to calculate ΔΔG for all possible single mutations and identify stabilizing mutations",
-        result={
-            "tools": [
-                {
-                    "tool_name": "mutatex_saturation_scan",
-                    "name": "mutatex_saturation_scan",
-                    "service": "mutatex",
-                    "description": "Use FoldX to predict protein Gibbs free energy and energy differences after saturation point mutations"
-                }
-            ],
-            "inputs": ["mutatex_saturation_scan.pdb_path", "mutatex_saturation_scan.output_dir", "mutatex_saturation_scan.threads"],
-            "outputs": ["ddg_results_csv"]
-        },
-        dependencies=["task_002", "task_004"]
-    )
-    tasks.append(task5)
-    
-    # 阶段6：过滤稳定化突变
-    task6 = SubTask(
-        task_id="task_006",
-        task_type=UserTaskType.EXECUTE_PLAN,
-        content="Filter mutations to identify those with ΔΔG ≤ -2.0 kcal/mol and exclude those at functional sites",
-        result={
-            "tools": [
-                {
-                    "tool_name": "merge_csv_by_key",
-                    "name": "merge_csv_by_key",
-                    "service": "file_utils",
-                    "description": "Merge two CSV files by key, automatically handle column name conflicts, stream progress"
-                }
-            ],
-            "inputs": ["merge_csv_by_key.input_file1", "merge_csv_by_key.input_file2", "merge_csv_by_key.key_column", "merge_csv_by_key.output_file"],
-            "outputs": ["filtered_mutations_csv"]
-        },
-        dependencies=["task_005", "task_004"]
-    )
-    tasks.append(task6)
-    
-    # 阶段7：ProteinMPNN设计优化序列（并行组任务2）
-    task7 = SubTask(
-        task_id="task_007",
-        task_type=UserTaskType.EXECUTE_PLAN,
-        content="Use ProteinMPNN to design optimized sequences with fixed functional positions to preserve critical regions while enhancing stability",
-        result={
-            "tools": [
-                {
-                    "tool_name": "design_with_fixed_positions",
-                    "name": "design_with_fixed_positions",
-                    "service": "mpnn",
-                    "description": "Design sequences with fixed key positions, preserve CDR regions, functional residues, and disulfide bond cysteines"
-                }
-            ],
-            "inputs": ["design_with_fixed_positions.pdb_path", "design_with_fixed_positions.fixed_positions", "design_with_fixed_positions.design_positions", "design_with_fixed_positions.num_sequences", "design_with_fixed_positions.temperature", "design_with_fixed_positions.output_dir"],
-            "outputs": ["optimized_sequences_fasta"]
-        },
-        dependencies=["task_002", "task_004"]
-    )
-    tasks.append(task7)
-    
-    # 阶段8：评估序列兼容性
-    task8 = SubTask(
-        task_id="task_008",
-        task_type=UserTaskType.EXECUTE_PLAN,
-        content="Evaluate sequence compatibility with protein backbone for designed sequences to assess stability",
-        result={
-            "tools": [
-                {
-                    "tool_name": "score_sequences_on_backbone",
-                    "name": "score_sequences_on_backbone",
-                    "service": "mpnn",
-                    "description": "Evaluate sequence compatibility with protein backbone for mutation validation and library screening"
-                }
-            ],
-            "inputs": ["score_sequences_on_backbone.pdb_path", "score_sequences_on_backbone.sequences", "score_sequences_on_backbone.chain_id", "score_sequences_on_backbone.per_residue"],
-            "outputs": ["compatibility_scores_csv"]
-        },
-        dependencies=["task_007", "task_002"]
-    )
-    tasks.append(task8)
-    
-    # 阶段9：过滤优化序列
-    task9 = SubTask(
-        task_id="task_009",
-        task_type=UserTaskType.EXECUTE_PLAN,
-        content="Filter designed sequences based on predicted stability scores and functional site preservation to identify optimal variants",
-        result={
-            "tools": [
-                {
-                    "tool_name": "merge_csv_by_key",
-                    "name": "merge_csv_by_key",
-                    "service": "file_utils",
-                    "description": "Merge two CSV files by key, automatically handle column name conflicts, stream progress"
-                }
-            ],
-            "inputs": ["merge_csv_by_key.input_file1", "merge_csv_by_key.input_file2", "merge_csv_by_key.key_column", "merge_csv_by_key.output_file"],
-            "outputs": ["filtered_optimized_sequences_csv"]
-        },
-        dependencies=["task_008", "task_004"]
-    )
-    tasks.append(task9)
     
     return tasks
 
 
 def test_full_protein_mrna_workflow(executor_subgraph=None, request=None, test_case_logger=None):
     """
-    完整蛋白抗原优化工作流测试
+    完整工作流测试（使用 igblast 和 metabcr 工具）
     
     这是一个交互式测试，会在触发HITL时暂停，等待用户输入。
-    测试基于 comprehensive_1.1.3_蛋白抗原优化_工具选择_20260122_215142.md 中的任务列表，
-    包含9个任务，形成一个完整的蛋白抗原优化流程：
-    1. 下载并转换序列
-    2. AlphaFold3结构预测
-    3. 结构比较验证
-    4. 功能位点识别
-    5. FoldX饱和突变扫描（并行）
-    6. 过滤稳定化突变
-    7. ProteinMPNN设计优化序列（并行）
-    8. 评估序列兼容性
-    9. 过滤优化序列
+    测试包含2个任务：
+    1. 使用 igblast 工具批量分析 V(D)J 重组
+    2. 使用 metabcr 工具预测抗体-抗原结合亲和力
     """
     # 如果没有提供executor_subgraph，构建一个
     if executor_subgraph is None:
@@ -370,7 +230,9 @@ def test_full_protein_mrna_workflow(executor_subgraph=None, request=None, test_c
     print(f"【完整工作流交互式测试】")
     print(f"{'='*80}")
     print(f"测试目录: {test_dir.absolute()}")
-    print(f"此测试将使用9个任务，形成一个完整的蛋白抗原优化流程")
+    print(f"此测试将使用2个任务：")
+    print(f"  1. task_001 - 使用 igblast 工具批量分析 V(D)J 重组")
+    print(f"  2. task_002 - 使用 metabcr 工具预测抗体-抗原结合亲和力")
     print(f"当触发HITL时，请在控制台输入所需参数")
     print(f"{'='*80}\n")
     
@@ -448,14 +310,29 @@ def test_full_protein_mrna_workflow(executor_subgraph=None, request=None, test_c
                 if max_depth <= 0:
                     return obj
                 
+                # 如果对象是None，直接返回
+                if obj is None:
+                    return obj
+                
                 # 如果是 Interrupt 对象，提取其 value
                 if hasattr(obj, 'value'):
-                    return extract_interrupt_value(obj.value, max_depth - 1)
+                    value = getattr(obj, 'value', None)
+                    if value is not None:
+                        return extract_interrupt_value(value, max_depth - 1)
+                    else:
+                        # value是None，返回对象本身
+                        return obj
                 
                 # 如果是字典，检查是否有 'value' 字段
                 if isinstance(obj, dict):
                     if 'value' in obj:
-                        return extract_interrupt_value(obj['value'], max_depth - 1)
+                        value = obj['value']
+                        if value is not None:
+                            return extract_interrupt_value(value, max_depth - 1)
+                        else:
+                            # value是None，如果已经有type字段，返回字典本身
+                            if 'type' in obj:
+                                return obj
                     # 如果已经是正确的格式（有 'type' 字段），直接返回
                     if 'type' in obj:
                         return obj
@@ -496,23 +373,36 @@ def test_full_protein_mrna_workflow(executor_subgraph=None, request=None, test_c
             try:
                 # 使用控制台交互获取用户输入
                 # actual_interrupt_data 应该是包含 type、requests 等字段的字典
+                print(f"  🔍 [test] 准备调用 handle_hitl_interrupt，interrupt_data type: {type(actual_interrupt_data)}")
                 user_response = handle_hitl_interrupt(
                     actual_interrupt_data,
                     callback=None,  # 使用默认控制台交互
                     use_file=False
                 )
+                print(f"  ✓ [test] handle_hitl_interrupt 成功返回，response type: {type(user_response)}")
                 
                 if logger:
-                    # 序列化 user_response，确保可以 JSON 序列化
-                    serialized_response = _serialize_interrupt_data(user_response)
-                    logger.log_hitl_response(
-                        task_id=actual_interrupt_data.get("task_id", "unknown"),
-                        response_type=user_response.get("type", "unknown"),
-                        response_data=serialized_response
-                    )
+                    try:
+                        # 序列化 user_response，确保可以 JSON 序列化
+                        serialized_response = _serialize_interrupt_data(user_response)
+                        logger.log_hitl_response(
+                            task_id=actual_interrupt_data.get("task_id", "unknown"),
+                            response_type=user_response.get("type", "unknown"),
+                            response_data=serialized_response
+                        )
+                    except Exception as log_e:
+                        print(f"  ⚠ [test] 记录HITL响应日志失败: {log_e}")
                 
                 # 更新global_state的hitl_status
-                global_state.hitl_status = json.dumps(user_response, ensure_ascii=False)
+                try:
+                    global_state.hitl_status = json.dumps(user_response, ensure_ascii=False)
+                except Exception as json_e:
+                    print(f"  ⚠ [test] 序列化user_response失败: {json_e}")
+                    # 尝试使用安全的序列化方法
+                    try:
+                        global_state.hitl_status = json.dumps(_serialize_interrupt_data(user_response), ensure_ascii=False)
+                    except Exception as json_e2:
+                        print(f"  ⚠ [test] 安全序列化也失败: {json_e2}")
                 
                 # 恢复执行
                 print(f"\n恢复执行...\n")
@@ -520,24 +410,45 @@ def test_full_protein_mrna_workflow(executor_subgraph=None, request=None, test_c
                 print(f"  🔍 [test] resume_value 类型: {type(user_response)}")
                 print(f"  🔍 [test] resume_value 内容: {user_response}")
                 
-                result = resume_executor_after_interrupt(
-                    executor_subgraph,
-                    thread_id=thread_id,
-                    resume_value=user_response
-                )
-                
-                print(f"  🔍 [test] 恢复执行结果: interrupted={result.get('interrupted', False)}")
+                try:
+                    result = resume_executor_after_interrupt(
+                        executor_subgraph,
+                        thread_id=thread_id,
+                        resume_value=user_response
+                    )
+                    print(f"  🔍 [test] 恢复执行结果: interrupted={result.get('interrupted', False)}")
+                except Exception as resume_e:
+                    import traceback
+                    error_traceback = traceback.format_exc()
+                    print(f"  ✗ [test] resume_executor_after_interrupt 失败: {resume_e}")
+                    print(f"  {error_traceback}")
+                    raise
                 
                 if logger:
-                    logger.log_node_execution("executor_subgraph", None, result.get("result"), f"恢复执行 #{iteration_count}")
+                    try:
+                        logger.log_node_execution("executor_subgraph", None, result.get("result"), f"恢复执行 #{iteration_count}")
+                    except Exception as log_e:
+                        print(f"  ⚠ [test] 记录执行日志失败: {log_e}")
                 
             except KeyboardInterrupt:
                 print("\n用户退出，终止执行")
                 break
             except Exception as e:
+                import traceback
+                error_traceback = traceback.format_exc()
                 print(f"\n⚠ HITL交互处理失败: {e}")
+                print(f"错误类型: {type(e).__name__}")
+                print(f"错误堆栈:\n{error_traceback}")
                 print(f"继续执行，但可能无法获取用户输入")
-                break
+                # 不再直接break，而是尝试继续
+                # 如果错误严重，让异常继续传播
+                if "NoneType" in str(e) and "value" in str(e):
+                    # 这是已知的错误，尝试继续
+                    print(f"  ℹ [test] 检测到NoneType.value错误，尝试继续执行...")
+                    break
+                else:
+                    # 其他错误，重新抛出
+                    raise
         else:
             print(f"\n⚠ 检测到中断，但无法获取中断数据")
             break
@@ -570,13 +481,13 @@ def test_full_protein_mrna_workflow(executor_subgraph=None, request=None, test_c
         for task_id, task_result in final_state.task_results.items():
             logger.log_task_execution(
                 task_id=task_id,
-                status=task_result.status.value if hasattr(task_result.status, 'value') else str(task_result.status),
+                status=task_result.status.value if (task_result.status and hasattr(task_result.status, 'value')) else str(task_result.status) if task_result.status else "None",
                 execution_mode=task_result.execution_mode,
                 result={
                     "output": str(task_result.output)[:500] if task_result.output else None,
                     "confidence_score": task_result.confidence_score,
                     "error": task_result.error[:200] if task_result.error else None,
-                    "error_category": task_result.error_category.value if task_result.error_category else None,
+                    "error_category": task_result.error_category.value if (task_result.error_category and hasattr(task_result.error_category, 'value')) else str(task_result.error_category) if task_result.error_category else None,
                     "retry_count": task_result.retry_count
                 },
                 error=task_result.error[:500] if task_result.error else None
@@ -588,7 +499,7 @@ def test_full_protein_mrna_workflow(executor_subgraph=None, request=None, test_c
                     task_id=task_id,
                     generated_code=task_result.code[:1000],
                     execution_result={
-                        "status": task_result.status.value if hasattr(task_result.status, 'value') else str(task_result.status),
+                        "status": task_result.status.value if (task_result.status and hasattr(task_result.status, 'value')) else str(task_result.status) if task_result.status else "None",
                         "output": str(task_result.output)[:500] if task_result.output else None
                     }
                 )
@@ -637,7 +548,8 @@ def test_full_protein_mrna_workflow(executor_subgraph=None, request=None, test_c
         task_result = final_state.task_results.get(task.task_id)
         if task_result:
             status_icon = "✓" if task_result.status == ExecutorTaskStatus.COMPLETED else "✗" if task_result.status == ExecutorTaskStatus.FAILED else "⏳"
-            print(f"  {status_icon} {task.task_id}: {task_result.status.value}")
+            status_str = task_result.status.value if (task_result.status and hasattr(task_result.status, 'value')) else str(task_result.status) if task_result.status else "None"
+            print(f"  {status_icon} {task.task_id}: {status_str}")
             if task_result.error:
                 print(f"     错误: {task_result.error[:100]}")
             if task_result.retry_count > 0:

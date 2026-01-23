@@ -282,7 +282,8 @@ def _analyze_failure(error: str, error_type: str, error_category: ErrorCategory)
     Returns:
         Failure reason analysis
     """
-    analysis = f"Error type: {error_category.value}\n"
+    error_category_str = error_category.value if (error_category and hasattr(error_category, 'value')) else str(error_category) if error_category else "Unknown"
+    analysis = f"Error type: {error_category_str}\n"
     analysis += f"Error category: {error_type}\n"
     
     if error_category == ErrorCategory.NETWORK_ERROR:
@@ -845,7 +846,16 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                             
                             # Process parameter mapping
                             mapped_parameters = {}
+                            skipped_params = set()  # Track skipped parameters (value is None)
                             for user_param_name, param_value in response_data["parameters"].items():
+                                # If parameter value is None, it means user skipped it
+                                if param_value is None:
+                                    skipped_params.add(user_param_name)
+                                    # Also add parameter name without tool prefix if applicable
+                                    if '.' in user_param_name:
+                                        skipped_params.add(user_param_name.split('.', 1)[1])
+                                    continue
+                                
                                 # Check if mapping is needed
                                 # If parameter name contains tool prefix (e.g., "tool_name.param_name"), need separate handling
                                 if '.' in user_param_name:
@@ -864,7 +874,7 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                                     # Also keep original parameter name (in case tool accepts it)
                                     mapped_parameters[user_param_name] = param_value
                             
-                            # Update parameters
+                            # Update parameters (only non-None values)
                             result.parameters.update(mapped_parameters)
                             
                             # Remove provided parameters from missing_parameters
@@ -872,6 +882,15 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                             provided_params = set(mapped_parameters.keys())
                             # Also check original parameter names
                             provided_params.update(response_data["parameters"].keys())
+                            
+                            # Also remove skipped parameters from missing_parameters
+                            # (User explicitly skipped them, so remove from missing list)
+                            for skipped_param in skipped_params:
+                                provided_params.add(skipped_param)
+                                # Also add with tool prefix if applicable
+                                for missing_param in list(result.missing_parameters):
+                                    if missing_param == skipped_param or missing_param.endswith(f".{skipped_param}"):
+                                        provided_params.add(missing_param)
                             
                             result.missing_parameters = [
                                 p for p in result.missing_parameters
@@ -920,7 +939,16 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                                 }
                                 
                                 mapped_parameters = {}
+                                skipped_params = set()  # Track skipped parameters (value is None)
                                 for user_param_name, param_value in response_data["parameters"].items():
+                                    # If parameter value is None, it means user skipped it
+                                    if param_value is None:
+                                        skipped_params.add(user_param_name)
+                                        # Also add parameter name without tool prefix if applicable
+                                        if '.' in user_param_name:
+                                            skipped_params.add(user_param_name.split('.', 1)[1])
+                                        continue
+                                    
                                     if '.' in user_param_name:
                                         parts = user_param_name.split('.', 1)
                                         tool_prefix = parts[0]
@@ -936,6 +964,14 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                                 result.parameters.update(mapped_parameters)
                                 provided_params = set(mapped_parameters.keys())
                                 provided_params.update(response_data["parameters"].keys())
+                                
+                                # Also remove skipped parameters from missing_parameters
+                                for skipped_param in skipped_params:
+                                    provided_params.add(skipped_param)
+                                    # Also add with tool prefix if applicable
+                                    for missing_param in list(result.missing_parameters):
+                                        if missing_param == skipped_param or missing_param.endswith(f".{skipped_param}"):
+                                            provided_params.add(missing_param)
                                 
                                 result.missing_parameters = [
                                     p for p in result.missing_parameters
@@ -1124,7 +1160,7 @@ def execute_tasks_node(state: ExecutorState) -> ExecutorState:
             # Handle failed tasks: decide whether to re-add to task pool based on error type and retry count
             should_retry = False
             
-            if result.error_category == ErrorCategory.NETWORK_ERROR:
+            if result.error_category and result.error_category == ErrorCategory.NETWORK_ERROR:
                 # Network error: always re-add to task pool (until max retries reached)
                 if result.retry_count < state.max_retries:
                     should_retry = True
@@ -1136,7 +1172,7 @@ def execute_tasks_node(state: ExecutorState) -> ExecutorState:
                     state.task_status_map[result.task_id] = ExecutorTaskStatus.FAILED
                     print(f"  ✗ Task {result.task_id} network error, max retries reached, marked as failed")
             
-            elif result.error_category == ErrorCategory.RETRYABLE:
+            elif result.error_category and result.error_category == ErrorCategory.RETRYABLE:
                 # Other retryable errors: if max retries not reached, re-add to task pool
                 if result.retry_count < state.max_retries:
                     should_retry = True
@@ -1152,12 +1188,14 @@ def execute_tasks_node(state: ExecutorState) -> ExecutorState:
                 # Non-retryable errors: directly mark as failed
                 state.failed_count += 1
                 state.task_status_map[result.task_id] = ExecutorTaskStatus.FAILED
-                print(f"  ✗ Task {result.task_id} execution failed ({result.error_category.value}): {result.error}")
+                error_category_str = result.error_category.value if (result.error_category and hasattr(result.error_category, 'value')) else str(result.error_category) if result.error_category else "Unknown"
+                print(f"  ✗ Task {result.task_id} execution failed ({error_category_str}): {result.error}")
             
             # If task needs retry, record error info but keep ready status
             if should_retry:
                 # Save error info for later analysis
-                result.failure_analysis = f"Error type: {result.error_category.value}, Error message: {result.error[:200]}"
+                error_category_str = result.error_category.value if (result.error_category and hasattr(result.error_category, 'value')) else str(result.error_category) if result.error_category else "Unknown"
+                result.failure_analysis = f"Error type: {error_category_str}, Error message: {result.error[:200] if result.error else 'No error message'}"
                 result.suggestions = [
                     "Task will automatically retry",
                     f"Current retry count: {result.retry_count}/{state.max_retries}"
@@ -1303,7 +1341,10 @@ def _handle_streaming_task(service_id: str, task_id: str, task: SubTask) -> Dict
         from pathlib import Path
         import json as json_module
         
-        agent_dir = Path(__file__).parent.parent.parent
+        # Calculate agent directory correctly
+        # __file__ is at: agent/nodes/subagents/executor/graph.py
+        # Need to go up 4 levels: executor -> subagents -> nodes -> agent
+        agent_dir = Path(__file__).parent.parent.parent.parent
         mcp_servers_path = agent_dir / "config" / "mcp_servers.json"
         
         if not mcp_servers_path.exists():
@@ -1411,7 +1452,21 @@ def _receive_sse_messages(sse_url: str, task_id: str, service_id: str, timeout: 
             print(f"  🔍 [streaming_task] Request headers: {headers}")
             response = requests.get(sse_url, headers=headers, stream=True, timeout=timeout)
             print(f"  🔍 [streaming_task] Received response, status code: {response.status_code}")
-            response.raise_for_status()
+            
+            # Check response status
+            if response.status_code != 200:
+                error_msg = f"SSE connection failed with status code {response.status_code}"
+                print(f"  ✗ [streaming_task] {error_msg}")
+                return {
+                    "status": ExecutorTaskStatus.FAILED,
+                    "error": error_msg,
+                    "output": {
+                        "task_id": task_id,
+                        "service_id": service_id,
+                        "response_status": response.status_code,
+                        "response_text": response.text[:500] if hasattr(response, 'text') else None
+                    }
+                }
             
             print(f"  ✓ [streaming_task] SSE connection established, status code: {response.status_code}")
             
@@ -1433,7 +1488,20 @@ def _receive_sse_messages(sse_url: str, task_id: str, service_id: str, timeout: 
                         message_data = json_module.loads(data_str)
                         
                         message_type = message_data.get("type", "")
-                        message_content = message_data.get("content", message_data.get("message", ""))
+                        # Extract data field if exists (MCP server may wrap data in "data" field)
+                        data_field = message_data.get("data", {})
+                        if isinstance(data_field, dict):
+                            # If data field exists, merge it with message_data for easier access
+                            # But keep original structure in raw
+                            message_content = message_data.get("content", message_data.get("message", ""))
+                            if not message_content and data_field:
+                                # Try to construct message from data field
+                                if "status" in data_field:
+                                    message_content = f"Status: {data_field.get('status')}"
+                                if "progress_percent" in data_field:
+                                    message_content += f", Progress: {data_field.get('progress_percent')}%"
+                        else:
+                            message_content = message_data.get("content", message_data.get("message", ""))
                         
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         all_messages.append({
@@ -1445,22 +1513,55 @@ def _receive_sse_messages(sse_url: str, task_id: str, service_id: str, timeout: 
                         
                         print(f"  📨 [streaming_task] [{timestamp}] {message_type}: {message_content[:100]}")
                         
-                        # Check task status
-                        if message_type == "task_completed" or message_data.get("status") == "completed":
+                        # Check task status (check both top level and data field)
+                        status = message_data.get("status")
+                        if isinstance(data_field, dict):
+                            status = status or data_field.get("status")
+                        
+                        if message_type == "task_completed" or status == "completed":
                             task_completed = True
                             final_result = message_data
                             print(f"  ✓ [streaming_task] Task completed")
                             break
-                        elif message_type == "task_failed" or message_data.get("status") == "failed":
+                        elif message_type == "task_failed" or status == "failed":
                             task_failed = True
                             final_result = message_data
                             error_msg = message_data.get("error", message_data.get("message", "Task failed"))
+                            if isinstance(data_field, dict) and not error_msg:
+                                error_msg = data_field.get("error", data_field.get("message", "Task failed"))
                             print(f"  ✗ [streaming_task] Task failed: {error_msg}")
                             break
                         elif message_type == "progress" or message_type == "status":
-                            # Update progress information
-                            progress = message_data.get("progress", message_data.get("percentage", 0))
-                            print(f"  📊 [streaming_task] Progress: {progress}%")
+                            # Update progress information (check both top level and data field)
+                            progress = None
+                            if isinstance(data_field, dict):
+                                # MCP server format: {"type": "progress", "data": {"progress_percent": 6.0, ...}}
+                                progress = data_field.get("progress_percent")
+                                if progress is None:
+                                    progress = data_field.get("progress")
+                                if progress is None:
+                                    progress = data_field.get("percentage")
+                            
+                            # Fallback to top level
+                            if progress is None:
+                                progress = message_data.get("progress")
+                            if progress is None:
+                                progress = message_data.get("percentage")
+                            if progress is None:
+                                progress = 0
+                            
+                            # Extract additional progress info from data field
+                            batch_info = ""
+                            if isinstance(data_field, dict):
+                                batch_current = data_field.get("batch_current")
+                                batch_total = data_field.get("batch_total")
+                                elapsed_minutes = data_field.get("elapsed_minutes")
+                                if batch_current is not None and batch_total is not None:
+                                    batch_info = f" ({batch_current}/{batch_total} batches)"
+                                if elapsed_minutes is not None:
+                                    batch_info += f", elapsed: {elapsed_minutes:.1f} min"
+                            
+                            print(f"  📊 [streaming_task] Progress: {progress}%{batch_info}")
                         
                     except json_module.JSONDecodeError:
                         # If not JSON, treat as text message
@@ -1638,18 +1739,20 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
                 # If streaming task, use streaming processing result
                 # Note: Streaming tasks must wait for SSE connection to complete, only mark as COMPLETED when truly completed
                 streaming_status = streaming_result.get("status")
+                
                 # Handle status (may be ExecutorTaskStatus enum or string)
-                if isinstance(streaming_status, ExecutorTaskStatus):
-                    result.status = streaming_status
-                elif streaming_status == ExecutorTaskStatus.COMPLETED:
-                    result.status = ExecutorTaskStatus.COMPLETED
-                elif streaming_status == ExecutorTaskStatus.FAILED:
+                if streaming_status is None:
+                    # If status is None, mark as failed
+                    print(f"  ⚠ [streaming_task] Streaming result has no status, marking as failed")
                     result.status = ExecutorTaskStatus.FAILED
+                    result.error = streaming_result.get("error", "Streaming task returned no status")
+                elif isinstance(streaming_status, ExecutorTaskStatus):
+                    result.status = streaming_status
                 elif isinstance(streaming_status, str):
                     # If string, convert to enum
-                    if streaming_status == "completed" or streaming_status == "COMPLETED":
+                    if streaming_status.lower() == "completed" or streaming_status == "COMPLETED":
                         result.status = ExecutorTaskStatus.COMPLETED
-                    elif streaming_status == "failed" or streaming_status == "FAILED":
+                    elif streaming_status.lower() == "failed" or streaming_status == "FAILED":
                         result.status = ExecutorTaskStatus.FAILED
                     else:
                         # If status unclear, mark as failed (should not happen)
@@ -1663,12 +1766,23 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
                 result.output = streaming_result.get("output", output)
                 if streaming_result.get("error"):
                     result.error = streaming_result.get("error")
-                    result.status = ExecutorTaskStatus.FAILED
+                    # If there's an error, ensure status is FAILED
+                    if result.status != ExecutorTaskStatus.FAILED:
+                        result.status = ExecutorTaskStatus.FAILED
                 
-                if result.status:
-                    print(f"  ✓ [streaming_task] Streaming task processing completed, status: {result.status.value}")
-                else:
-                    print(f"  ⚠ [streaming_task] Streaming task processing completed, but status is None")
+                # Ensure status is set (defensive check)
+                if result.status is None:
+                    print(f"  ⚠ [streaming_task] Status is still None after processing, defaulting to FAILED")
+                    result.status = ExecutorTaskStatus.FAILED
+                    if not result.error:
+                        result.error = "Streaming task processing completed but status was not set"
+                
+                # Safe status logging
+                try:
+                    status_value = result.status.value if result.status else "None"
+                    print(f"  ✓ [streaming_task] Streaming task processing completed, status: {status_value}")
+                except AttributeError:
+                    print(f"  ⚠ [streaming_task] Streaming task processing completed, status: {result.status} (cannot get .value)")
             else:
                 # Normal task, directly use original result
                 result.status = ExecutorTaskStatus.COMPLETED
@@ -2505,17 +2619,24 @@ def execute_executor_with_interrupt_support(
                 interrupt_obj = chunk["__interrupt__"]
                 print(f"  ✓ Interrupt detected (via __interrupt__ field)")
                 
-                # Extract actual value from Interrupt object
-                if hasattr(interrupt_obj, 'value'):
-                    interrupt_data = interrupt_obj.value
-                    print(f"  🔍 [execute_executor] Extracted value from Interrupt object: type={type(interrupt_data)}")
-                elif isinstance(interrupt_obj, dict) and 'value' in interrupt_obj:
-                    interrupt_data = interrupt_obj['value']
-                    # If value itself is Interrupt object, continue extracting
-                    if hasattr(interrupt_data, 'value'):
-                        interrupt_data = interrupt_data.value
-                else:
-                    interrupt_data = interrupt_obj
+                # Extract actual value from Interrupt object (safely handle None)
+                try:
+                    if interrupt_obj is None:
+                        interrupt_data = None
+                    elif hasattr(interrupt_obj, 'value'):
+                        interrupt_data = getattr(interrupt_obj, 'value', None)
+                        if interrupt_data is not None:
+                            print(f"  🔍 [execute_executor] Extracted value from Interrupt object: type={type(interrupt_data)}")
+                    elif isinstance(interrupt_obj, dict) and 'value' in interrupt_obj:
+                        interrupt_data = interrupt_obj.get('value')
+                        # If value itself is Interrupt object, continue extracting (safely)
+                        if interrupt_data is not None and hasattr(interrupt_data, 'value'):
+                            interrupt_data = getattr(interrupt_data, 'value', None)
+                    else:
+                        interrupt_data = interrupt_obj
+                except Exception as extract_e:
+                    print(f"  ⚠ [execute_executor] Error extracting interrupt value: {extract_e}")
+                    interrupt_data = interrupt_obj if interrupt_obj is not None else None
                 
                 # Get current state (state before interrupt)
                 for key, value in chunk.items():
@@ -2606,36 +2727,55 @@ def execute_executor_with_interrupt_support(
     
     # Ensure interrupt_data is dict format (if tuple or other type, convert to dict)
     if interrupt_data is not None:
-        # First, if interrupt_data is Interrupt object, extract its value
-        if hasattr(interrupt_data, 'value'):
-            interrupt_data = interrupt_data.value
-            print(f"  🔍 [execute_executor] Extracted value from Interrupt object: type={type(interrupt_data)}")
+        try:
+            # First, if interrupt_data is Interrupt object, extract its value (safely)
+            if hasattr(interrupt_data, 'value'):
+                extracted = getattr(interrupt_data, 'value', None)
+                if extracted is not None:
+                    interrupt_data = extracted
+                    print(f"  🔍 [execute_executor] Extracted value from Interrupt object: type={type(interrupt_data)}")
+            
+            # If extracted value is still Interrupt object (nested case), continue extracting
+            if interrupt_data is not None and hasattr(interrupt_data, 'value'):
+                extracted = getattr(interrupt_data, 'value', None)
+                if extracted is not None:
+                    interrupt_data = extracted
+                    print(f"  🔍 [execute_executor] Extracted value from nested Interrupt object: type={type(interrupt_data)}")
+            
+            if isinstance(interrupt_data, tuple):
+                # LangGraph interrupt may return tuple, need to convert to dict
+                if len(interrupt_data) == 2:
+                    # May be (key, value) format
+                    value = interrupt_data[1]
+                    # If value is Interrupt object, extract its value (safely)
+                    if value is not None and hasattr(value, 'value'):
+                        extracted_value = getattr(value, 'value', None)
+                        if extracted_value is not None:
+                            value = extracted_value
+                    interrupt_data = {"key": interrupt_data[0], "value": value}
+                elif len(interrupt_data) == 1:
+                    # May be single value
+                    value = interrupt_data[0]
+                    if value is not None and hasattr(value, 'value'):
+                        extracted_value = getattr(value, 'value', None)
+                        if extracted_value is not None:
+                            value = extracted_value
+                    interrupt_data = {"value": value}
+                else:
+                    # Multiple values, convert to dict (safely)
+                    interrupt_data = {
+                        f"arg_{i}": (getattr(v, 'value', None) if (v is not None and hasattr(v, 'value')) else v) 
+                        for i, v in enumerate(interrupt_data)
+                    }
+                print(f"  🔍 [execute_executor] Converted interrupt_data from tuple to dict: {interrupt_data}")
+        except Exception as extract_e:
+            print(f"  ⚠ [execute_executor] Error extracting interrupt_data: {extract_e}")
+            import traceback
+            print(f"  {traceback.format_exc()[:300]}")
+            # Keep original interrupt_data if extraction fails
         
-        # If extracted value is still Interrupt object (nested case), continue extracting
-        if hasattr(interrupt_data, 'value'):
-            interrupt_data = interrupt_data.value
-            print(f"  🔍 [execute_executor] Extracted value from nested Interrupt object: type={type(interrupt_data)}")
-        
-        if isinstance(interrupt_data, tuple):
-            # LangGraph interrupt may return tuple, need to convert to dict
-            if len(interrupt_data) == 2:
-                # May be (key, value) format
-                value = interrupt_data[1]
-                # If value is Interrupt object, extract its value
-                if hasattr(value, 'value'):
-                    value = value.value
-                interrupt_data = {"key": interrupt_data[0], "value": value}
-            elif len(interrupt_data) == 1:
-                # May be single value
-                value = interrupt_data[0]
-                if hasattr(value, 'value'):
-                    value = value.value
-                interrupt_data = {"value": value}
-            else:
-                # Multiple values, convert to dict
-                interrupt_data = {f"arg_{i}": (v.value if hasattr(v, 'value') else v) for i, v in enumerate(interrupt_data)}
-            print(f"  🔍 [execute_executor] Converted interrupt_data from tuple to dict: {interrupt_data}")
-        elif not isinstance(interrupt_data, dict):
+        # After try-except, check if interrupt_data is still not a dict
+        if interrupt_data is not None and not isinstance(interrupt_data, dict):
             # If other type (like string), convert to dict
             if isinstance(interrupt_data, str):
                 # Try to parse JSON string
@@ -2690,14 +2830,23 @@ def resume_executor_after_interrupt(
             if "__interrupt__" in chunk:
                 interrupted = True
                 interrupt_obj = chunk["__interrupt__"]
-                # Extract actual value from Interrupt object
-                if hasattr(interrupt_obj, 'value'):
-                    interrupt_data = interrupt_obj.value
-                elif isinstance(interrupt_obj, dict) and 'value' in interrupt_obj:
-                    interrupt_data = interrupt_obj['value']
-                    if hasattr(interrupt_data, 'value'):
-                        interrupt_data = interrupt_data.value
-                else:
+                # Extract actual value from Interrupt object (safely handle None)
+                try:
+                    if interrupt_obj is None:
+                        interrupt_data = None
+                    elif hasattr(interrupt_obj, 'value'):
+                        interrupt_data = getattr(interrupt_obj, 'value', None)
+                        # If extracted value is still an Interrupt object, continue extracting
+                        if interrupt_data is not None and hasattr(interrupt_data, 'value'):
+                            interrupt_data = getattr(interrupt_data, 'value', None)
+                    elif isinstance(interrupt_obj, dict) and 'value' in interrupt_obj:
+                        interrupt_data = interrupt_obj.get('value')
+                        if interrupt_data is not None and hasattr(interrupt_data, 'value'):
+                            interrupt_data = getattr(interrupt_data, 'value', None)
+                    else:
+                        interrupt_data = interrupt_obj
+                except Exception as extract_e:
+                    print(f"  ⚠ [resume_executor] Error extracting interrupt value: {extract_e}")
                     interrupt_data = interrupt_obj
                 break
             else:
@@ -2718,11 +2867,15 @@ def resume_executor_after_interrupt(
     except Exception as e:
         if "interrupt" in str(e).lower() or "GraphInterrupt" in str(type(e).__name__):
             interrupted = True
-            interrupt_data = getattr(e, 'value', None)
-            # If interrupt_data is Interrupt object, extract its value
-            if interrupt_data and hasattr(interrupt_data, 'value'):
-                interrupt_data = interrupt_data.value
-            if interrupt_data is None:
+            try:
+                interrupt_data = getattr(e, 'value', None)
+                # If interrupt_data is Interrupt object, extract its value (safely)
+                if interrupt_data is not None and hasattr(interrupt_data, 'value'):
+                    interrupt_data = getattr(interrupt_data, 'value', None)
+                if interrupt_data is None:
+                    interrupt_data = str(e)
+            except Exception as extract_e:
+                print(f"  ⚠ [resume_executor] Error extracting exception value: {extract_e}")
                 interrupt_data = str(e)
         else:
             raise

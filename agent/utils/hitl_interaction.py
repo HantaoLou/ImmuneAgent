@@ -96,6 +96,8 @@ def console_interact_for_parameters(interrupt_data: Dict[str, Any]) -> Dict[str,
                     raise KeyboardInterrupt("用户退出")
                 elif user_input.lower() == 'skip':
                     print(f"  跳过参数 {param}")
+                    # Mark parameter as skipped (use None as value to indicate skipped)
+                    task_responses[param] = None
                     break
                 elif not user_input:
                     print(f"  参数 {param} 不能为空，请重新输入")

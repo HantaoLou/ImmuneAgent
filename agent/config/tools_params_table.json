@@ -4984,10 +4984,29 @@
     }
   },
   {
-    "ribonn": {
+    "ribonn_predict": {
       "service_id": "ribonn",
-      "input_params": [],
-      "output": ""
+      "input_params": [
+        {
+          "name": "input_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "species",
+          "description": "",
+          "deme": "",
+          "type": "Literal['human', 'mouse']"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Predict mRNA translation efficiency using RiboNN, support human/mouse species, output result files"
     }
   },
   {
