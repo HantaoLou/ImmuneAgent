@@ -1,0 +1,5887 @@
+[
+  {
+    "fdg": {
+      "service_id": "fdg",
+      "input_params": [
+        {
+          "name": "input_file_path",
+          "description": "",
+          "deme": "",
+          "type": "pdb file"
+        }
+      ],
+      "output": "Run FoldX/DDG/GearBind analysis on AlphaFold3 PDB files, output antibody candidates and result CSV"
+    }
+  },
+  {
+    "metabcr": {
+      "service_id": "metabcr",
+      "input_params": [
+        {
+          "name": "antibody_file",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "antigen_file",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "antigen_name",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "flu",
+            "sars",
+            "rsv",
+            "hiv"
+          ]
+        },
+        {
+          "name": "output_file_path",
+          "description": "",
+          "deme": "",
+          "type": "file"
+        }
+      ],
+      "output": "MetaBCR deep learning model predicts antibody-antigen binding affinity, stream progress"
+    }
+  },
+  {
+    "search_airr_repertoires": {
+      "service_id": "airr",
+      "input_params": [
+        {
+          "name": "disease",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "tissue",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "species",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "human",
+            "mouse",
+            "rat",
+            "rabbit"
+          ]
+        },
+        {
+          "name": "cell_subset",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "repository",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "all",
+            "vdjserver",
+            "ireceptor",
+            "covid19"
+          ]
+        },
+        {
+          "name": "max_results",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Search BCR repertoires in AIRR library, return matching studies and sample information"
+    }
+  },
+  {
+    "download_airr_sequences": {
+      "service_id": "airr",
+      "input_params": [
+        {
+          "name": "repertoire_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "filters",
+          "description": "",
+          "deme": "",
+          "type": "Optional[Dict[str, Any]]"
+        },
+        {
+          "name": "format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "airr",
+            "json"
+          ]
+        },
+        {
+          "name": "max_sequences",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Download BCR sequences from AIRR library, output AIRR format files compatible with IgBLAST"
+    }
+  },
+  {
+    "get_airr_study_metadata": {
+      "service_id": "airr",
+      "input_params": [
+        {
+          "name": "study_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "repository",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "auto",
+            "vdjserver",
+            "ireceptor",
+            "covid19"
+          ]
+        }
+      ],
+      "output": "Get detailed metadata for AIRR studies including samples and disease information"
+    }
+  },
+  {
+    "filter_by_vdj_genes": {
+      "service_id": "airr",
+      "input_params": [
+        {
+          "name": "repertoire_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "v_gene",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "d_gene",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "j_gene",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "combination_logic",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "AND",
+            "OR"
+          ]
+        }
+      ],
+      "output": "Filter sequences by V(D)J gene usage patterns, output filtered results and gene usage statistics"
+    }
+  },
+  {
+    "get_airr_statistics": {
+      "service_id": "airr",
+      "input_params": [
+        {
+          "name": "repertoire_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "metrics",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "diversity",
+            "clonality",
+            "v_usage",
+            "cdr3_length",
+            "mutation_frequency"
+          ]
+        }
+      ],
+      "output": "Get BCR repertoire statistics including sequence count, V gene usage, CDR3 length distribution"
+    }
+  },
+  {
+    "af3": {
+      "service_id": "af3",
+      "input_params": [
+        {
+          "name": "input_file_path",
+          "description": "",
+          "deme": "",
+          "type": "xlsx csv file"
+        },
+        {
+          "name": "antigen_name",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "gpu_device",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": ""
+    }
+  },
+  {
+    "number_antibody_batch": {
+      "service_id": "anarci",
+      "input_params": [
+        {
+          "name": "sequences",
+          "description": "",
+          "deme": "",
+          "type": "List[Dict[str, str]]"
+        },
+        {
+          "name": "scheme",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "chothia",
+            "kabat",
+            "imgt",
+            "martin",
+            "aho",
+            "wolfguy"
+          ]
+        },
+        {
+          "name": "assign_germline",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Batch number antibody sequences using ANARCI, output complete numbering results"
+    }
+  },
+  {
+    "number_single_sequence": {
+      "service_id": "anarci",
+      "input_params": [
+        {
+          "name": "sequence",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "scheme",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "chothia",
+            "kabat",
+            "imgt",
+            "martin",
+            "aho",
+            "wolfguy"
+          ]
+        }
+      ],
+      "output": "Quickly number a single antibody sequence using ANARCI, output numbering and chain type"
+    }
+  },
+  {
+    "search_geo_studies": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "keywords",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "Homo sapiens",
+            "Mus musculus",
+            "Rattus norvegicus"
+          ]
+        },
+        {
+          "name": "study_type",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "max_results",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Search BCR-seq studies in GEO using NCBI E-utilities, return matching results"
+    }
+  },
+  {
+    "get_geo_metadata": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "geo_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "include_samples",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Get detailed metadata for GEO studies/samples"
+    }
+  },
+  {
+    "download_geo_sequences": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "geo_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "data_format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "raw",
+            "processed",
+            "supplementary"
+          ]
+        },
+        {
+          "name": "output_format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "fasta",
+            "fastq",
+            "tsv",
+            "json",
+            "airr"
+          ]
+        },
+        {
+          "name": "max_sequences",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Download BCR-seq data from GEO, support multiple output formats, return FTP download links"
+    }
+  },
+  {
+    "list_geo_bcr_datasets": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "curated_only",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "List filtered high-quality BCR-seq datasets in GEO"
+    }
+  },
+  {
+    "get_all_geo_bcr_studies": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "Homo sapiens",
+            "Mus musculus",
+            "all"
+          ]
+        },
+        {
+          "name": "max_results",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "include_metadata",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Retrieve all BCR-seq studies from GEO, return deduplicated metadata, support species filtering"
+    }
+  },
+  {
+    "search_iedb_epitopes": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "antigen",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "antibody_sequence",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "Homo sapiens",
+            "Mus musculus"
+          ]
+        },
+        {
+          "name": "disease",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "assay_type",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "binding",
+            "neutralization",
+            "ELISA"
+          ]
+        },
+        {
+          "name": "max_results",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Search antibody-epitope binding data in IEDB, support antigen/disease filtering"
+    }
+  },
+  {
+    "get_iedb_antibody_data": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "antibody_id",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "antibody_name",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "include_structures",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Get detailed antibody information from IEDB including sequences, epitopes, and PDB structures"
+    }
+  },
+  {
+    "validate_epitope_binding": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "cdr3_sequences",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "epitope_sequence",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "antigen",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Validate CDR3 sequence binding to known epitopes, output matching results and similarity scores"
+    }
+  },
+  {
+    "download_iedb_dataset": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "disease",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "antigen",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "assay_type",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "all",
+            "binding",
+            "neutralization"
+          ]
+        },
+        {
+          "name": "format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "json",
+            "tsv"
+          ]
+        },
+        {
+          "name": "max_records",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Batch download IEDB epitope data, support disease/antigen filtering, output JSON/TSV"
+    }
+  },
+  {
+    "enrich_sequences_with_iedb": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "sequences",
+          "description": "",
+          "deme": "",
+          "type": "List[Dict[str, Any]]"
+        },
+        {
+          "name": "iedb_search",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "sabdab_search",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Enrich GEO sequences with IEDB epitope data, add epitope matching and structural information"
+    }
+  },
+  {
+    "map_cdr3_to_epitopes": {
+      "service_id": "geo_iedb",
+      "input_params": [
+        {
+          "name": "cdr3_list",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "disease_context",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "confidence_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Batch map CDR3 sequences to known epitopes, output binding predictions and confidence"
+    }
+  },
+  {
+    "analyze_vdj_batch": {
+      "service_id": "igblast",
+      "input_params": [
+        {
+          "name": "sequences",
+          "description": "",
+          "deme": "",
+          "type": "fasta file"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "human",
+            "mouse",
+            "rabbit",
+            "rat",
+            "rhesus",
+            "pig"
+          ]
+        },
+        {
+          "name": "receptor_type",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "Ig",
+            "TCR"
+          ]
+        },
+        {
+          "name": "locus",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "IGH",
+            "IGK",
+            "IGL",
+            "TRA",
+            "TRB",
+            "TRG",
+            "TRD"
+          ]
+        },
+        {
+          "name": "timeout",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Batch analyze V(D)J recombination using IgBLAST+ChangeO, output AIRR format results"
+    }
+  },
+  {
+    "extract_cdr3_from_airr": {
+      "service_id": "igblast",
+      "input_params": [
+        {
+          "name": "airr_results",
+          "description": "",
+          "deme": "",
+          "type": "csv tsv json file"
+        }
+      ],
+      "output": "Extract CDR3 information from AIRR data, support multiple input formats, stream progress"
+    }
+  },
+  {
+    "search_oas_studies": {
+      "service_id": "oas",
+      "input_params": [
+        {
+          "name": "disease",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "tissue",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "species",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "human",
+            "mouse",
+            "rabbit",
+            "rat",
+            "rhesus_monkey",
+            "camel"
+          ]
+        },
+        {
+          "name": "min_sequences",
+          "description": "",
+          "deme": "",
+          "type": "Optional[int]"
+        },
+        {
+          "name": "paired",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Search OAS studies by conditions, return matching study lists and sequence statistics"
+    }
+  },
+  {
+    "download_oas_dataset": {
+      "service_id": "oas",
+      "input_params": [
+        {
+          "name": "study_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "data_units",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        },
+        {
+          "name": "format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "airr",
+            "fasta",
+            "csv"
+          ]
+        },
+        {
+          "name": "max_sequences",
+          "description": "",
+          "deme": "",
+          "type": "Optional[int]"
+        },
+        {
+          "name": "cache",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Download OAS datasets, support resumable downloads, convert to AIRR format, return cache status"
+    }
+  },
+  {
+    "get_oas_summary": {
+      "service_id": "oas",
+      "input_params": [
+        {
+          "name": "study_id",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Get OAS database or specific study statistics including V gene and isotype distribution"
+    }
+  },
+  {
+    "filter_oas_by_vgene": {
+      "service_id": "oas",
+      "input_params": [
+        {
+          "name": "study_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "v_gene",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "j_gene",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "cdr3_pattern",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "min_identity",
+          "description": "",
+          "deme": "",
+          "type": "Optional[float]"
+        }
+      ],
+      "output": "Filter OAS sequences by V gene, output filtered results and statistics"
+    }
+  },
+  {
+    "batch_process_oas": {
+      "service_id": "oas",
+      "input_params": [
+        {
+          "name": "study_ids",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "operation",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "download",
+            "analyze",
+            "convert"
+          ]
+        },
+        {
+          "name": "parallel",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "batch_size",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Batch download/analyze OAS datasets, output processing results and success/failure statistics"
+    }
+  },
+  {
+    "get_cache_info": {
+      "service_id": "oas",
+      "input_params": [],
+      "output": "Get OAS cache information including cached study count and disk usage"
+    }
+  },
+  {
+    "get_all_oas_studies": {
+      "service_id": "oas",
+      "input_params": [
+        {
+          "name": "include_metadata",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "force_refresh",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Get all OAS study lists including species/disease/tissue classifications, support caching"
+    }
+  },
+  {
+    "clear_cache": {
+      "service_id": "oas",
+      "input_params": [
+        {
+          "name": "keep_recent",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Clear OAS cache, free disk space, return cleanup statistics"
+    }
+  },
+  {
+    "antigen_binding_prediction_visualization": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "binding_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Visualize single-cell B cell antigen binding predictions, output binding distribution plots, statistics, and CSV"
+    }
+  },
+  {
+    "bcell_celltype_distribution_analysis": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Single-cell B cell subtype distribution analysis, output distribution charts, cell proportions, and CSV"
+    }
+  },
+  {
+    "binding_prediction_interval_distribution_analysis": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "interval_step",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "data_min",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "data_max",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Antigen binding prediction value interval distribution analysis, output histograms, CDF curves, and quantile statistics"
+    }
+  },
+  {
+    "umap_dimensionality_reduction_visualization": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Single-cell B cell UMAP dimensionality reduction and visualization, output publication-quality UMAP plots and coordinate data"
+    }
+  },
+  {
+    "bcell_marker_gene_dotplot_analysis": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "min_pct",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "min_expression",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "B cell subtype marker gene expression dot plot analysis, output dot plots, expression statistics, and gene lists"
+    }
+  },
+  {
+    "antigen_binding_neutralization_density_visualization": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "prediction_keywords",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "na_strategy",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "exclude_cells",
+            "replace_zero",
+            "replace_median"
+          ]
+        },
+        {
+          "name": "feature_priority",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "neutralization_first",
+            "binding_first",
+            "highest_value"
+          ]
+        }
+      ],
+      "output": "UMAP density visualization for single-cell antigen binding/neutralization predictions, output density plots, statistics, and coordinates"
+    }
+  },
+  {
+    "bcell_celltype_umap_visualization": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "celltype_column",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "UMAP spatial distribution visualization for single-cell B cell subtypes, output publication-quality UMAP plots and statistics"
+    }
+  },
+  {
+    "bcell_marker_gene_expression_dotplot": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "celltype_column",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Visualize B cell subtype marker gene expression, output dot plots, statistics, and PDF"
+    }
+  },
+  {
+    "differential_gene_correlation_analysis": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "deg_file1",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "deg_file2",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "dataset1_name",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "dataset2_name",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "p_value_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "min_common_genes",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "highlight_genes",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Differential gene correlation analysis, output correlation scatter plots, statistics, and CSV"
+    }
+  },
+  {
+    "differential_gene_expression_correlation_pipeline": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "logfc_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "min_pct",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "p_value_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "min_common_genes",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "highlight_genes",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Integrated pipeline for differential gene volcano plots and correlation analysis, output complete analysis files"
+    }
+  },
+  {
+    "prediction_value_density_visualization": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "prediction_keywords",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "prediction_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "UMAP density visualization of prediction values, output density plots, threshold analysis, and coordinate data"
+    }
+  },
+  {
+    "pseudotime_trajectory_analysis": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "num_dim",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "cluster_resolution",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "min_gene_cells",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "root_celltype",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Analyze B cell pseudotime trajectories using Monocle3, output trajectory plots, CDS objects, and pseudotime data"
+    }
+  },
+  {
+    "pseudotime_celltype_boxplot_analysis": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "celltype_column",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Box plot analysis of pseudotime and cell type distribution, output statistical test results and plots"
+    }
+  },
+  {
+    "trajectory_polynomial_regression_analysis": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Trajectory polynomial regression analysis and gene module scoring, output trend plots and key nodes"
+    }
+  },
+  {
+    "trajectory_supplementary_analysis": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Generate supplementary plots for trajectory analysis and transcript marker analysis, output publication-quality charts"
+    }
+  },
+  {
+    "bcr_isotype_distribution_shm_analysis": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "binding_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "BCR isotype distribution and SHM rate analysis, output combined plots, statistical test results, and data"
+    }
+  },
+  {
+    "neutralizing_antibody_shm_comparison_analysis": {
+      "service_id": "bioinformatics",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "base_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "binding_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Comparison analysis of SHM rates between neutralizing and non-neutralizing antibodies, output combined plots and statistics"
+    }
+  },
+  {
+    "run_singler_annotation": {
+      "service_id": "r_annotation",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "rds file"
+        },
+        {
+          "name": "reference_dataset",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "HumanPrimaryCellAtlasData",
+            "BlueprintEncodeData",
+            "MonacoImmuneData",
+            "DatabaseImmuneCellExpressionData"
+          ]
+        },
+        {
+          "name": "label_type",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "label.main",
+            "label.fine"
+          ]
+        },
+        {
+          "name": "cluster_column",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Automatically annotate cell types using SingleR, output annotation results and summary statistics"
+    }
+  },
+  {
+    "detect_cluster_markers": {
+      "service_id": "r_annotation",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "rds file"
+        },
+        {
+          "name": "test_use",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "wilcox",
+            "bimod",
+            "roc",
+            "t",
+            "MAST"
+          ]
+        },
+        {
+          "name": "only_pos",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "min_pct",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "logfc_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "top_n",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Identify cluster-specific marker genes using Seurat, output marker gene lists and summary tables"
+    }
+  },
+  {
+    "annotate_by_markers": {
+      "service_id": "r_annotation",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "rds file"
+        },
+        {
+          "name": "marker_list",
+          "description": "",
+          "deme": "",
+          "type": "Dict[str, str]"
+        },
+        {
+          "name": "cluster_column",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "new_column",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Manually annotate cell types based on marker genes, output annotated RDS files and mapping relationships"
+    }
+  },
+  {
+    "validate_annotation": {
+      "service_id": "r_annotation",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "rds file"
+        },
+        {
+          "name": "annotation_column1",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "annotation_column2",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "reference_dataset",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "HumanPrimaryCellAtlasData",
+            "BlueprintEncodeData",
+            "MonacoImmuneData",
+            "DatabaseImmuneCellExpressionData"
+          ]
+        }
+      ],
+      "output": "Cross-validate cell annotation results, output confusion matrices and consistency scores"
+    }
+  },
+  {
+    "score_annotation_confidence": {
+      "service_id": "r_annotation",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "rds file"
+        },
+        {
+          "name": "annotation_column",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "marker_genes",
+          "description": "",
+          "deme": "",
+          "type": "Optional[Dict[str, List[str]]]"
+        }
+      ],
+      "output": "Calculate cell annotation confidence scores, output score tables and visualization plots"
+    }
+  },
+  {
+    "export_annotations": {
+      "service_id": "r_annotation",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "rds file"
+        },
+        {
+          "name": "annotation_columns",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        },
+        {
+          "name": "export_format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "csv",
+            "h5ad",
+            "loom",
+            "tsv"
+          ]
+        },
+        {
+          "name": "include_umap",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Export cell type annotation results, support multiple formats, output summary statistics"
+    }
+  },
+  {
+    "identify_bcell_subsets": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "species",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "human",
+            "mouse"
+          ]
+        },
+        {
+          "name": "resolution",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Identify B cell subtypes based on classic marker genes, output Seurat RDS with subtype annotations"
+    }
+  },
+  {
+    "calculate_shm_rates": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "airr_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "region",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "IGHV",
+            "IGHD",
+            "IGHJ"
+          ]
+        },
+        {
+          "name": "min_sequences",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Calculate SHM rates in V/D/J regions from AIRR data, output cell/cluster-level SHM distribution and statistics"
+    }
+  },
+  {
+    "analyze_isotype_distribution": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "bcr_data",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "plot_type",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "bar",
+            "pie",
+            "sankey"
+          ]
+        }
+      ],
+      "output": "Analyze BCR isotype distribution and switching patterns, output distribution plots and statistics"
+    }
+  },
+  {
+    "run_cytotrace_analysis": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "ncores",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "enable_fast",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "subsample_size",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Run CytoTRACE to predict B cell differentiation state, output differentiation scores and related genes"
+    }
+  },
+  {
+    "analyze_vdj_usage": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "airr_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "subset_metadata",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "plot_heatmap",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Parse V(D)J gene family usage from AIRR data, output frequency statistics and heatmaps"
+    }
+  },
+  {
+    "identify_antigen_specific_bcells": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "binding_predictions",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "min_binding_score",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Identify antigen-specific B cells based on binding prediction scores, output annotated RDS files"
+    }
+  },
+  {
+    "analyze_bcell_trajectory": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "root_state",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "use_partition",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "method",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "monocle3",
+            "slingshot"
+          ]
+        }
+      ],
+      "output": "Analyze B cell differentiation trajectories using Monocle3/Slingshot, output pseudotime values, trajectory plots, and branch point analysis"
+    }
+  },
+  {
+    "compare_rsv_a_vs_b_bcells": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "rsv_metadata",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "min_pct",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "logfc_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Compare B cell responses to RSV-A/B infection, output differential genes and pathway enrichment results"
+    }
+  },
+  {
+    "analyze_clonal_expansion": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "airr_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "subset_metadata",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "top_n_clones",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Analyze clonal expansion from BCR clonotypes, output clonal frequency, expansion plots, and Jaccard index"
+    }
+  },
+  {
+    "calculate_repertoire_diversity": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "airr_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "grouping_column",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "metrics",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        }
+      ],
+      "output": "Calculate BCR repertoire diversity (Shannon/Simpson/Hill indices), output grouped scores and visualization plots"
+    }
+  },
+  {
+    "identify_convergent_sequences": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "airr_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "cdr3_similarity_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "min_group_size",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Identify convergent CDR3 sequences across samples, output convergent groups and sequence logos"
+    }
+  },
+  {
+    "analyze_gc_dynamics": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "gc_subsets",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "plot_markers",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Analyze germinal center dark zone/light zone dynamics, output differential genes and pathway enrichment results"
+    }
+  },
+  {
+    "predict_plasma_potential": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "gene_signatures",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Predict plasma cell differentiation potential based on gene features, output cell scores and feature genes"
+    }
+  },
+  {
+    "analyze_affinity_maturation": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "airr_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "pseudotime_column",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Analyze correlation between SHM and pseudotime, output correlation plots, regression models, and maturation dynamics"
+    }
+  },
+  {
+    "generate_bcell_report": {
+      "service_id": "r_bcell",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "airr_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "cytotrace_rds",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "trajectory_rds",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "report_format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "html",
+            "pdf"
+          ]
+        }
+      ],
+      "output": "Generate comprehensive B cell analysis report integrating subtype, SHM, trajectory results, output HTML/PDF"
+    }
+  },
+  {
+    "run_cellchat_analysis": {
+      "service_id": "r_communication",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "group_by",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "db_type",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "Secreted Signaling",
+            "ECM-Receptor",
+            "Cell-Cell Contact",
+            "All"
+          ]
+        },
+        {
+          "name": "species",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "mouse",
+            "human"
+          ]
+        },
+        {
+          "name": "output_prefix",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Run CellChat cell communication analysis, output communication networks, probabilities, and visualization plots"
+    }
+  },
+  {
+    "run_nichenet_analysis": {
+      "service_id": "r_communication",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "sender_cells",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "receiver_cells",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "condition_oi",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "condition_reference",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "condition_colname",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_prefix",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Run NicheNet ligand-target regulation analysis, output ligand activity and regulation matrices"
+    }
+  },
+  {
+    "identify_ligand_receptor_pairs": {
+      "service_id": "r_communication",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "group_by",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "species",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "mouse",
+            "human"
+          ]
+        },
+        {
+          "name": "min_pct",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "output_prefix",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Identify expressed ligand-receptor pairs from CellChatDB, output pairing tables and dot plots"
+    }
+  },
+  {
+    "analyze_signaling_pathways": {
+      "service_id": "r_communication",
+      "input_params": [
+        {
+          "name": "cellchat_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "pathways",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_prefix",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Analyze signaling pathway activity based on CellChat, output pathway activity data, heatmaps, and network plots"
+    }
+  },
+  {
+    "calculate_network_centrality": {
+      "service_id": "r_communication",
+      "input_params": [
+        {
+          "name": "cellchat_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_prefix",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Calculate cell communication network centrality scores, output score data and network role plots"
+    }
+  },
+  {
+    "plot_communication_network": {
+      "service_id": "r_communication",
+      "input_params": [
+        {
+          "name": "cellchat_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "signaling",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "layout",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "circle",
+            "chord",
+            "hierarchy"
+          ]
+        },
+        {
+          "name": "output_prefix",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Visualize cell communication networks, output circular plots, chord diagrams, and hierarchical plots"
+    }
+  },
+  {
+    "run_spatial_communication": {
+      "service_id": "r_communication",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "spatial_coordinates",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "group_by",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "species",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "mouse",
+            "human"
+          ]
+        },
+        {
+          "name": "contact_range",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "output_prefix",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Run spatial transcriptome cell communication analysis, output spatial communication networks and visualization plots"
+    }
+  },
+  {
+    "compare_communication_networks": {
+      "service_id": "r_communication",
+      "input_params": [
+        {
+          "name": "cellchat_list",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "group_names",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_prefix",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Compare cell communication networks under different conditions, output differential communication pathways and comparison plots"
+    }
+  },
+  {
+    "process_atac_data": {
+      "service_id": "r_multimodal",
+      "input_params": [
+        {
+          "name": "fragments_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "peaks_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "genome",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "hg38",
+            "mm10",
+            "hg19"
+          ]
+        },
+        {
+          "name": "min_cells",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "min_fragments",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "max_fragments",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "tss_enrichment_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Process ATAC-seq data using Signac including peak identification, normalization, dimensionality reduction, output RDS files"
+    }
+  },
+  {
+    "process_adt_data": {
+      "service_id": "r_multimodal",
+      "input_params": [
+        {
+          "name": "adt_counts_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "normalization_method",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "CLR",
+            "LogNormalize"
+          ]
+        },
+        {
+          "name": "min_cells",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "min_features",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Process CITE-seq ADT data including quality control, normalization, dimensionality reduction, output analysis results"
+    }
+  },
+  {
+    "integrate_multimodal_wnn": {
+      "service_id": "r_multimodal",
+      "input_params": [
+        {
+          "name": "rna_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "atac_rds",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "adt_rds",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "rna_dims",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "atac_dims",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "adt_dims",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "WNN multimodal integration (RNA+ATAC+ADT), output integrated objects and UMAP embeddings"
+    }
+  },
+  {
+    "identify_multimodal_clusters": {
+      "service_id": "r_multimodal",
+      "input_params": [
+        {
+          "name": "wnn_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "resolution",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "algorithm",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ],
+      "output": "Identify multimodal clusters from WNN integrated data, output clustering results and marker genes"
+    }
+  },
+  {
+    "link_peaks_to_genes": {
+      "service_id": "r_multimodal",
+      "input_params": [
+        {
+          "name": "atac_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "rna_rds",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "distance",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "min_correlation",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Link ATAC-seq peaks to genes, calculate gene activity scores, output linking results and motif enrichment"
+    }
+  },
+  {
+    "plot_multimodal_features": {
+      "service_id": "r_multimodal",
+      "input_params": [
+        {
+          "name": "wnn_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "features",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "modalities",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        },
+        {
+          "name": "plot_type",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "umap",
+            "violin",
+            "ridge",
+            "heatmap"
+          ]
+        }
+      ],
+      "output": "Visualize multimodal features, output cross-modal comparison plots, co-embedding plots, and weight plots"
+    }
+  },
+  {
+    "run_qc_filtering": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "min_genes",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "max_genes",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "min_counts",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "mt_percent",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Quality control filtering for single-cell data based on gene count/UMI count/mitochondrial ratio, output filtered objects"
+    }
+  },
+  {
+    "run_normalization_sct": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "vars_to_regress",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        },
+        {
+          "name": "n_variable_features",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Normalize single-cell data using SCTransform, output normalized Seurat objects"
+    }
+  },
+  {
+    "run_integration_harmony": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "batch_variable",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "dims",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "theta",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[float]]"
+        }
+      ],
+      "output": "Remove batch effects using Harmony, output integrated Seurat objects and quality control plots"
+    }
+  },
+  {
+    "run_clustering_analysis": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "resolution",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "algorithm",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "leiden",
+            "louvain"
+          ]
+        },
+        {
+          "name": "dims",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Run graph clustering analysis, output clustering results and UMAP visualization"
+    }
+  },
+  {
+    "run_doublet_detection": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "expected_doublet_rate",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "pN",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "pK",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "dims",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Identify doublets using DoubletFinder, output filtered Seurat objects and quality control plots"
+    }
+  },
+  {
+    "run_deg_analysis": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "group_by",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "ident_1",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "ident_2",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "test_use",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "wilcox",
+            "t",
+            "MAST",
+            "DESeq2"
+          ]
+        },
+        {
+          "name": "logfc_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "min_pct",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Run differential gene analysis, support multiple testing methods, output volcano plots and heatmaps"
+    }
+  },
+  {
+    "run_marker_detection": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "group_by",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "only_pos",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "min_pct",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "logfc_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "top_n",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Identify marker genes for all clusters, output marker gene tables and visualization plots"
+    }
+  },
+  {
+    "run_pathway_enrichment": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "deg_csv",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "human",
+            "mouse"
+          ]
+        },
+        {
+          "name": "ontology",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "BP",
+            "MF",
+            "CC"
+          ]
+        },
+        {
+          "name": "pvalue_cutoff",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "qvalue_cutoff",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Run pathway enrichment analysis (GO/KEGG/GSEA), output enrichment tables and dot plots"
+    }
+  },
+  {
+    "run_dim_reduction": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "methods",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        },
+        {
+          "name": "dims",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "n_neighbors",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "min_dist",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Run dimensionality reduction analysis (PCA/UMAP/tSNE), output embedding results and visualization plots"
+    }
+  },
+  {
+    "run_subset_cells": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "subset_column",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "subset_values",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "invert",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Filter cell subsets by metadata, output subset Seurat objects and statistics"
+    }
+  },
+  {
+    "run_full_preprocessing_pipeline": {
+      "service_id": "r_scrna",
+      "input_params": [
+        {
+          "name": "input_rds",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "min_genes",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "max_genes",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "min_counts",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "mt_percent",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "n_variable_features",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "vars_to_regress",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        },
+        {
+          "name": "resolution",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "dims",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Complete single-cell data preprocessing pipeline (QC→normalization→dimensionality reduction→clustering), output final RDS"
+    }
+  },
+  {
+    "download_sabdab_summary_csv": {
+      "service_id": "sabdab",
+      "input_params": [
+        {
+          "name": "filters",
+          "description": "",
+          "deme": "",
+          "type": "Optional[Dict[str, str]]"
+        },
+        {
+          "name": "save_file",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Download SAbDab summary CSV containing antibody PDB, chain information, and other metadata"
+    }
+  },
+  {
+    "download_pdb_structure": {
+      "service_id": "sabdab",
+      "input_params": [
+        {
+          "name": "pdb_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "numbering_scheme",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "chothia",
+            "kabat",
+            "imgt"
+          ]
+        },
+        {
+          "name": "save_file",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Download numbered antibody PDB structures from SAbDab, output file contents and paths"
+    }
+  },
+  {
+    "download_sabdab_dataset": {
+      "service_id": "sabdab",
+      "input_params": [
+        {
+          "name": "dataset_type",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "all",
+            "antigen_bound",
+            "nanobodies",
+            "fabs",
+            "scfvs"
+          ]
+        },
+        {
+          "name": "output_format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "csv",
+            "json",
+            "fasta"
+          ]
+        },
+        {
+          "name": "save_file",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Download complete SAbDab dataset, return data content and metadata"
+    }
+  },
+  {
+    "get_sabdab_statistics": {
+      "service_id": "sabdab",
+      "input_params": [
+        {
+          "name": "save_file",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Get SAbDab database statistics and metadata"
+    }
+  },
+  {
+    "prepare_bindcraft_config": {
+      "service_id": "bindcraft",
+      "input_params": [
+        {
+          "name": "target_pdb",
+          "description": "",
+          "deme": "",
+          "type": "pdb file"
+        },
+        {
+          "name": "binder_name",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "chains",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "hotspot",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "min_length",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "max_length",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "num_designs",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "design_algorithm",
+          "description": "",
+          "deme": "",
+          "type": "Literal['2stage', '3stage', '4stage', 'greedy', 'mcmc']"
+        },
+        {
+          "name": "design_path",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Generate BindCraft design configuration file, return configuration ID and file path"
+    }
+  },
+  {
+    "validate_target_pdb": {
+      "service_id": "bindcraft",
+      "input_params": [
+        {
+          "name": "pdb_file",
+          "description": "",
+          "deme": "",
+          "type": "pdb file"
+        }
+      ],
+      "output": "Validate target PDB structure integrity, estimate GPU memory requirements, provide design suggestions"
+    }
+  },
+  {
+    "run_bindcraft_design": {
+      "service_id": "bindcraft",
+      "input_params": [
+        {
+          "name": "settings_path",
+          "description": "",
+          "deme": "",
+          "type": "json file"
+        },
+        {
+          "name": "filters_path",
+          "description": "",
+          "deme": "",
+          "type": "json file"
+        },
+        {
+          "name": "advanced_path",
+          "description": "",
+          "deme": "",
+          "type": "json file"
+        },
+        {
+          "name": "async_mode",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Run BindCraft binder design pipeline, support async/sync modes, return task ID"
+    }
+  },
+  {
+    "check_design_status": {
+      "service_id": "bindcraft",
+      "input_params": [
+        {
+          "name": "job_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Monitor BindCraft design task progress, return trajectory count, sequence count, running status, and resource usage"
+    }
+  },
+  {
+    "analyze_design_results": {
+      "service_id": "bindcraft",
+      "input_params": [
+        {
+          "name": "design_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "top_n",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "sort_by",
+          "description": "",
+          "deme": "",
+          "type": "Literal['composite', 'plddt', 'iptm', 'dg', 'shape_comp']"
+        }
+      ],
+      "output": "Analyze BindCraft design results, sort by comprehensive/single metrics, output sequences, metrics, statistics, and PDB paths"
+    }
+  },
+  {
+    "generate_design_report": {
+      "service_id": "bindcraft",
+      "input_params": [
+        {
+          "name": "design_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "top_n",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "include_structures",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Generate comprehensive BindCraft design report including sequences, structures, metrics, output archive files"
+    }
+  },
+  {
+    "easy_search": {
+      "service_id": "foldseek",
+      "input_params": [
+        {
+          "name": "query",
+          "description": "",
+          "deme": "",
+          "type": "pdb file"
+        },
+        {
+          "name": "target",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "sensitivity",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "e_value",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "alignment_type",
+          "description": "",
+          "deme": "",
+          "type": "Literal[0, 1, 2]"
+        },
+        {
+          "name": "max_seqs",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "coverage",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "use_gpu",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "output_format",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Fast protein structure search, 10,000x faster than TMalign, support GPU acceleration, for homology identification"
+    }
+  },
+  {
+    "search_from_sequence": {
+      "service_id": "foldseek",
+      "input_params": [
+        {
+          "name": "fasta_input",
+          "description": "",
+          "deme": "",
+          "type": "fasta fa file"
+        },
+        {
+          "name": "target_database",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "sensitivity",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "e_value",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "use_gpu",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Quickly search structure databases from amino acid sequences based on ProstT5 3Di encoding, completes in minutes"
+    }
+  },
+  {
+    "create_custom_database": {
+      "service_id": "foldseek",
+      "input_params": [
+        {
+          "name": "structure_directory",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "database_name",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Create custom Foldseek database from PDB/mmCIF files for structure search"
+    }
+  },
+  {
+    "cluster_structures": {
+      "service_id": "foldseek",
+      "input_params": [
+        {
+          "name": "input_database",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "cluster_mode",
+          "description": "",
+          "deme": "",
+          "type": "Literal[0, 1, 2]"
+        },
+        {
+          "name": "min_seq_id",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "coverage",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Cluster protein structures by structural similarity for deduplication, representative structure selection, and diversity analysis"
+    }
+  },
+  {
+    "download_prebuilt_database": {
+      "service_id": "foldseek",
+      "input_params": [
+        {
+          "name": "database_name",
+          "description": "",
+          "deme": "",
+          "type": "Literal['PDB', 'AlphaFoldDB', 'ESMAtlas', 'ProstT5']"
+        }
+      ],
+      "output": "Download Foldseek pre-built databases (PDB/AlphaFoldDB, etc.), support background operation"
+    }
+  },
+  {
+    "check_mpnn_design_novelty": {
+      "service_id": "foldseek",
+      "input_params": [
+        {
+          "name": "sequences",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "reference_database",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "novelty_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        }
+      ],
+      "output": "Evaluate structural novelty of MPNN-designed sequences using ProstT5+Foldseek, output novelty classification and validation suggestions"
+    }
+  },
+  {
+    "easy_multimersearch": {
+      "service_id": "foldseek",
+      "input_params": [
+        {
+          "name": "query_complex",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "target",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "sensitivity",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "e_value",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "alignment_type",
+          "description": "",
+          "deme": "",
+          "type": "Literal[0, 1, 2]"
+        },
+        {
+          "name": "max_seqs",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "use_gpu",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "output_format",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Search protein complex structures, suitable for antibody-antigen complexes, output similarity metrics"
+    }
+  },
+  {
+    "easy_multimercluster": {
+      "service_id": "foldseek",
+      "input_params": [
+        {
+          "name": "input_complexes",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "multimer_tm_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "chain_tm_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "interface_lddt_threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "coverage",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "coverage_mode",
+          "description": "",
+          "deme": "",
+          "type": "Literal[0, 1, 2]"
+        },
+        {
+          "name": "alignment_type",
+          "description": "",
+          "deme": "",
+          "type": "Literal[0, 1, 2]"
+        }
+      ],
+      "output": "Cluster protein complex structures considering overall/single-chain/interface similarity, output clustering results and representative sequences"
+    }
+  },
+  {
+    "download_mcpas_database": {
+      "service_id": "mcpas",
+      "input_params": [
+        {
+          "name": "force_refresh",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "save_path",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "include_metadata",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Download McPAS-TCR database containing pathology-related TCR sequences, support caching"
+    }
+  },
+  {
+    "search_mcpas_tcr": {
+      "service_id": "mcpas",
+      "input_params": [
+        {
+          "name": "cdr3_beta",
+          "description": "",
+          "deme": "",
+          "type": "Optional[Union[str, List[str]]]"
+        },
+        {
+          "name": "cdr3_alpha",
+          "description": "",
+          "deme": "",
+          "type": "Optional[Union[str, List[str]]]"
+        },
+        {
+          "name": "epitope",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "levenshtein_distance",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "category",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "Pathogens",
+            "Cancer",
+            "Autoimmune",
+            "Other"
+          ]
+        },
+        {
+          "name": "pathology",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "antigen_protein",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "mhc",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "species",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "human",
+            "mouse"
+          ]
+        },
+        {
+          "name": "tissue",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "t_cell_type",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "CD4",
+            "CD8",
+            "Treg",
+            "Teff",
+            "TIL"
+          ]
+        },
+        {
+          "name": "min_quality",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "tetramers",
+            "stimulation",
+            "all"
+          ]
+        },
+        {
+          "name": "ngs_only",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "max_results",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "return_top_n",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "output_format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "json",
+            "csv",
+            "tsv"
+          ]
+        }
+      ],
+      "output": "Search McPAS-TCR database, support filtering and sequence fuzzy matching"
+    }
+  },
+  {
+    "get_mcpas_statistics": {
+      "service_id": "mcpas",
+      "input_params": [
+        {
+          "name": "statistics_type",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "overview",
+            "detailed",
+            "by_field"
+          ]
+        },
+        {
+          "name": "group_by",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "category",
+            "species",
+            "mhc",
+            "quality"
+          ]
+        },
+        {
+          "name": "filters",
+          "description": "",
+          "deme": "",
+          "type": "Optional[Dict[str, str]]"
+        }
+      ],
+      "output": "Get McPAS-TCR database statistics including classifications, species, and MHC distribution"
+    }
+  },
+  {
+    "mixtcrpred_list_models": {
+      "service_id": "mixtcrpred",
+      "input_params": [
+        {
+          "name": "min_training_samples",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "epitope_filter",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "mhc_filter",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "only_downloaded",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "List available MixTCRpred models including epitope, MHC, training sample count, and other information"
+    }
+  },
+  {
+    "mixtcrpred_download_models": {
+      "service_id": "mixtcrpred",
+      "input_params": [
+        {
+          "name": "model_names",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "download_mode",
+          "description": "",
+          "deme": "",
+          "type": "Literal['specific', 'all', 'high_confidence']"
+        }
+      ],
+      "output": "Download MixTCRpred models from Zenodo, support specified/all/high-confidence models"
+    }
+  },
+  {
+    "mixtcrpred_validate_input": {
+      "service_id": "mixtcrpred",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Validate TCR input data format, check sequence validity and required columns"
+    }
+  },
+  {
+    "mixtcrpred_predict": {
+      "service_id": "mixtcrpred",
+      "input_params": [
+        {
+          "name": "model_name",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "batch_size",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "host_species",
+          "description": "",
+          "deme": "",
+          "type": "Literal['HomoSapiens', 'MusMusculus']"
+        }
+      ],
+      "output": "Predict TCR-epitope binding using MixTCRpred, output binding scores and percentile rankings"
+    }
+  },
+  {
+    "design_sequences_from_backbone": {
+      "service_id": "mpnn",
+      "input_params": [
+        {
+          "name": "pdb_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "chains",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        },
+        {
+          "name": "num_sequences",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "temperature",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "omit_amino_acids",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        },
+        {
+          "name": "seed",
+          "description": "",
+          "deme": "",
+          "type": "Optional[int]"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Design sequences based on protein backbone for antibody optimization, stability improvement, and de novo design"
+    }
+  },
+  {
+    "score_sequences_on_backbone": {
+      "service_id": "mpnn",
+      "input_params": [
+        {
+          "name": "pdb_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "sequences",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "chain_id",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "per_residue",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Evaluate sequence compatibility with protein backbone for mutation validation and library screening"
+    }
+  },
+  {
+    "design_with_fixed_positions": {
+      "service_id": "mpnn",
+      "input_params": [
+        {
+          "name": "pdb_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "fixed_positions",
+          "description": "",
+          "deme": "",
+          "type": "Dict[str, List[int]]"
+        },
+        {
+          "name": "design_positions",
+          "description": "",
+          "deme": "",
+          "type": "Optional[Dict[str, List[int]]]"
+        },
+        {
+          "name": "num_sequences",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "temperature",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Design sequences with fixed key positions, preserve CDR regions, functional residues, and disulfide bond cysteines"
+    }
+  },
+  {
+    "design_with_amino_acid_bias": {
+      "service_id": "mpnn",
+      "input_params": [
+        {
+          "name": "pdb_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "chains",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        },
+        {
+          "name": "global_aa_bias",
+          "description": "",
+          "deme": "",
+          "type": "Optional[Dict[str, float]]"
+        },
+        {
+          "name": "per_position_bias",
+          "description": "",
+          "deme": "",
+          "type": "Optional[Dict[str, Dict[str, float]]]"
+        },
+        {
+          "name": "num_sequences",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "temperature",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Sequence design with physicochemical constraints, avoid sensitive residues, control hydrophobicity/charge distribution"
+    }
+  },
+  {
+    "get_position_probabilities": {
+      "service_id": "mpnn",
+      "input_params": [
+        {
+          "name": "pdb_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "chain_id",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "reference_sequence",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "output_format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "json",
+            "csv"
+          ]
+        }
+      ],
+      "output": "Get amino acid probability distribution at each position of sequences for guiding mutation experiments and sequence logo generation"
+    }
+  },
+  {
+    "design_with_pssm": {
+      "service_id": "mpnn",
+      "input_params": [
+        {
+          "name": "pdb_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "pssm_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "pssm_weight",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "chains",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        },
+        {
+          "name": "num_sequences",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "temperature",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Design sequences based on PSSM evolutionary information, balance structural and evolutionary constraints"
+    }
+  },
+  {
+    "batch_design_and_score": {
+      "service_id": "mpnn",
+      "input_params": [
+        {
+          "name": "pdb_directory",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "num_sequences_per_structure",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "temperature",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "also_score",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Batch process PDB structures for antibody library design, mutation optimization, and large-scale screening"
+    }
+  },
+  {
+    "scan_protein_for_epitopes": {
+      "service_id": "netmhcpan",
+      "input_params": [
+        {
+          "name": "sequence_input",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "peptide_lengths",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14
+          ]
+        },
+        {
+          "name": "hla_alleles",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "threshold",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "sort_by",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "rank",
+            "affinity",
+            "position"
+          ]
+        },
+        {
+          "name": "output_format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "json",
+            "csv"
+          ]
+        }
+      ],
+      "output": "Scan protein sequences to predict potential T cell epitopes, output binding affinity and rankings"
+    }
+  },
+  {
+    "predict_peptide_mhc_binding": {
+      "service_id": "netmhcpan",
+      "input_params": [
+        {
+          "name": "peptides",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "hla_alleles",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        },
+        {
+          "name": "return_non_binders",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "output_format",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "json",
+            "csv"
+          ]
+        }
+      ],
+      "output": "Predict peptide-MHC binding, output binding affinity, rankings, and binding levels"
+    }
+  },
+  {
+    "list_hla_alleles": {
+      "service_id": "netmhcpan",
+      "input_params": [
+        {
+          "name": "species",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "human",
+            "mouse",
+            "all"
+          ]
+        },
+        {
+          "name": "locus",
+          "description": "",
+          "deme": "",
+          "type": "enum",
+          "options": [
+            "all",
+            "A",
+            "B",
+            "C",
+            "E"
+          ]
+        },
+        {
+          "name": "supertype_representatives_only",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "List HLA alleles supported by NetMHCpan, include supertype classifications"
+    }
+  },
+  {
+    "check_peptide_support": {
+      "service_id": "nettcr",
+      "input_params": [
+        {
+          "name": "peptide",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "model_type",
+          "description": "",
+          "deme": "",
+          "type": "Literal['peptide', 'pretrained', 'pan']"
+        }
+      ],
+      "output": "Verify if peptides are supported by pre-trained models, return model availability and suggestions"
+    }
+  },
+  {
+    "validate_tcr_input": {
+      "service_id": "nettcr",
+      "input_params": [
+        {
+          "name": "input_data",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "check_peptide_support",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "model_type",
+          "description": "",
+          "deme": "",
+          "type": "Literal['peptide', 'pretrained', 'pan']"
+        }
+      ],
+      "output": "Validate TCR input data format, check sequence validity and column completeness"
+    }
+  },
+  {
+    "predict_tcr_binding_fast": {
+      "service_id": "nettcr",
+      "input_params": [
+        {
+          "name": "input_data",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "model_type",
+          "description": "",
+          "deme": "",
+          "type": "Literal['peptide', 'pretrained', 'pan']"
+        },
+        {
+          "name": "model_name",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "use_pan_fallback",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "NetTCR fast prediction, single model inference, suitable for large-scale initial screening"
+    }
+  },
+  {
+    "predict_tcr_binding_ensemble": {
+      "service_id": "nettcr",
+      "input_params": [
+        {
+          "name": "input_data",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "model_type",
+          "description": "",
+          "deme": "",
+          "type": "Literal['peptide', 'pretrained']"
+        },
+        {
+          "name": "num_models",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "use_pan_fallback",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "NetTCR ensemble model prediction, average multiple model results, balance speed and accuracy"
+    }
+  },
+  {
+    "predict_tcr_binding_complete": {
+      "service_id": "nettcr",
+      "input_params": [
+        {
+          "name": "input_data",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "use_tcrbase",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "tcrbase_alpha",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "calculate_percentile",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "show_similarity_analysis",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "percentile_threshold",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "model_type",
+          "description": "",
+          "deme": "",
+          "type": "Literal['pretrained', 'peptide']"
+        }
+      ],
+      "output": "Complete NetTCR prediction pipeline integrating ensemble models, TCRbase, and statistical rankings, output publication-quality results"
+    }
+  },
+  {
+    "list_available_peptides": {
+      "service_id": "nettcr",
+      "input_params": [
+        {
+          "name": "model_type",
+          "description": "",
+          "deme": "",
+          "type": "Literal['peptide', 'pretrained']"
+        },
+        {
+          "name": "include_stats",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "List peptides supported by pre-trained models, include HLA associations and training data statistics"
+    }
+  },
+  {
+    "tcrdist3_analyze_repertoire": {
+      "service_id": "tcrdist3",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "Literal['mouse', 'human']"
+        },
+        {
+          "name": "chains",
+          "description": "",
+          "deme": "",
+          "type": "List[Literal['alpha', 'beta', 'gamma', 'delta']]"
+        },
+        {
+          "name": "compute_distances",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "cpus",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Analyze TCR repertoires using tcrdist3, calculate pairwise distance matrices"
+    }
+  },
+  {
+    "tcrdist3_compute_sparse_distances": {
+      "service_id": "tcrdist3",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "Literal['mouse', 'human']"
+        },
+        {
+          "name": "chains",
+          "description": "",
+          "deme": "",
+          "type": "List[Literal['alpha', 'beta', 'gamma', 'delta']]"
+        },
+        {
+          "name": "radius",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "chunk_size",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "cpus",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Calculate sparse distance matrices for large-scale TCR repertoires, save memory"
+    }
+  },
+  {
+    "tcrdist3_find_neighbors": {
+      "service_id": "tcrdist3",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "Literal['mouse', 'human']"
+        },
+        {
+          "name": "chain",
+          "description": "",
+          "deme": "",
+          "type": "Literal['alpha', 'beta', 'gamma', 'delta']"
+        },
+        {
+          "name": "radius",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "use_sparse",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": "Find TCR neighbors within specified radius for clonotype clustering"
+    }
+  },
+  {
+    "tcrdist3_identify_public_tcrs": {
+      "service_id": "tcrdist3",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "Literal['mouse', 'human']"
+        },
+        {
+          "name": "chain",
+          "description": "",
+          "deme": "",
+          "type": "Literal['alpha', 'beta', 'gamma', 'delta']"
+        },
+        {
+          "name": "radius",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "min_subjects",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "min_neighbors",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Identify public/quasi-public TCR clonotypes, output cross-individual clonotypes"
+    }
+  },
+  {
+    "tcrdist3_generate_background": {
+      "service_id": "tcrdist3",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "Literal['human', 'mouse']"
+        },
+        {
+          "name": "chain",
+          "description": "",
+          "deme": "",
+          "type": "Literal['alpha', 'beta']"
+        },
+        {
+          "name": "background_size",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "background_type",
+          "description": "",
+          "deme": "",
+          "type": "Literal['vj_matched', 'flat']"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "database_path",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Generate background TCR repertoires using OLGA, support V-J frequency matching"
+    }
+  },
+  {
+    "tcrdist3_calculate_radii": {
+      "service_id": "tcrdist3",
+      "input_params": [
+        {
+          "name": "target_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "background_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "Literal['human', 'mouse']"
+        },
+        {
+          "name": "chain",
+          "description": "",
+          "deme": "",
+          "type": "Literal['alpha', 'beta', 'gamma', 'delta']"
+        },
+        {
+          "name": "ctrl_bkgd",
+          "description": "",
+          "deme": "",
+          "type": "float"
+        },
+        {
+          "name": "max_radius",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "cpus",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Calculate TCR distance radii for FDR-controlled clustering analysis"
+    }
+  },
+  {
+    "tcrdist3_infer_cdrs": {
+      "service_id": "tcrdist3",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "organism",
+          "description": "",
+          "deme": "",
+          "type": "Literal['human', 'mouse']"
+        },
+        {
+          "name": "chains",
+          "description": "",
+          "deme": "",
+          "type": "List[Literal['alpha', 'beta', 'gamma', 'delta']]"
+        },
+        {
+          "name": "imgt_aligned",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Infer CDR1/CDR2 sequences from V genes for complete TCR similarity analysis"
+    }
+  },
+  {
+    "ribonn": {
+      "service_id": "ribonn",
+      "input_params": [],
+      "output": ""
+    }
+  },
+  {
+    "generate_cds": {
+      "service_id": "gemorna",
+      "input_params": [],
+      "output": "Generate optimized CDS sequences from protein sequences"
+    }
+  },
+  {
+    "generate_utr": {
+      "service_id": "gemorna",
+      "input_params": [],
+      "output": "Generate 5'/3' UTR sequences of specified length, output result file paths"
+    }
+  },
+  {
+    "predict_stability": {
+      "service_id": "gemorna",
+      "input_params": [],
+      "output": "Predict UTR sequence stability, support 5'/3' UTR, output result file paths"
+    }
+  },
+  {
+    "optimize_codon_sequences": {
+      "service_id": "codontransformer",
+      "input_params": [],
+      "output": "Batch optimize codons for protein sequences, support multiple input formats, output DNA sequences"
+    }
+  },
+  {
+    "optimize_single_sequence": {
+      "service_id": "codontransformer",
+      "input_params": [],
+      "output": "Optimize codons for a single protein sequence, support specified species, output DNA sequences"
+    }
+  },
+  {
+    "predict_ribosome_loading": {
+      "service_id": "rinalmo",
+      "input_params": [],
+      "output": "Predict ribosome loading rate for RNA sequences, support 5UTR/CDS/mRNA types"
+    }
+  },
+  {
+    "predict_5utr_mrl": {
+      "service_id": "rinalmo",
+      "input_params": [],
+      "output": "Predict ribosome loading rate for 5' UTR sequences, output result file paths"
+    }
+  },
+  {
+    "predict_mrna_mrl": {
+      "service_id": "rinalmo",
+      "input_params": [],
+      "output": "Predict ribosome loading rate for complete mRNA sequences, output result file paths"
+    }
+  },
+  {
+    "extract_seurat_umap_metadata": {
+      "service_id": "lineage_analysis",
+      "input_params": [
+        {
+          "name": "rds_file_path",
+          "description": "",
+          "deme": "",
+          "type": "rds file"
+        },
+        {
+          "name": "output_path",
+          "description": "",
+          "deme": "",
+          "type": "file"
+        },
+        {
+          "name": "focus_genes",
+          "description": "",
+          "deme": "",
+          "type": "List[str]"
+        }
+      ],
+      "output": "Extract UMAP coordinates and cell metadata from Seurat RDS, output CSV files"
+    }
+  },
+  {
+    "integrate_scbcr_bulk_bcr_data": {
+      "service_id": "lineage_analysis",
+      "input_params": [
+        {
+          "name": "sc_rna_csv_path",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "bulk_raw_data_dir",
+          "description": "",
+          "deme": "",
+          "type": "file"
+        },
+        {
+          "name": "umap_coordinates_path",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "output_path",
+          "description": "",
+          "deme": "",
+          "type": "file"
+        }
+      ],
+      "output": "Integrate single-cell and bulk BCR sequencing data, add UMAP and cell type annotations"
+    }
+  },
+  {
+    "integrate_binding_neutralization_experiments": {
+      "service_id": "lineage_analysis",
+      "input_params": [
+        {
+          "name": "first_experiment_path",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "second_experiment_path",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "output_path",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Integrate antibody binding/neutralization experimental data, standardize to binary labels, output merged results"
+    }
+  },
+  {
+    "integrate_predictions_with_experimental_data": {
+      "service_id": "lineage_analysis",
+      "input_params": [
+        {
+          "name": "feature_data_path",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "bind_predict_dir",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "neu_predict_dir",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "clone_results_path",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "output_path",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Integrate machine learning prediction results with experimental data, output comprehensive datasets with features"
+    }
+  },
+  {
+    "download_url": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "url",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_path",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Download any file from URL, automatically identify format, support streaming download for large files"
+    }
+  },
+  {
+    "convert_csv_to_fasta": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Convert CSV to FASTA, automatically identify column names, support local/URL files, stream progress"
+    }
+  },
+  {
+    "convert_excel_to_fasta": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "xlsx xls file"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Convert Excel to FASTA, support XLS/XLSX, automatically identify column names, stream progress"
+    }
+  },
+  {
+    "convert_xlsx_to_fasta": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "xlsx file"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Convert XLSX to FASTA, automatically identify column names, support local/URL files, stream progress"
+    }
+  },
+  {
+    "convert_xls_to_fasta": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "xls file"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Convert XLS to FASTA, automatically identify column names, support local/URL files, stream progress"
+    }
+  },
+  {
+    "convert_xlsx_to_csv": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "xlsx file"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Convert XLSX to CSV, preserve all data, support local/URL files, stream progress"
+    }
+  },
+  {
+    "convert_xls_to_csv": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "xls file"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Convert XLS to CSV, preserve all data, support local/URL files, stream progress"
+    }
+  },
+  {
+    "convert_csv_to_xlsx": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Convert CSV to XLSX, preserve all data, support local/URL files"
+    }
+  },
+  {
+    "merge_csv_cartesian": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "antibody_file",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "antigen_file",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "antibody_key",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "antigen_key",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "new_key_name",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Cartesian product merge of antibody and antigen CSV files, generate all antibody-antigen pairs, stream progress"
+    }
+  },
+  {
+    "merge_csv_by_key": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "input_file1",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "input_file2",
+          "description": "",
+          "deme": "",
+          "type": "csv file"
+        },
+        {
+          "name": "key_column",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        }
+      ],
+      "output": "Merge two CSV files by key, automatically handle column name conflicts, stream progress"
+    }
+  },
+  {
+    "create_csv": {
+      "service_id": "file_utils",
+      "input_params": [
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "columns",
+          "description": "",
+          "deme": "",
+          "type": "Optional[List[str]]"
+        }
+      ],
+      "output": "Create blank or header-only CSV files, support temporary files, stream progress"
+    }
+  },
+  {
+    "data_integration": {
+      "service_id": "r_data_integration",
+      "input_params": [
+        {
+          "name": "csv_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "rds_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "csv_fields",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "rds_fields",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "separator",
+          "description": "",
+          "deme": "",
+          "type": "Optional[str]"
+        },
+        {
+          "name": "skip_umap",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        },
+        {
+          "name": "skip_annotation",
+          "description": "",
+          "deme": "",
+          "type": "bool"
+        }
+      ],
+      "output": ""
+    }
+  },
+  {
+    "foldx_repair_pdb": {
+      "service_id": "mutatex",
+      "input_params": [
+        {
+          "name": "pdb_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Identify and repair protein structures with poor torsion angles, van der Waals clashes, or total energy residues"
+    }
+  },
+  {
+    "foldx_build_model": {
+      "service_id": "mutatex",
+      "input_params": [
+        {
+          "name": "run_id",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "Path"
+        }
+      ],
+      "output": "Quickly build mutant protein structures based on mutation information, predict Gibbs free energy and energy differences for wild-type and mutant proteins"
+    }
+  },
+  {
+    "mutatex_saturation_scan": {
+      "service_id": "mutatex",
+      "input_params": [
+        {
+          "name": "pdb_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "Path"
+        },
+        {
+          "name": "threads",
+          "description": "",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": "Use FoldX to predict Gibbs free energy and energy differences for proteins after saturation point mutations"
+    }
+  },
+  {
+    "run_spired_fitness": {
+      "service_id": "spired_fitness",
+      "input_params": [
+        {
+          "name": "input_path",
+          "description": "Input file path (.fasta) or folder path containing fasta files",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "Output directory path for results",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "gpu_device",
+          "description": "Specify GPU ID to use (default \"0\")",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Predict fitness of saturation-mutated proteins"
+    }
+  },
+  {
+    "cif_to_pdb_batch": {
+      "service_id": "protein_energy_design",
+      "input_params": [
+        {
+          "name": "pdb_path",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Convert CIF protein structure files to PDB format"
+    }
+  },
+  {
+    "prepare_foldx_inputs": {
+      "service_id": "protein_energy_design",
+      "input_params": [
+        {
+          "name": "fitness_csv",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "chains",
+          "description": "e.g., \"A\" or \"ABCD\" (for multimers)",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": ""
+    }
+  },
+  {
+    "collect_and_merge_data": {
+      "service_id": "protein_energy_design",
+      "input_params": [
+        {
+          "name": "fitness_csv",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "foldx_result_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_csv",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": ""
+    }
+  },
+  {
+    "filter_candidates_pipeline": {
+      "service_id": "protein_energy_design",
+      "input_params": [
+        {
+          "name": "merged_csv",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "top_k",
+          "description": "Default 30",
+          "deme": "",
+          "type": "int"
+        }
+      ],
+      "output": ""
+    }
+  },
+  {
+    "generate_mutant_fasta": {
+      "service_id": "protein_energy_design",
+      "input_params": [
+        {
+          "name": "wt_fasta",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "mutation_csv",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_fasta",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": ""
+    }
+  },
+  {
+    "generate_cds": {
+      "service_id": "gemoRNA",
+      "input_params": [
+        {
+          "name": "protein_seq",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "count",
+          "description": "Default 5",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Generate optimized CDS sequences from protein sequences"
+    }
+  },
+  {
+    "generate_cds_from_file": {
+      "service_id": "gemoRNA",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "count",
+          "description": "Default 5",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Generate optimized CDS sequences from protein sequence files"
+    }
+  },
+  {
+    "generate_5utr": {
+      "service_id": "gemoRNA",
+      "input_params": [
+        {
+          "name": "utr_length",
+          "description": "Default is short, medium, long",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "count",
+          "description": "Default 5",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Output optimal 5' UTR based on length range"
+    }
+  },
+  {
+    "generate_3utr": {
+      "service_id": "gemoRNA",
+      "input_params": [
+        {
+          "name": "utr_length",
+          "description": "Default is short, medium, long",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "count",
+          "description": "Default 5",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Output optimal 3' UTR based on length range"
+    }
+  },
+  {
+    "generate_full_mrna": {
+      "service_id": "gemoRNA",
+      "input_params": [
+        {
+          "name": "protein_seq",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "utr5_length",
+          "description": "Default is short, medium, long",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "utr3_length",
+          "description": "Default is short, medium, long",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "count",
+          "description": "Default 5",
+          "deme": "",
+          "type": "int"
+        },
+        {
+          "name": "output_dir",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": "Generate highly expressed and stable mRNA from amino acid sequences"
+    }
+  },
+  {
+    "sort_ribonn_results": {
+      "service_id": "ribonn",
+      "input_params": [
+        {
+          "name": "input_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_file",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": ""
+    }
+  },
+  {
+    "rinalmo_predict": {
+      "service_id": "rinalmo",
+      "input_params": [
+        {
+          "name": "sequence",
+          "description": "",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "sequence_type",
+          "description": "Options are (\"5UTR\", \"CDS\", \"mRNA\"), default is \"mRNA\"",
+          "deme": "",
+          "type": "str"
+        },
+        {
+          "name": "output_dir",
+          "description": "Default \"./outputs\"",
+          "deme": "",
+          "type": "str"
+        }
+      ],
+      "output": ""
+    }
+  }
+]

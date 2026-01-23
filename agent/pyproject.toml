@@ -12,10 +12,33 @@ dependencies = [
     "pydantic>=2.11.4",
     "python-dotenv>=1.0.1",
     "langchain-openai>=1.0.0",
+    "langchain-mcp-adapters>=0.1.0",
+    "tiktoken>=0.12.0",  # 指定更新版本以支持 Python 3.13 预编译 wheel
 ]
 
 # 可选依赖
 [project.optional-dependencies]
+# 通义千问支持（DashScope）
+dashscope = [
+    "langchain-dashscope>=0.1.0",
+]
+# Qdrant 向量数据库检索支持
+qdrant = [
+    "langchain-qdrant>=0.1.0",
+    "qdrant-client>=1.7.0",
+    "langchain-ollama>=0.1.0",  # 用于本地嵌入模型（可选）
+]
+# Tavily API 网络搜索支持
+tavily = [
+    "tavily-python>=0.3.0",
+]
+# 完整检索支持（包含所有检索方式）
+retrieval = [
+    "langchain-qdrant>=0.1.0",
+    "qdrant-client>=1.7.0",
+    "langchain-ollama>=0.1.0",
+    "tavily-python>=0.3.0",
+]
 # 开发依赖（测试工具）
 dev = [
     "pytest>=8.3.4",

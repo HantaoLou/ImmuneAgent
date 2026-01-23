@@ -1,22 +1,22 @@
 """
-LLM工厂模块 - 提供统一的LLM实例创建功能
+LLM Factory Module - Provides unified LLM instance creation functionality
 
-按模型作用分类，支持以下类型：
-- 普通推理模型（reasoning）：用于逻辑推理、任务分类、决策等
-- 生信专项模型（bioinformatics）：用于生物信息学相关任务
-- 高级推理模型：专门用于复杂推理任务
-- 代码模型：用于代码生成和分析
+Categorized by model purpose, supports the following types:
+- Reasoning models (reasoning): For logical reasoning, task classification, decision-making, etc.
+- Bioinformatics models (bioinformatics): For bioinformatics-related tasks
+- Advanced reasoning models: Specifically for complex reasoning tasks
+- Code models: For code generation and analysis
 
-使用方式：
+Usage:
     from agent.utils.llm_factory import create_reasoning_llm, create_bioinformatics_llm, create_code_llm
     
-    # 创建推理模型
+    # Create reasoning model
     llm = create_reasoning_llm()
     
-    # 创建生信专项模型
+    # Create bioinformatics model
     llm = create_bioinformatics_llm()
     
-    # 创建代码模型
+    # Create code model
     llm = create_code_llm()
 """
 
@@ -25,57 +25,61 @@ from enum import Enum
 import os
 
 try:
+    from zai import ZhipuAiClient
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import HumanMessage, SystemMessage
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
-    ChatAnthropic = None
+    ZhipuAiClient = None
     ChatOpenAI = None
     HumanMessage = None
     SystemMessage = None
-    print("警告：langchain相关库未安装，LLM功能将不可用")
+
+if not LLM_AVAILABLE:
+    print("Warning: langchain-related libraries not installed, LLM functionality will be unavailable")
 
 
-# ===================== 模型用途枚举 =====================
+# ===================== Model Purpose Enum =====================
 class ModelPurpose(str, Enum):
-    """模型用途枚举"""
-    REASONING = "reasoning"  # 推理模型：用于逻辑推理、任务分类、决策等
-    BIOINFORMATICS = "bioinformatics"  # 生信专项模型：用于生物信息学相关任务
-    REASONING_ADVANCED = "reasoning_advanced"  # 高级推理模型：专门用于复杂推理任务
-    CODE = "code"  # 代码模型：用于代码生成和分析
+    """Model purpose enumeration"""
+    REASONING = "reasoning"  # Reasoning model: For logical reasoning, task classification, decision-making, etc.
+    BIOINFORMATICS = "bioinformatics"  # Bioinformatics model: For bioinformatics-related tasks
+    REASONING_ADVANCED = "reasoning_advanced"  # Advanced reasoning model: Specifically for complex reasoning tasks
+    CODE = "code"  # Code model: For code generation and analysis
 
 
-# ===================== 模型配置映射 =====================
+# ===================== Model Configuration Mapping =====================
 MODEL_CONFIGS: Dict[ModelPurpose, List[Tuple[str, str, float]]] = {
     ModelPurpose.REASONING: [
-        ("openai", "qwen-turbo", 0.1),  # 通义千问 Max - 优先使用
+        ("dashscope", "qwen-turbo", 0.1),  # Qwen Turbo - preferred
     ],
     
-    # 生信专项模型：优先使用通义千问，其次使用对科学文献理解好的模型
+    # Bioinformatics model: Prefer Qwen, then use models with good scientific literature understanding
     ModelPurpose.BIOINFORMATICS: [
-        ("openai", "qwen-max", 0.2),  # 通义千问 Max - 优先使用
+        ("dashscope", "qwen-max", 0.2),  # Qwen Max - preferred
     ],
     
-    # 高级推理模型：优先使用通义千问，用于复杂推理任务
+    # Advanced reasoning model: Prefer Qwen for complex reasoning tasks
     ModelPurpose.REASONING_ADVANCED: [
-        ("openai", "qwen-max", 0.1),  # 通义千问 Max - 优先使用
+        ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.1),  # Zhipu AI GLM-4 Flash - preferred  # Qwen Turbo - fallback
     ],
     
-    # 代码模型：优先使用通义千问，其次使用代码生成能力强的模型
+    # Code model: Prefer Qwen, then use models with strong code generation capabilities
     ModelPurpose.CODE: [
-        ("openai", "qwen-max", 0.1),  # 通义千问 Max - 优先使用
+        ("dashscope", "qwen-max", 0.1),  # Qwen Max - preferred
     ],
 }
 
 
-# ===================== 底层供应商创建函数 =====================
+# ===================== Low-level Provider Creation Functions =====================
 def _create_openai_llm(
     model: str,
     temperature: float = 0.1,
+    base_url: Optional[str] = None,
     api_key: Optional[str] = None
 ) -> Optional[Any]:
-    """内部函数：创建OpenAI GPT LLM实例"""
+    """Internal function: Create OpenAI GPT LLM instance"""
     if not LLM_AVAILABLE or ChatOpenAI is None:
         return None
     
@@ -84,34 +88,72 @@ def _create_openai_llm(
     
     if not api_key:
         return None
+
+    print(f"Creating OpenAI LLM instance: {model}, {temperature}, {base_url}, {api_key}")
+    
+    # Get timeout setting (default 120 seconds)
+    timeout = int(os.getenv("LLM_TIMEOUT", "120"))
     
     try:
         return ChatOpenAI(
             model=model,
             temperature=temperature,
-            api_key=api_key
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,  # Add timeout setting
+            max_retries=2  # Maximum retry count
         )
     except Exception as e:
-        print(f"错误：创建OpenAI LLM失败 ({model}): {e}")
+        print(f"Error: Failed to create OpenAI LLM ({model}): {e}")
         return None
 
+def _create_zhipu_llm(
+    model: str,
+    temperature: float = 0.1,
+    api_key: Optional[str] = None
+) -> Optional[Any]:
+    """Internal function: Create Zhipu AI LLM instance (using adapter)"""
+    if not LLM_AVAILABLE or ZhipuAiClient is None:
+        return None
+    
+    if api_key is None:
+        api_key = os.getenv("ZHIPU_API_KEY")
+    
+    if not api_key:
+        return None
+    
+    print(f"Creating Zhipu AI LLM instance: {model}, {temperature}")
+    try:
+        # Use adapter to create instance compatible with OpenAI interface
+        from agent.utils.zhipu_adapter import ZhipuAIAdapter
+        return ZhipuAIAdapter(
+            model=model,
+            temperature=temperature,
+            api_key=api_key
+        )
+    except ImportError as e:
+        print(f"Error: Failed to import ZhipuAI adapter: {e}")
+        return None
+    except Exception as e:
+        print(f"Error: Failed to create Zhipu AI LLM ({model}): {e}")
+        return None
 
-# ===================== 按用途创建LLM =====================
+# ===================== Create LLM by Purpose =====================
 def create_reasoning_llm(
     temperature: Optional[float] = None,
     custom_model: Optional[str] = None
 ) -> Optional[Any]:
     """
-    创建推理模型实例
+    Create reasoning model instance
     
-    用于逻辑推理、任务分类、决策等任务。优先使用推理性能好的模型。
+    For logical reasoning, task classification, decision-making, etc. Prefer models with good reasoning performance.
     
     Args:
-        temperature: 温度参数，如果为None则使用默认配置
-        custom_model: 自定义模型名称（格式：provider:model，如 "anthropic:claude-3-opus-20240229"）
+        temperature: Temperature parameter, if None uses default configuration
+        custom_model: Custom model name (format: provider:model, e.g., "anthropic:claude-3-opus-20240229")
     
     Returns:
-        LLM实例，如果创建失败则返回None
+        LLM instance, returns None if creation fails
     
     Examples:
         >>> llm = create_reasoning_llm()
@@ -130,16 +172,16 @@ def create_bioinformatics_llm(
     custom_model: Optional[str] = None
 ) -> Optional[Any]:
     """
-    创建生信专项模型实例
+    Create bioinformatics model instance
     
-    用于生物信息学相关任务，如文献分析、数据解读等。优先使用对科学文献理解好的模型。
+    For bioinformatics-related tasks such as literature analysis, data interpretation, etc. Prefer models with good scientific literature understanding.
     
     Args:
-        temperature: 温度参数，如果为None则使用默认配置
-        custom_model: 自定义模型名称（格式：provider:model，如 "anthropic:claude-3-opus-20240229"）
+        temperature: Temperature parameter, if None uses default configuration
+        custom_model: Custom model name (format: provider:model, e.g., "anthropic:claude-3-opus-20240229")
     
     Returns:
-        LLM实例，如果创建失败则返回None
+        LLM instance, returns None if creation fails
     
     Examples:
         >>> llm = create_bioinformatics_llm()
@@ -157,16 +199,16 @@ def create_reasoning_advanced_llm(
     custom_model: Optional[str] = None
 ) -> Optional[Any]:
     """
-    创建高级推理模型实例
+    Create advanced reasoning model instance
     
-    专门用于复杂推理任务，优先使用推理能力最强的模型。
+    Specifically for complex reasoning tasks, prefer models with the strongest reasoning capabilities.
     
     Args:
-        temperature: 温度参数，如果为None则使用默认配置
-        custom_model: 自定义模型名称（格式：provider:model，如 "anthropic:claude-3-opus-20240229"）
+        temperature: Temperature parameter, if None uses default configuration
+        custom_model: Custom model name (format: provider:model, e.g., "anthropic:claude-3-opus-20240229")
     
     Returns:
-        LLM实例，如果创建失败则返回None
+        LLM instance, returns None if creation fails
     
     Examples:
         >>> llm = create_reasoning_advanced_llm()
@@ -183,16 +225,16 @@ def create_code_llm(
     custom_model: Optional[str] = None
 ) -> Optional[Any]:
     """
-    创建代码模型实例
+    Create code model instance
     
-    用于代码生成、代码分析、代码审查等任务。优先使用代码生成能力强的模型。
+    For code generation, code analysis, code review, etc. Prefer models with strong code generation capabilities.
     
     Args:
-        temperature: 温度参数，如果为None则使用默认配置
-        custom_model: 自定义模型名称（格式：provider:model，如 "openai:gpt-4o"）
+        temperature: Temperature parameter, if None uses default configuration
+        custom_model: Custom model name (format: provider:model, e.g., "openai:gpt-4o")
     
     Returns:
-        LLM实例，如果创建失败则返回None
+        LLM instance, returns None if creation fails
     
     Examples:
         >>> llm = create_code_llm()
@@ -205,83 +247,125 @@ def create_code_llm(
     )
 
 
-# ===================== 核心创建函数 =====================
+# ===================== Core Creation Function =====================
 def _create_llm_by_purpose(
     purpose: ModelPurpose,
     temperature: Optional[float] = None,
     custom_model: Optional[str] = None
 ) -> Optional[Any]:
     """
-    根据用途创建LLM实例（核心函数）
+    Create LLM instance by purpose (core function)
     
     Args:
-        purpose: 模型用途
-        temperature: 温度参数，如果为None则使用默认配置
-        custom_model: 自定义模型名称（格式：provider:model）
+        purpose: Model purpose
+        temperature: Temperature parameter, if None uses default configuration
+        custom_model: Custom model name (format: provider:model)
     
     Returns:
-        LLM实例，如果创建失败则返回None
+        LLM instance, returns None if creation fails
     """
     if not LLM_AVAILABLE:
-        print("警告：LLM相关库未安装，无法创建LLM实例")
+        print("Warning: LLM-related libraries not installed, cannot create LLM instance")
         return None
     
-    # 如果指定了自定义模型，优先使用
+    # If custom model is specified, use it first
     if custom_model:
         try:
             provider, model = custom_model.split(":", 1)
             temp = temperature if temperature is not None else 0.1
             
             if provider == "openai":
-                llm = _create_openai_llm(model, temp)
+                llm = _create_openai_llm(model, temp, base_url="https://xiaoai.plus/v1")
+            elif provider == "dashscope":
+                # DashScope uses DASHSCOPE_API_KEY
+                dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY")
+                if dashscope_key:
+                    llm = _create_openai_llm(model, temp, base_url="https://dashscope.aliyuncs.com/compatible-mode/v1", api_key=dashscope_key)
+                else:
+                    llm = None
+            elif provider == "zhipu":
+                zhipu_key = os.getenv("ZHIPU_API_KEY")
+                if zhipu_key:
+                    llm = _create_zhipu_llm(model, temp, api_key=zhipu_key)
+                else:
+                    llm = None
             else:
-                print(f"警告：未知的提供者 '{provider}'，忽略自定义模型")
+                print(f"Warning: Unknown provider '{provider}', ignoring custom model")
                 llm = None
             
             if llm is not None:
-                print(f"成功创建自定义{provider} LLM实例 ({model})")
+                print(f"Successfully created custom {provider} LLM instance ({model})")
                 return llm
         except ValueError:
-            print(f"警告：自定义模型格式错误 '{custom_model}'，应为 'provider:model'")
+            print(f"Warning: Custom model format error '{custom_model}', should be 'provider:model'")
     
-    # 按优先级尝试创建模型
+    # Try to create model by priority
     configs = MODEL_CONFIGS.get(purpose, [])
     if not configs:
-        print(f"警告：未找到用途 '{purpose.value}' 的模型配置")
+        print(f"Warning: No model configuration found for purpose '{purpose.value}'")
         return None
     
+    failed_attempts = []
     for provider, model, default_temp in configs:
         temp = temperature if temperature is not None else default_temp
         
         if provider == "openai":
-            llm = _create_openai_llm(model, temp)
+            llm = _create_openai_llm(model, temp, base_url="https://xiaoai.plus/v1")
+            if llm is None:
+                failed_attempts.append(f"{provider}:{model} (missing OPENAI_API_KEY or creation failed)")
+        elif provider == "dashscope":
+            # DashScope uses DASHSCOPE_API_KEY
+            dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY")
+            if dashscope_key:
+                llm = _create_openai_llm(model, temp, base_url="https://dashscope.aliyuncs.com/compatible-mode/v1", api_key=dashscope_key)
+                if llm is None:
+                    failed_attempts.append(f"{provider}:{model} (creation failed)")
+            else:
+                llm = None
+                failed_attempts.append(f"{provider}:{model} (missing DASHSCOPE_API_KEY or QIANFAN_API_KEY)")
+        elif provider == "zhipu":
+            # Zhipu uses ZHIPU_API_KEY
+            zhipu_key = os.getenv("ZHIPU_API_KEY")
+            if zhipu_key:
+                llm = _create_zhipu_llm(model, temp, api_key=zhipu_key)
+                if llm is None:
+                    failed_attempts.append(f"{provider}:{model} (creation failed or adapter unavailable)")
+            else:
+                llm = None
+                failed_attempts.append(f"{provider}:{model} (missing ZHIPU_API_KEY)")
         else:
+            failed_attempts.append(f"{provider}:{model} (unknown provider)")
             continue
         
         if llm is not None:
-            print(f"成功创建{provider} {purpose.value}模型实例 ({model})")
+            print(f"Successfully created {provider} {purpose.value} model instance ({model})")
             return llm
     
-    print(f"警告：无法创建{purpose.value}模型，所有配置的模型都不可用")
+    # Provide detailed error information
+    error_msg = f"Warning: Cannot create {purpose.value} model, all configured models are unavailable"
+    if failed_attempts:
+        error_msg += f"\n  Failed attempts: {', '.join(failed_attempts)}"
+    error_msg += f"\n  Please check your API keys or model availability"
+    print(error_msg)
     return None
 
 
-# ===================== 通用创建函数（向后兼容） =====================
+# ===================== Generic Creation Function (Backward Compatible) =====================
 def create_llm(
     purpose: str = "reasoning",
     temperature: Optional[float] = None,
     custom_model: Optional[str] = None
 ) -> Optional[Any]:
     """
-    通用LLM创建函数（向后兼容）
+    Generic LLM creation function (backward compatible)
     
     Args:
-        purpose: 模型用途，可选 "reasoning", "bioinformatics", "reasoning_advanced", "code"
-        temperature: 温度参数
-        custom_model: 自定义模型名称
+        purpose: Model purpose, options: "reasoning", "bioinformatics", "reasoning_advanced", "code"
+        temperature: Temperature parameter
+        custom_model: Custom model name
     
     Returns:
-        LLM实例，如果创建失败则返回None
+        LLM instance, returns None if creation fails
     
     Examples:
         >>> llm = create_llm("reasoning")
@@ -291,45 +375,48 @@ def create_llm(
         purpose_enum = ModelPurpose(purpose)
         return _create_llm_by_purpose(purpose_enum, temperature, custom_model)
     except ValueError:
-        print(f"警告：未知的模型用途 '{purpose}'，使用默认推理模型")
+        print(f"Warning: Unknown model purpose '{purpose}', using default reasoning model")
         return _create_llm_by_purpose(ModelPurpose.REASONING, temperature, custom_model)
 
 
-# ===================== 辅助函数 =====================
+# ===================== Helper Functions =====================
 def is_llm_available() -> bool:
     """
-    检查LLM功能是否可用
+    Check if LLM functionality is available
     
     Returns:
-        如果LLM相关库已安装则返回True，否则返回False
+        True if LLM-related libraries are installed, False otherwise
     """
     return LLM_AVAILABLE
 
 
 def get_available_providers() -> List[str]:
     """
-    获取可用的LLM提供者列表（基于环境变量）
+    Get list of available LLM providers (based on environment variables)
     
     Returns:
-        可用提供者的列表，如 ["openai"]
+        List of available providers, e.g., ["openai", "dashscope"]
     """
     providers = []
 
     if os.getenv("OPENAI_API_KEY"):
         providers.append("openai")
     
+    if os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY"):
+        providers.append("dashscope")
+    
     return providers
 
 
 def get_model_configs(purpose: Optional[ModelPurpose] = None) -> Dict:
     """
-    获取模型配置信息
+    Get model configuration information
     
     Args:
-        purpose: 模型用途，如果为None则返回所有配置
+        purpose: Model purpose, if None returns all configurations
     
     Returns:
-        模型配置字典
+        Model configuration dictionary
     """
     if purpose is None:
         return {

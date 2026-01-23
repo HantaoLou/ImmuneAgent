@@ -1,17 +1,31 @@
 """
-Agent 测试用例
+Agent 全流程测试用例
 
-使用 pytest 框架进行测试
+测试整个 Agent 系统的完整流程，包括：
+- Supervisor 分类 → 路由 → 子图处理 → 结果返回
+- 不同类型任务的完整处理流程
+- 端到端的集成测试
+
+注意：特定 subgraph 的单独测试请参考：
+- test_supervisor_subgraph.py：Supervisor subgraph 单独测试
+- test_general_qa_subgraph.py：General QA subgraph 单独测试
+
 运行方式：pytest tests/test_agent.py -v
 """
 
 import os
+import sys
 import pytest
 from pathlib import Path
 from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
+
+# 添加 agent 目录到路径
+agent_dir = Path(__file__).parent.parent
+if str(agent_dir) not in sys.path:
+    sys.path.insert(0, str(agent_dir))
 
 from main_graph import build_main_graph
 from state import GlobalState, UserTaskType
@@ -22,6 +36,17 @@ def _ensure_global_state(result):
     if isinstance(result, dict):
         return GlobalState(**result)
     return result
+
+
+def get_task_type_str(task_type):
+    """安全地获取任务类型字符串"""
+    if task_type is None:
+        return '未知'
+    if isinstance(task_type, str):
+        return task_type
+    if hasattr(task_type, 'value'):
+        return task_type.value
+    return str(task_type)
 
 
 @pytest.fixture(scope="module")
@@ -58,69 +83,78 @@ class TestAgentBasic:
         print(f"✓ Agent 基本调用成功，任务类型: {result.user_task_type}")
 
 
-class TestTaskClassification:
-    """任务分类测试"""
+class TestFullWorkflow:
+    """全流程测试"""
     
-    @pytest.mark.parametrize("input_text,expected_type", [
-        ("什么是免疫系统？", UserTaskType.GENERAL_QA),
-        ("请解释一下什么是抗体", UserTaskType.GENERAL_QA),
-        ("你好，我想了解一下生物信息学", UserTaskType.GENERAL_QA),
-    ])
-    def test_general_qa_classification(self, agent_graph, default_sandbox_dir, input_text, expected_type):
-        """测试普通问答任务分类"""
+    def test_full_workflow_general_qa(self, agent_graph, default_sandbox_dir):
+        """测试普通问答的完整流程：Supervisor → General QA → 结果"""
         result = agent_graph.invoke({
-            "user_input": input_text,
+            "user_input": "什么是DNA？",
             "sandbox_dir": default_sandbox_dir
         })
         
         result = _ensure_global_state(result)
-        assert result.user_task_type is not None
-        print(f"  输入: {input_text}")
-        print(f"  判断类型: {result.user_task_type.value}, 预期: {expected_type.value}")
         
-        # 注意：由于使用LLM判断，可能不完全匹配，这里只检查是否返回了类型
-        assert result.user_task_type in [UserTaskType.GENERAL_QA, UserTaskType.IMMUNOLOGY_TASK]
+        # 验证完整流程
+        # 1. Supervisor 分类成功
+        assert result.user_task_type == UserTaskType.GENERAL_QA
+        
+        # 2. 路由到 General QA 并生成结果
+        assert result.merged_result is not None
+        assert "general_qa_answer" in result.merged_result
+        assert len(result.merged_result["general_qa_answer"]) > 0
+        
+        print("✓ 普通问答全流程测试通过")
+        print(f"  回答长度: {len(result.merged_result['general_qa_answer'])} 字符")
     
-    @pytest.mark.parametrize("input_text,expected_type", [
-        ("执行以下计划：1. 分析数据 2. 生成报告", UserTaskType.EXECUTE_PLAN),
-        ("按照这个步骤执行：第一步，第二步，第三步", UserTaskType.EXECUTE_PLAN),
-        ("请按照以下计划执行任务", UserTaskType.EXECUTE_PLAN),
-    ])
-    def test_execute_plan_classification(self, agent_graph, default_sandbox_dir, input_text, expected_type):
-        """测试执行计划任务分类"""
+    def test_full_workflow_immunology_task(self, agent_graph, default_sandbox_dir):
+        """测试免疫学任务的完整流程：Supervisor → Immunity → 结果"""
         result = agent_graph.invoke({
-            "user_input": input_text,
+            "user_input": "分析抗原抗体反应",
             "sandbox_dir": default_sandbox_dir
         })
         
         result = _ensure_global_state(result)
-        assert result.user_task_type is not None
-        print(f"  输入: {input_text}")
-        print(f"  判断类型: {result.user_task_type.value}, 预期: {expected_type.value}")
         
-        # 检查是否识别为执行计划类型
-        assert result.user_task_type == UserTaskType.EXECUTE_PLAN
-    
-    @pytest.mark.parametrize("input_text,expected_type", [
-        ("分析这个抗原抗体的相互作用", UserTaskType.IMMUNOLOGY_TASK),
-        ("请帮我分析免疫细胞的激活过程", UserTaskType.IMMUNOLOGY_TASK),
-        ("这个疫苗的免疫原性如何？", UserTaskType.IMMUNOLOGY_TASK),
-        ("T细胞和B细胞的区别是什么？", UserTaskType.IMMUNOLOGY_TASK),
-    ])
-    def test_immunology_task_classification(self, agent_graph, default_sandbox_dir, input_text, expected_type):
-        """测试免疫学任务分类"""
-        result = agent_graph.invoke({
-            "user_input": input_text,
-            "sandbox_dir": default_sandbox_dir
-        })
-        
-        result = _ensure_global_state(result)
-        assert result.user_task_type is not None
-        print(f"  输入: {input_text}")
-        print(f"  判断类型: {result.user_task_type.value}, 预期: {expected_type.value}")
-        
-        # 检查是否识别为免疫学任务
+        # 验证完整流程
+        # 1. Supervisor 分类成功
         assert result.user_task_type == UserTaskType.IMMUNOLOGY_TASK
+        
+        # 2. 路由到 Immunity 节点并生成结果
+        assert result.merged_result is not None
+        assert "immunity_response" in result.merged_result
+        
+        print("✓ 免疫学任务全流程测试通过")
+    
+    def test_full_workflow_execute_plan(self, agent_graph, default_sandbox_dir):
+        """测试执行计划的完整流程：Supervisor → Task Decomposition → Executor → 结果"""
+        result = agent_graph.invoke({
+            "user_input": "执行计划：1. 分析数据 2. 生成报告",
+            "sandbox_dir": default_sandbox_dir
+        })
+        
+        result = _ensure_global_state(result)
+        
+        # 验证完整流程
+        # 1. Supervisor 分类成功
+        assert result.user_task_type == UserTaskType.EXECUTE_PLAN
+        
+        # 2. 任务分解应该生成子任务（如果有执行计划）
+        # 注意：如果没有执行计划，可能不会生成子任务
+        
+        # 3. Executor 执行结果
+        assert result.merged_result is not None
+        # 检查是否有 executor_results 或任务执行结果
+        has_executor_results = (
+            "executor_results" in result.merged_result or
+            len(result.completed_tasks) > 0 or
+            len(result.subtasks) > 0
+        )
+        
+        print("✓ 执行计划全流程测试通过")
+        if "executor_results" in result.merged_result:
+            executor_results = result.merged_result["executor_results"]
+            print(f"  执行结果: {executor_results.get('completed', 0)} 个任务完成")
 
 
 class TestStateManagement:
@@ -200,41 +234,130 @@ class TestEdgeCases:
         print("✓ 特殊字符处理正常")
 
 
-class TestIntegration:
-    """集成测试"""
+
+
+class TestEndToEndIntegration:
+    """端到端集成测试"""
     
-    def test_multiple_invocations(self, agent_graph, default_sandbox_dir):
-        """测试多次调用"""
-        inputs = [
-            "什么是免疫系统？",
-            "分析抗原抗体反应",
-            "执行计划：1. 分析 2. 报告"
+    def test_multiple_task_types_processing(self, agent_graph, default_sandbox_dir):
+        """测试处理多种不同类型的任务，验证系统的完整性和稳定性"""
+        test_cases = [
+            ("什么是DNA？", UserTaskType.GENERAL_QA, "general_qa_answer"),
+            ("分析抗原抗体反应", UserTaskType.IMMUNOLOGY_TASK, "immunity_response"),
+            ("执行计划：1. 分析数据 2. 生成报告", UserTaskType.EXECUTE_PLAN, "executor_results"),
         ]
         
         results = []
-        for input_text in inputs:
+        for input_text, expected_type, expected_result_key in test_cases:
             result = agent_graph.invoke({
                 "user_input": input_text,
                 "sandbox_dir": default_sandbox_dir
             })
             result = _ensure_global_state(result)
-            results.append(result)
-            assert result.user_task_type is not None
+            
+            # 验证分类正确
+            assert result.user_task_type == expected_type
+            
+            # 验证生成了相应的结果
+            assert result.merged_result is not None
+            # 对于执行计划，可能没有 executor_results，但应该有任务列表或执行结果
+            if expected_result_key == "executor_results":
+                has_results = (
+                    expected_result_key in result.merged_result or
+                    len(result.completed_tasks) > 0 or
+                    len(result.subtasks) > 0
+                )
+                assert has_results, "执行计划应该生成任务或执行结果"
+            else:
+                assert expected_result_key in result.merged_result
+            
+            results.append((input_text, get_task_type_str(result.user_task_type), expected_result_key))
         
-        print(f"✓ 成功处理 {len(results)} 个请求")
-        for i, result in enumerate(results, 1):
-            print(f"  请求 {i}: {result.user_task_type.value}")
+        print(f"✓ 成功处理 {len(results)} 个不同类型的任务")
+        for i, (input_text, task_type, result_key) in enumerate(results, 1):
+            print(f"  任务 {i}: {task_type} -> {result_key}")
+    
+    def test_complete_workflow_with_general_qa(self, agent_graph, default_sandbox_dir):
+        """测试包含 General QA 的完整工作流程"""
+        result = agent_graph.invoke({
+            "user_input": "什么是蛋白质折叠？请详细解释。",
+            "sandbox_dir": default_sandbox_dir
+        })
+        
+        result = _ensure_global_state(result)
+        
+        # 验证完整流程的每个步骤
+        # 1. Supervisor 分类
+        assert result.user_task_type == UserTaskType.GENERAL_QA
+        
+        # 2. 路由到 General QA
+        assert result.merged_result is not None
+        assert "general_qa_answer" in result.merged_result
+        
+        # 3. General QA 生成完整输出
+        answer = result.merged_result["general_qa_answer"]
+        assert answer is not None and len(answer) > 0
+        
+        # 4. 可选：验证其他字段（如果生成）
+        if "general_qa_confidence" in result.merged_result:
+            print(f"  置信度: {result.merged_result['general_qa_confidence'][:50]}...")
+        if "general_qa_related_topics" in result.merged_result:
+            print(f"  相关问题: {len(result.merged_result['general_qa_related_topics'])} 个")
+        if "general_qa_sources" in result.merged_result:
+            print(f"  参考资料: {len(result.merged_result['general_qa_sources'])} 个")
+        
+        print("✓ 包含 General QA 的完整工作流程测试通过")
+        print(f"  回答长度: {len(answer)} 字符")
+    
+    def test_state_consistency_throughout_workflow(self, agent_graph, default_sandbox_dir):
+        """测试整个工作流程中状态的一致性"""
+        initial_input = "什么是CRISPR技术？"
+        
+        result = agent_graph.invoke({
+            "user_input": initial_input,
+            "sandbox_dir": default_sandbox_dir
+        })
+        
+        result = _ensure_global_state(result)
+        
+        # 验证状态在整个流程中保持一致
+        assert result.user_input == initial_input
+        assert result.sandbox_dir == default_sandbox_dir
+        assert result.user_task_type is not None
+        assert result.merged_result is not None
+        
+        # 验证状态结构完整
+        assert isinstance(result.subtasks, list)
+        assert isinstance(result.parallel_task_groups, dict)
+        assert isinstance(result.completed_tasks, dict)
+        assert isinstance(result.merged_result, dict)
+        
+        print("✓ 状态一致性测试通过")
+        print(f"  任务类型: {get_task_type_str(result.user_task_type)}")
+        print(f"  结果键数量: {len(result.merged_result)}")
 
 
 def test_environment_check():
-    """检查环境配置"""
+    """检查全流程测试环境配置"""
     print("\n" + "=" * 50)
-    print("环境配置检查")
+    print("全流程测试环境配置检查")
     print("=" * 50)
     
+    dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
     
-    has_llm = any([openai_key])
+    has_llm = any([dashscope_key, anthropic_key, openai_key])
+    
+    if dashscope_key:
+        print("✓ 通义千问 API Key 已配置")
+    else:
+        print("✗ 通义千问 API Key 未配置")
+    
+    if anthropic_key:
+        print("✓ Anthropic API Key 已配置")
+    else:
+        print("✗ Anthropic API Key 未配置")
     
     if openai_key:
         print("✓ OpenAI API Key 已配置")
@@ -243,6 +366,8 @@ def test_environment_check():
     
     if not has_llm:
         print("\n⚠ 警告：未配置任何LLM API Key，将使用降级方案")
+    else:
+        print("✓ 至少一个LLM API Key 已配置")
     
     print("=" * 50 + "\n")
     

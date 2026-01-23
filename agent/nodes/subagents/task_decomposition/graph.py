@@ -1,0 +1,1876 @@
+"""
+Task Decomposition Agent Subgraph
+
+Responsible for decomposing complex tasks or execution plans into structured subtasks, identifying dependencies and parallel task groups.
+"""
+
+from typing import Dict, List, Any, Optional
+from pydantic import BaseModel, Field
+from langgraph.graph import StateGraph, START, END
+import sys
+import json
+import re
+import os
+from pathlib import Path
+
+from .prompt import (
+    TASK_DECOMPOSITION_SYSTEM_PROMPT, 
+    get_task_decomposition_user_prompt,
+    PARALLEL_INFERENCE_SYSTEM_PROMPT,
+    get_parallel_inference_user_prompt,
+    COARSE_DECOMPOSITION_SYSTEM_PROMPT,
+    get_coarse_decomposition_user_prompt
+)
+from .tool_categorizer import load_service_list, get_tools_by_service_ids, get_service_summary
+
+# Import main graph state (for state mapping)
+# Add agent directory to path (support importing from subgraph directory)
+agent_dir = Path(__file__).parent.parent.parent.parent
+if str(agent_dir) not in sys.path:
+    sys.path.insert(0, str(agent_dir))
+
+from state import GlobalState, SubTask, ParallelTaskGroup, UserTaskType, TaskStatus
+
+# Parameter inference result types
+from enum import Enum
+
+class ParameterSourceType(str, Enum):
+    """Parameter source type"""
+    DETERMINED = "determined"  # Determined parameter value
+    FROM_TASK = "from_task"  # Determined by a task's result
+    USER_REQUIRED = "user_required"  # Requires user input
+
+
+class ParameterInferenceResult(BaseModel):
+    """Parameter inference result"""
+    param_name: str = Field(description="Parameter name")
+    source_type: ParameterSourceType = Field(description="Parameter source type")
+    value: Optional[Any] = Field(default=None, description="Parameter value (if source_type is determined)")
+    source_task_id: Optional[str] = Field(default=None, description="Source task ID (if source_type is from_task)")
+    source_output_key: Optional[str] = Field(default=None, description="Source task's output key (if source_type is from_task)")
+    user_prompt: Optional[str] = Field(default=None, description="User prompt information (if source_type is user_required)")
+    reason: Optional[str] = Field(default=None, description="Inference reason or explanation")
+
+
+class TaskParameterInference(BaseModel):
+    """Task parameter inference result"""
+    task_id: str = Field(description="Task ID")
+    tool_name: Optional[str] = Field(default=None, description="Tool name")
+    parameters: Dict[str, ParameterInferenceResult] = Field(default_factory=dict, description="Parameter inference results")
+    inference_summary: Optional[str] = Field(default=None, description="Inference summary")
+
+# LLM-related imports (using public LLM factory)
+try:
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from utils.llm_factory import create_reasoning_advanced_llm
+    LLM_AVAILABLE = True
+except ImportError:
+    LLM_AVAILABLE = False
+    create_reasoning_advanced_llm = None
+    HumanMessage = None
+    SystemMessage = None
+    print("Warning: langchain-related libraries not installed, task decomposition functionality will be unavailable")
+
+
+# ---------------------- Task Decomposition State Model ----------------------
+class TaskDecompositionState(BaseModel):
+    """Task Decomposition Agent subgraph state"""
+    user_input: str = Field(description="User's original input")
+    execution_plan: Optional[str] = Field(default=None, description="User-provided execution plan (if any)")
+    available_tools: List[Dict[str, Any]] = Field(default_factory=list, description="List of all available tools (MCP tools, Skills, persistent tools)")
+    # Stage 0: Coarse decomposition results
+    required_service_ids: List[str] = Field(default_factory=list, description="List of required service_ids determined by coarse decomposition")
+    filtered_tools: List[Dict[str, Any]] = Field(default_factory=list, description="List of tools filtered by service_id")
+    # Stage 1: Fine decomposition results (serialized task list, includes dependencies but not parallel relationships)
+    raw_tasks: List[Dict[str, Any]] = Field(default_factory=list, description="Raw task list from fine decomposition (JSON format)")
+    # Stage 2: Parallel inference results
+    subtasks: List[SubTask] = Field(default_factory=list, description="List of decomposed regular subtasks")
+    parallel_task_groups: Dict[str, ParallelTaskGroup] = Field(default_factory=dict, description="Parallel task groups")
+    decomposition_summary: Optional[str] = Field(default=None, description="Overall description of task decomposition")
+    # Stage 3: Parameter inference results
+    parameter_inference_results: Dict[str, TaskParameterInference] = Field(default_factory=dict, description="Task parameter inference results")
+    parameter_inference_summary: Optional[str] = Field(default=None, description="Overall description of parameter inference")
+
+
+# ---------------------- LLM Instantiation (using public LLM factory) ----------------------
+def _get_llm():
+    """
+    Get reasoning model instance (for task decomposition)
+    
+    Use public LLM factory to create reasoning model, prefer models with good reasoning performance.
+    
+    Returns:
+        LLM instance, returns None if all are unavailable
+    """
+    if not LLM_AVAILABLE or create_reasoning_advanced_llm is None:
+        return None
+    
+    # Use reasoning model (for task decomposition, slightly lower temperature for more structured output)
+    return create_reasoning_advanced_llm(temperature=0.2)
+
+
+# ---------------------- CodeAct Tool Creation Function =====================
+def _create_codeact_tool() -> Dict[str, Any]:
+    """
+    Create CodeAct tool (virtual MCP tool)
+    
+    When existing MCP tools cannot support the task, use CodeAct to write and execute code.
+    The actual code writing is done by subsequent subgraphs, here it's just used as a tool identifier.
+    
+    Returns:
+        CodeAct tool dictionary
+    """
+    return {
+        "name": "codeact",
+        "service": "codeact",
+        "description": "Code execution tool. When existing MCP tools cannot complete complex tasks, use Python code writing and execution to accomplish them. Supports file operations, data analysis, visualization, API calls, and other types of tasks. Code writing and execution are completed by subsequent subgraphs.",
+        "tool": [{
+            "tool_name": "codeact",
+            "description": "Code execution tool for writing and executing Python code to complete complex tasks",
+            "parameters": {
+                "task_description": {
+                    "type": "string",
+                    "description": "Description of the task to be completed",
+                    "required": True
+                },
+                "required_libraries": {
+                    "type": "array",
+                    "description": "List of potentially required Python libraries (e.g., numpy, pandas, matplotlib, etc.)",
+                    "required": False
+                },
+                "input_files": {
+                    "type": "array",
+                    "description": "List of input file paths",
+                    "required": False
+                },
+                "output_files": {
+                    "type": "array",
+                    "description": "List of output file paths",
+                    "required": False
+                }
+            }
+        }]
+    }
+
+
+def _check_and_add_codeact_to_tasks(raw_tasks: List[Dict[str, Any]], available_tools: List[Dict[str, Any]]):
+    """
+    Check tasks in fine decomposition results, if a task has no matching tool, add codeact tool
+    
+    Args:
+        raw_tasks: Raw task list from fine decomposition
+        available_tools: List of available tools
+    """
+    if not raw_tasks:
+        return
+    
+    # Get names of all available tools
+    available_tool_names = set()
+    for tool in available_tools:
+        tool_name = tool.get("name", "")
+        if tool_name:
+            available_tool_names.add(tool_name)
+        # Also check tool names in the tool field
+        if "tool" in tool and isinstance(tool["tool"], list):
+            for t in tool["tool"]:
+                tool_name = t.get("tool_name", "")
+                if tool_name:
+                    available_tool_names.add(tool_name)
+    
+    codeact_added = False
+    for task in raw_tasks:
+        task_tools = task.get("tools", [])
+        if not task_tools:
+            # If task has no matching tool, add codeact
+            if "codeact" not in available_tool_names:
+                task["tools"] = ["codeact"]
+                codeact_added = True
+                print(f"  ⚠ Task {task.get('task_id', 'N/A')} has no matching tool, added codeact")
+        else:
+            # Check if all tools matched by the task are in the available tools list
+            task_tool_names = [t if isinstance(t, str) else t.get("tool_name", "") if isinstance(t, dict) else "" for t in task_tools]
+            matched = any(tool_name in available_tool_names for tool_name in task_tool_names if tool_name)
+            if not matched:
+                # If matched tools are not in the available list, add codeact
+                if "codeact" not in task_tool_names:
+                    task["tools"].append("codeact")
+                    codeact_added = True
+                    print(f"  ⚠ Task {task.get('task_id', 'N/A')} matched tools are unavailable, added codeact")
+    
+    if codeact_added:
+        print(f"  ✓ Added codeact tool as fallback for some tasks")
+
+
+def _load_tools_params_table() -> Dict[str, Dict[str, Any]]:
+    """
+    Load tools parameters table
+    
+    Returns:
+        Mapping dictionary from tool name to parameter information
+    """
+    tools_params_path = agent_dir / "config" / "tools_params_table.json"
+    
+    if not tools_params_path.exists():
+        print(f"⚠ Tools parameters table file does not exist: {tools_params_path}")
+        return {}
+    
+    try:
+        with open(tools_params_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # tools_params_table.json is an array, each element is an object
+        # Each object's key is the tool name, value is parameter information
+        tools_params_map = {}
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    for tool_name, params_info in item.items():
+                        tools_params_map[tool_name] = params_info
+        elif isinstance(data, dict):
+            # If it's directly a dictionary, also support
+            tools_params_map = data
+        
+        print(f"✓ Successfully loaded tools parameters table, {len(tools_params_map)} tools in total")
+        return tools_params_map
+    except Exception as e:
+        print(f"⚠ Failed to load tools parameters table: {e}")
+        return {}
+
+
+def _get_llm_for_inference():
+    """
+    Get LLM instance for parameter inference
+    
+    Returns:
+        LLM instance, returns None if unavailable
+    """
+    if not LLM_AVAILABLE or create_reasoning_advanced_llm is None:
+        return None
+    
+    # Use reasoning model (for parameter inference, slightly lower temperature for more accurate inference)
+    return create_reasoning_advanced_llm(temperature=0.1)
+
+
+def _match_task_parameters(raw_tasks: List[Dict[str, Any]]):
+    """
+    Match parameter descriptions for each task (look up by tool name from tools_params_table.json)
+    
+    Args:
+        raw_tasks: Raw task list from fine decomposition
+    """
+    if not raw_tasks:
+        return
+    
+    # Load tools parameters table
+    tools_params_map = _load_tools_params_table()
+    if not tools_params_map:
+        print("⚠ Tools parameters table is empty, skipping parameter matching")
+        return
+    
+    matched_count = 0
+    for task in raw_tasks:
+        task_tools = task.get("tools", [])
+        if not task_tools:
+            continue
+        
+        # Collect input parameters for all tools
+        all_inputs = []
+        all_outputs = []
+        
+        for tool_item in task_tools:
+            # Tool may be a string or dictionary
+            tool_name = None
+            if isinstance(tool_item, str):
+                tool_name = tool_item
+            elif isinstance(tool_item, dict):
+                tool_name = tool_item.get("tool_name") or tool_item.get("name", "")
+            
+            if not tool_name:
+                continue
+            
+            # Look up in tools parameters table (supports multiple tool name formats)
+            tool_params = None
+            
+            # Method 1: Direct match tool name
+            tool_params = tools_params_map.get(tool_name)
+            
+            # Method 2: If direct match fails, try matching service_tool_name format
+            if not tool_params:
+                # Tool names in tools_params_table.json may be in "service_tool_name" format (e.g., "airr_search_airr_repertoires")
+                # Try matching the complete service_tool_name
+                for key in tools_params_map.keys():
+                    # Check if it's service_tool_name format and tool_name part matches
+                    if "_" in key:
+                        parts = key.split("_", 1)
+                        if len(parts) > 1 and parts[1] == tool_name:
+                            tool_params = tools_params_map.get(key)
+                            break
+                    # Or exact match
+                    if key == tool_name:
+                        tool_params = tools_params_map.get(key)
+                        break
+            
+            # Method 3: If tool name itself is in service_tool_name format, try direct match
+            if not tool_params and "_" in tool_name:
+                # Tool name may be in "service_tool_name" format, try direct match
+                tool_params = tools_params_map.get(tool_name)
+            
+            if tool_params:
+                # Extract input parameters
+                input_params = tool_params.get("input_params", [])
+                for param in input_params:
+                    param_name = param.get("name", "")
+                    param_type = param.get("type", "")
+                    if param_name:
+                        param_desc = f"{param_name}: {param_type}"
+                        if param_desc not in all_inputs:
+                            all_inputs.append(param_desc)
+                
+                # Output parameters: Currently tools_params_table.json has no explicit output parameters
+                # Can infer from tool type, or leave empty for subsequent nodes to handle
+                # Temporarily not adding output parameters here as there's no explicit information in the table
+                matched_count += 1
+        
+        # Update task's inputs and outputs
+        if all_inputs:
+            # If task already has inputs, merge and deduplicate
+            existing_inputs = task.get("inputs", [])
+            if isinstance(existing_inputs, list):
+                # Merge and deduplicate
+                combined_inputs = list(set(existing_inputs + all_inputs))
+            else:
+                combined_inputs = all_inputs
+            task["inputs"] = combined_inputs
+        
+        # outputs temporarily not updated, as tools_params_table.json has no output parameter information
+        # If task already has outputs, keep them
+        if "outputs" not in task:
+            task["outputs"] = []
+    
+    if matched_count > 0:
+        print(f"✓ Matched parameter descriptions for {matched_count} tools")
+
+
+# ---------------------- Node 0: Coarse Decomposition Node - Determine Required Tool Types ----------------------
+def coarse_decomposition_node(state: TaskDecompositionState) -> TaskDecompositionState:
+    """
+    Stage 0: Coarse decomposition node
+    
+    Do not pass tool list, only determine the main tool types required by the task based on user input and execution plan.
+    This avoids prompt length issues caused by overly long tool lists.
+    
+    Args:
+        state: Task Decomposition subgraph state
+    
+    Returns:
+        Updated state (required_service_ids contains list of required service_ids)
+    """
+    user_input = state.user_input
+    execution_plan = state.execution_plan
+    
+    # Load service list (for coarse decomposition prompt)
+    service_list = load_service_list()
+    
+    # Use LLM for coarse decomposition (pass service_list, not tool list)
+    llm = _get_llm()
+    if llm is not None:
+        result = _coarse_decompose_with_llm(user_input, execution_plan, service_list, llm)
+        if result:
+            # Extract required service_ids
+            service_ids = result.get("required_service_ids", [])
+            state.required_service_ids = service_ids
+            print(f"✓ Coarse decomposition completed (using LLM)")
+            print(f"  Required services: {', '.join(service_ids)}")
+        else:
+            # Fallback when LLM fails: use all services
+            all_service_ids = [s.get("service_id", "") for s in service_list if s.get("service_id")]
+            state.required_service_ids = all_service_ids
+            print(f"⚠ Coarse decomposition failed, using all services")
+    else:
+        # Fallback when LLM is unavailable
+        all_service_ids = [s.get("service_id", "") for s in service_list if s.get("service_id")]
+        state.required_service_ids = all_service_ids
+        print(f"⚠ LLM unavailable, using all services")
+    
+    # Filter tools by service_id
+    if state.required_service_ids:
+        state.filtered_tools = get_tools_by_service_ids(state.available_tools, state.required_service_ids)
+        print(f"  Filtered tool count: {len(state.filtered_tools)} / {len(state.available_tools)}")
+        
+        # Fallback strategy: if no tools matched, add codeact service
+        if len(state.filtered_tools) == 0:
+            print(f"⚠ No MCP tools matched, adding codeact service as fallback")
+            if "codeact" not in state.required_service_ids:
+                state.required_service_ids.append("codeact")
+            # Add codeact tool
+            codeact_tool = _create_codeact_tool()
+            state.filtered_tools = [codeact_tool]
+    else:
+        # If no service specified, use all tools
+        state.filtered_tools = state.available_tools
+    
+    return state
+
+
+# ---------------------- Node 1: Fine Decomposition Node - Detailed Decomposition Based on Filtered Tools ----------------------
+def fine_decomposition_node(state: TaskDecompositionState) -> TaskDecompositionState:
+    """
+    Stage 1: Fine decomposition node
+    
+    Based on tools filtered by coarse decomposition, perform detailed task decomposition and tool matching.
+    Focus only on task decomposition, tool matching, and dependency identification, not parallel execution.
+    
+    Args:
+        state: Task Decomposition subgraph state
+    
+    Returns:
+        Updated state (raw_tasks contains fine decomposition results)
+    """
+    user_input = state.user_input
+    execution_plan = state.execution_plan
+    filtered_tools = state.filtered_tools  # Use filtered tools
+    
+    # Fallback strategy: if filtered tools are empty, add codeact tool
+    if len(filtered_tools) == 0:
+        print(f"⚠ Fine decomposition stage matched no tools, adding codeact tool as fallback")
+        codeact_tool = _create_codeact_tool()
+        filtered_tools = [codeact_tool]
+        state.filtered_tools = filtered_tools
+        # Ensure codeact is in required_service_ids
+        if "codeact" not in state.required_service_ids:
+            state.required_service_ids.append("codeact")
+    
+    # Use LLM for fine decomposition (using filtered tools)
+    llm = _get_llm()
+    if llm is not None:
+        result = _decompose_task_with_llm(user_input, execution_plan, filtered_tools, llm)
+        if result:
+            # Fine decomposition: store raw task list (JSON format)
+            state.raw_tasks = result.get("tasks", [])
+            state.decomposition_summary = result.get("decomposition_summary", "")
+            print(f"✓ Fine decomposition completed (using LLM)")
+            print(f"  Serialized tasks: {len(state.raw_tasks)}")
+            
+            # Fallback strategy: check if any tasks in fine decomposition results have no matching tools
+            _check_and_add_codeact_to_tasks(state.raw_tasks, filtered_tools)
+            
+            # Match parameter descriptions for each task
+            _match_task_parameters(state.raw_tasks)
+        else:
+            # Fallback when LLM fails
+            fallback_result = _decompose_task_fallback(user_input, execution_plan)
+            state.raw_tasks = [task.model_dump() for task in fallback_result.get("subtasks", [])]
+            state.decomposition_summary = fallback_result.get("decomposition_summary", "Using fallback for task decomposition")
+            print(f"⚠ Using fallback for task decomposition")
+            # Also match parameter descriptions for fallback tasks
+            _match_task_parameters(state.raw_tasks)
+    else:
+        # Fallback when LLM is unavailable
+        fallback_result = _decompose_task_fallback(user_input, execution_plan)
+        state.raw_tasks = [task.model_dump() for task in fallback_result.get("subtasks", [])]
+        state.decomposition_summary = fallback_result.get("decomposition_summary", "Using fallback for task decomposition")
+        print(f"⚠ LLM unavailable, using fallback")
+        # Also match parameter descriptions for fallback tasks
+        _match_task_parameters(state.raw_tasks)
+    
+    return state
+
+
+# ---------------------- Node 2: Stage 2 - Parallel Task Inference Node ----------------------
+def parallel_inference_node(state: TaskDecompositionState) -> TaskDecompositionState:
+    """
+    Stage 2: Parallel task inference node
+    
+    Based on the serialized task list from Stage 1, infer which tasks can be executed in parallel.
+    
+    Args:
+        state: Task Decomposition subgraph state (contains raw_tasks)
+    
+    Returns:
+        Updated state (contains final subtasks and parallel_task_groups)
+    """
+    raw_tasks = state.raw_tasks
+    
+    if not raw_tasks:
+        print("⚠ Stage 1 generated no tasks, skipping parallel inference")
+        return state
+    
+    # Use LLM for parallel inference
+    llm = _get_llm()
+    if llm is not None:
+        result = _infer_parallel_tasks_with_llm(raw_tasks, llm)
+        if result:
+            # Convert and store final results
+            final_result = _validate_and_convert_decomposition(result)
+            state.subtasks = final_result.get("subtasks", [])
+            state.parallel_task_groups = final_result.get("parallel_task_groups", {})
+            if result.get("parallel_inference_summary"):
+                if state.decomposition_summary:
+                    state.decomposition_summary += f"\n\nParallel inference explanation: {result.get('parallel_inference_summary')}"
+                else:
+                    state.decomposition_summary = f"Parallel inference explanation: {result.get('parallel_inference_summary')}"
+            print(f"✓ Stage 2 parallel inference completed (using LLM)")
+            print(f"  Serial tasks: {len(state.subtasks)}")
+            print(f"  Parallel task groups: {len(state.parallel_task_groups)}")
+        else:
+            # Fallback when LLM fails: all tasks execute serially
+            print("⚠ Parallel inference failed, all tasks will execute serially")
+            final_result = _validate_and_convert_decomposition({"tasks": raw_tasks, "parallel_task_groups": []})
+            state.subtasks = final_result.get("subtasks", [])
+            state.parallel_task_groups = {}
+    else:
+        # Fallback when LLM is unavailable: all tasks execute serially
+        print("⚠ LLM unavailable, all tasks will execute serially")
+        final_result = _validate_and_convert_decomposition({"tasks": raw_tasks, "parallel_task_groups": []})
+        state.subtasks = final_result.get("subtasks", [])
+        state.parallel_task_groups = {}
+    
+    return state
+
+
+# ---------------------- Node 3: Stage 3 - Parameter Inference Node ----------------------
+def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionState:
+    """
+    Stage 3: Parameter inference node
+    
+    For each task, infer its tool's parameter values. Supports three result types:
+    1. Determined parameter values: Parameters that can be directly inferred from task description
+    2. Parameter source: Parameter values determined by a task's execution result
+    3. User required: Requires user to provide additional information or files
+    
+    Args:
+        state: Task Decomposition subgraph state (contains decomposed tasks)
+    
+    Returns:
+        Updated state (contains parameter inference results)
+    """
+    all_tasks = state.subtasks + [
+        task for group in state.parallel_task_groups.values()
+        for task in group.subtasks
+    ]
+    
+    if not all_tasks:
+        print("⚠ No tasks need parameter inference")
+        return state
+    
+    llm = _get_llm_for_inference()
+    tools_params_map = _load_tools_params_table()
+    
+    inference_results = {}
+    inference_summaries = []
+    
+    for task in all_tasks:
+        task_id = task.task_id
+        task_result = task.result if isinstance(task.result, dict) else {}
+        tools = task_result.get("tools", [])
+        inputs = task_result.get("inputs", [])
+        
+        if not tools:
+            # No tool task, skip parameter inference
+            continue
+        
+        # Collect parameter inference results for all tools
+        task_params = {}
+        task_tool_names = []
+        
+        for tool_item in tools:
+            tool_name = None
+            if isinstance(tool_item, str):
+                tool_name = tool_item
+            elif isinstance(tool_item, dict):
+                tool_name = tool_item.get("tool_name") or tool_item.get("name", "")
+            
+            if not tool_name:
+                continue
+            
+            if tool_name not in task_tool_names:
+                task_tool_names.append(tool_name)
+            
+            # Find tool parameter definition (supports fuzzy matching)
+            tool_params = tools_params_map.get(tool_name)
+            
+            # If direct match fails, try fuzzy matching
+            if not tool_params:
+                # Method 1: Try matching service_tool_name format (e.g., "af3_alphafold3" or "af3")
+                for key in tools_params_map.keys():
+                    # Check if it's service_tool_name format and tool_name part matches
+                    if "_" in key:
+                        parts = key.split("_", 1)
+                        if len(parts) > 1 and (parts[1] == tool_name or parts[0] == tool_name):
+                            tool_params = tools_params_map.get(key)
+                            if tool_params:
+                                print(f"  [DEBUG] Tool {tool_name} matched to {key} in parameter table")
+                                break
+                    # Or exact match
+                    if key == tool_name:
+                        tool_params = tools_params_map.get(key)
+                        if tool_params:
+                            break
+                
+                # Method 2: If still not found, try partial matching (e.g., "alphafold3" matches "af3")
+                if not tool_params:
+                    tool_name_lower = tool_name.lower()
+                    for key in tools_params_map.keys():
+                        key_lower = key.lower()
+                        # Check if tool_name contains key, or key contains tool_name
+                        if tool_name_lower in key_lower or key_lower in tool_name_lower:
+                            tool_params = tools_params_map.get(key)
+                            if tool_params:
+                                print(f"  [DEBUG] Tool {tool_name} found in parameter table via partial match: {key}")
+                                break
+                
+                # Method 3: If still not found, try inferring from inputs field (fallback)
+                if not tool_params:
+                    print(f"  [WARN] Tool {tool_name} not found in parameter table, using inputs field for inference")
+                    for input_param in inputs:
+                        if input_param not in task_params:
+                            inference_result = _infer_single_parameter(
+                                task, tool_name, input_param, None, None, None, None, None,
+                                inputs, llm, all_tasks
+                            )
+                            task_params[input_param] = inference_result
+                    continue
+            
+            # Get parameter definitions from tools parameters table
+            input_params = tool_params.get("input_params", [])
+            for param in input_params:
+                param_name = param.get("name", "")
+                param_type = param.get("type", "")
+                param_desc = param.get("description", "")
+                param_deme = param.get("deme") or param.get("demo", "")  # Get example value
+                param_options = param.get("options", [])  # Get enum options
+                is_optional = "optional" in param_type.lower() or param_type.startswith("Optional")
+                
+                if not param_name or param_name in task_params:
+                    continue
+                
+                # Infer single parameter (pass example value and options)
+                inference_result = _infer_single_parameter(
+                    task, tool_name, param_name, param_type, param_desc, param_deme, param_options, is_optional,
+                    inputs, llm, all_tasks
+                )
+                task_params[param_name] = inference_result
+        
+        # Create task's parameter inference result
+        if task_params:
+            task_inference = TaskParameterInference(
+                task_id=task_id,
+                tool_name=", ".join(task_tool_names) if task_tool_names else None,
+                parameters=task_params,
+                inference_summary=None
+            )
+            inference_results[task_id] = task_inference
+    
+    state.parameter_inference_results = inference_results
+    
+    # Generate overall summary
+    total_tasks = len(inference_results)
+    total_params = sum(len(r.parameters) for r in inference_results.values())
+    determined_count = sum(
+        sum(1 for p in r.parameters.values() if p.source_type == ParameterSourceType.DETERMINED)
+        for r in inference_results.values()
+    )
+    from_task_count = sum(
+        sum(1 for p in r.parameters.values() if p.source_type == ParameterSourceType.FROM_TASK)
+        for r in inference_results.values()
+    )
+    user_required_count = sum(
+        sum(1 for p in r.parameters.values() if p.source_type == ParameterSourceType.USER_REQUIRED)
+        for r in inference_results.values()
+    )
+    
+    state.parameter_inference_summary = (
+        f"Parameter inference completed: {total_tasks} tasks, {total_params} parameters. "
+        f"Determined: {determined_count}, from tasks: {from_task_count}, user required: {user_required_count}"
+    )
+    
+    print(f"✓ Stage 3 parameter inference completed")
+    print(f"  Inferred tasks: {total_tasks}")
+    print(f"  Inferred parameters: {total_params} (determined: {determined_count}, from tasks: {from_task_count}, user required: {user_required_count})")
+    
+    return state
+
+
+def _infer_single_parameter(
+    task: SubTask,
+    tool_name: str,
+    param_name: str,
+    param_type: Optional[str],
+    param_desc: Optional[str],
+    param_deme: Optional[str],
+    param_options: Optional[List[str]],
+    is_optional: bool,
+    inputs: List[str],
+    llm: Optional[Any],
+    all_tasks: List[SubTask]
+) -> ParameterInferenceResult:
+    """
+    Infer value for a single parameter
+    
+    Args:
+        task: Current task
+        tool_name: Tool name
+        param_name: Parameter name
+        param_type: Parameter type
+        param_desc: Parameter description
+        param_deme: Parameter example value (recommended value)
+        param_options: Parameter enum options (if enum type)
+        is_optional: Whether optional
+        inputs: Task input list
+        llm: LLM instance
+        all_tasks: All tasks list (for checking parameter sources)
+    
+    Returns:
+        Parameter inference result
+    """
+    # Determine if parameter is file type
+    is_file_type = False
+    if param_type:
+        param_type_lower = param_type.lower()
+        is_file_type = any(keyword in param_type_lower for keyword in [
+            'file', 'path', 'pdb', 'csv', 'tsv', 'json', 'fasta', 'fastq', 
+            'airr', 'excel', 'xlsx', 'txt', 'dir', 'directory'
+        ])
+    
+    # If not file type and has example value, prefer using example value as recommended value
+    if not is_file_type and param_deme:
+        # If example value is not empty, directly use as determined parameter value
+        return ParameterInferenceResult(
+            param_name=param_name,
+            source_type=ParameterSourceType.DETERMINED,
+            value=param_deme,
+            reason=f"Using recommended value from tools parameters table: {param_deme}"
+        )
+    
+    # First check if parameter can be obtained from dependency task results
+    if task.dependencies:
+        for dep_task_id in task.dependencies:
+            dep_task = next((t for t in all_tasks if t.task_id == dep_task_id), None)
+            if dep_task:
+                dep_result = dep_task.result if isinstance(dep_task.result, dict) else {}
+                dep_outputs = dep_result.get("outputs", [])
+                # Check if parameter name matches dependency task's output
+                if param_name in dep_outputs or any(param_name.lower() in str(output).lower() for output in dep_outputs):
+                    return ParameterInferenceResult(
+                        param_name=param_name,
+                        source_type=ParameterSourceType.FROM_TASK,
+                        source_task_id=dep_task_id,
+                        source_output_key=param_name,
+                        reason=f"Parameter value will be obtained from task {dep_task_id}'s execution result"
+                    )
+    
+    # If no LLM, mark as user required
+    if not llm:
+        return ParameterInferenceResult(
+            param_name=param_name,
+            source_type=ParameterSourceType.USER_REQUIRED,
+            user_prompt=f"Please provide value for parameter {param_name}",
+            reason="LLM unavailable, requires user to provide parameter value"
+        )
+    
+    # Use LLM to infer parameter values
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        
+        # Build dependency task information
+        dep_tasks_info = []
+        if task.dependencies:
+            for dep_task_id in task.dependencies:
+                dep_task = next((t for t in all_tasks if t.task_id == dep_task_id), None)
+                if dep_task:
+                    dep_result = dep_task.result if isinstance(dep_task.result, dict) else {}
+                    dep_outputs = dep_result.get("outputs", [])
+                    dep_tasks_info.append(f"Task {dep_task_id}: {dep_task.content[:100]}... (Outputs: {', '.join(dep_outputs) if dep_outputs else 'None'})")
+        
+        # Build recommendation hint
+        recommendation_hint = ""
+        if param_deme:
+            if is_file_type:
+                recommendation_hint = f"\nRecommended value from tools parameters table (for reference only, user needs to provide actual file): {param_deme}"
+            else:
+                recommendation_hint = f"\nRecommended value from tools parameters table: {param_deme}"
+        
+        # Build enum options hint
+        options_hint = ""
+        if param_options and isinstance(param_options, list) and len(param_options) > 0:
+            options_hint = f"\nOptional values list: {', '.join(param_options)}"
+            if not param_deme:
+                # If no recommended value, hint LLM can recommend a common value from options
+                options_hint += " (Please recommend the most commonly used option based on task context and common usage scenarios)"
+        
+        # Build parameter type guidance
+        type_guidance = ""
+        if param_type:
+            type_lower = param_type.lower()
+            if "enum" in type_lower and param_options:
+                type_guidance = "\nHint: This is an enum type, please select the most commonly used value from the optional values list as recommendation."
+            elif "int" in type_lower or "float" in type_lower:
+                type_guidance = "\nHint: This is a numeric type, please provide a reasonable default value based on task context and common usage scenarios."
+            elif "bool" in type_lower:
+                type_guidance = "\nHint: This is a boolean type, usually the default value is false, unless the task explicitly requires true."
+            elif "str" in type_lower and not is_file_type:
+                type_guidance = "\nHint: This is a string type, please provide a reasonable example value or default value based on task context and parameter name."
+            elif "optional" in type_lower:
+                type_guidance = "\nHint: This is an optional parameter, if not explicitly specified in the task description, you can provide None or a reasonable default value."
+        
+        inference_prompt = f"""
+Please infer the parameter value based on the following information:
+
+Task description: {task.content}
+Tool name: {tool_name}
+Parameter name: {param_name}
+Parameter type: {param_type or 'Unknown'}
+Parameter description: {param_desc or 'None'}{recommendation_hint}{options_hint}{type_guidance}
+Task input list: {inputs}
+Dependency task information: {chr(10).join(dep_tasks_info) if dep_tasks_info else 'No dependency tasks'}
+
+Please infer the value of this parameter. Return JSON format, supporting three cases:
+1. If parameter value can be determined (including inferred from task description, using recommended value, or providing common default value based on parameter type): {{"source_type": "determined", "value": <parameter_value>, "reason": "<inference_reason>"}}
+2. If parameter value comes from a dependency task's result: {{"source_type": "from_task", "source_task_id": "<task_id>", "source_output_key": "<output_key>", "reason": "<explanation>"}}
+3. If user input is required (only for file paths, user-specific choices, etc.): {{"source_type": "user_required", "user_prompt": "<prompt_info>", "reason": "<why_user_input_needed>"}}
+
+Important principles:
+1. **Prioritize providing recommended values**: Even if not explicitly specified in the task description, you should provide recommended values according to the following rules:
+   - If there's a recommended value in the tools parameters table, use it first
+   - If it's an enum type, recommend the most commonly used value from options (e.g., organism usually recommends "human", species usually recommends "human")
+   - If it's a numeric type, provide reasonable default values (e.g., max_results usually recommends 100 or 1000, timeout usually recommends 60 or 300)
+   - If it's a boolean type, usually recommend false, unless the task explicitly requires true
+   - If it's an optional string type, you can provide None or a reasonable example value
+   
+2. **Special handling for file types**: Only file path type parameters should be marked as user_required, other types should try to provide recommended values
+
+3. **Task context priority**: If the task description explicitly specifies a parameter value, use the value from the task description; otherwise use the recommended value
+
+4. **Dependency task check**: If the parameter value can be obtained from a dependency task's result, prioritize marking it as from_task
+
+Please follow the above principles to provide recommended values as much as possible, reducing the number of parameters that require manual user input.
+"""
+        system_message_content = """You are a professional parameter inference expert, capable of extracting parameter values from task descriptions and determining parameter sources.
+
+Your core responsibilities are:
+1. **Actively provide recommended values**: For non-file type parameters, even if not explicitly specified in the task description, provide reasonable recommended values based on parameter type, common usage scenarios, and recommended values in the tools parameters table
+2. **Intelligent inference**: Infer the most commonly used parameter values based on parameter name, type, description, and task context
+3. **Reduce user input**: Mark parameters as "determined" type as much as possible, reducing the number of parameters that require manual user input
+4. **Special handling for file types**: Only file path type parameters should be marked as "user_required"
+
+Common recommended value rules:
+- organism/species parameters: Usually recommend "human" or "Homo sapiens"
+- Numeric parameters like max_results/max_sequences: Usually recommend 100, 1000, or 10000
+- timeout parameters: Usually recommend 60, 300, or 600
+- bool type parameters: Usually recommend false, unless the task explicitly requires true
+- enum type parameters: Recommend the most commonly used value from options
+- Optional type parameters: Can provide None or reasonable default values"""
+        
+        messages = [
+            SystemMessage(content=system_message_content),
+            HumanMessage(content=inference_prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        response_text = response.content.strip()
+        
+        # Parse response - use more robust JSON extraction method
+        import re
+        inference_data = None
+        
+        # Method 1: Try to parse entire response as JSON
+        try:
+            inference_data = json.loads(response_text.strip())
+        except json.JSONDecodeError:
+            pass
+        
+        # Method 2: Try to extract JSON code block
+        if not inference_data:
+            json_block_patterns = [
+                r'```json\s*(\{.*?\})\s*```',
+                r'```\s*(\{.*?\})\s*```',
+            ]
+            for pattern in json_block_patterns:
+                matches = re.findall(pattern, response_text, re.DOTALL | re.IGNORECASE)
+                for match in matches:
+                    try:
+                        inference_data = json.loads(match)
+                        break
+                    except json.JSONDecodeError:
+                        continue
+                if inference_data:
+                    break
+        
+        # Method 3: Try to extract nested JSON object (match complete {} pairs)
+        if not inference_data:
+            brace_count = 0
+            start_idx = -1
+            for i, char in enumerate(response_text):
+                if char == '{':
+                    if brace_count == 0:
+                        start_idx = i
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0 and start_idx != -1:
+                        try:
+                            json_str = response_text[start_idx:i+1]
+                            inference_data = json.loads(json_str)
+                            break
+                        except json.JSONDecodeError:
+                            pass
+                        start_idx = -1
+        
+        if inference_data:
+            source_type_str = inference_data.get("source_type", "user_required")
+            
+            if source_type_str == "determined":
+                return ParameterInferenceResult(
+                    param_name=param_name,
+                    source_type=ParameterSourceType.DETERMINED,
+                    value=inference_data.get("value"),
+                    reason=inference_data.get("reason", "Parameter value inferred from task description")
+                )
+            elif source_type_str == "from_task":
+                return ParameterInferenceResult(
+                    param_name=param_name,
+                    source_type=ParameterSourceType.FROM_TASK,
+                    source_task_id=inference_data.get("source_task_id"),
+                    source_output_key=inference_data.get("source_output_key", param_name),
+                    reason=inference_data.get("reason", f"Parameter value will be obtained from task {inference_data.get('source_task_id')}'s result")
+                )
+            else:
+                return ParameterInferenceResult(
+                    param_name=param_name,
+                    source_type=ParameterSourceType.USER_REQUIRED,
+                    user_prompt=inference_data.get("user_prompt", f"Please provide value for parameter {param_name}"),
+                    reason=inference_data.get("reason", "User input required for parameter value")
+                )
+        else:
+            # Parsing failed, mark as user required
+            return ParameterInferenceResult(
+                param_name=param_name,
+                source_type=ParameterSourceType.USER_REQUIRED,
+                user_prompt=f"Please provide value for parameter {param_name}",
+                reason="Failed to parse LLM response"
+            )
+    except Exception as e:
+        print(f"  ⚠ Failed to infer parameter {param_name}: {e}")
+        return ParameterInferenceResult(
+            param_name=param_name,
+            source_type=ParameterSourceType.USER_REQUIRED,
+            user_prompt=f"Please provide value for parameter {param_name}",
+            reason=f"Inference process error: {str(e)[:100]}"
+        )
+
+
+def _infer_parallel_tasks_with_llm(
+    tasks: List[Dict[str, Any]],
+    llm
+) -> Optional[Dict[str, Any]]:
+    """
+    Use LLM for parallel task inference
+    
+    Args:
+        tasks: Task list from Stage 1 decomposition (JSON format)
+        llm: LLM instance
+    
+    Returns:
+        Dictionary containing tasks, parallel_task_groups, parallel_inference_summary, returns None if failed
+    """
+    # Use parallel inference prompt template
+    system_prompt = PARALLEL_INFERENCE_SYSTEM_PROMPT
+    user_prompt = get_parallel_inference_user_prompt(tasks)
+    
+    try:
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        response_text = response.content.strip()
+        
+        # Try to parse JSON format response
+        result = _parse_parallel_inference_response(response_text)
+
+        print(f"Parallel inference result: {result}")
+        
+        return result
+        
+    except Exception as e:
+        # Check error type
+        error_str = str(e).lower()
+        if "authentication" in error_str or "api key" in error_str or "401" in error_str:
+            print(f"⚠ LLM API Key authentication failed, will use fallback: {type(e).__name__}")
+        elif "timeout" in error_str or "timed out" in error_str or "APITimeoutError" in type(e).__name__:
+            print(f"⚠ LLM API call timeout, will use fallback: {type(e).__name__}")
+        elif "rate limit" in error_str or "429" in error_str:
+            print(f"⚠ LLM API rate limit, will use fallback: {type(e).__name__}")
+        else:
+            print(f"⚠ LLM parallel inference failed, will use fallback: {type(e).__name__}: {str(e)[:100]}")
+        
+        import os
+        if os.getenv("DEBUG_LLM_ERRORS", "false").lower() == "true":
+            import traceback
+            traceback.print_exc()
+        
+        return None
+
+
+def _parse_parallel_inference_response(response_text: str) -> Dict[str, Any]:
+    """
+    Parse LLM's parallel inference response
+    
+    Args:
+        response_text: Text returned by LLM
+    
+    Returns:
+        Dictionary containing tasks, parallel_task_groups, parallel_inference_summary
+    """
+    # Method 1: Try to parse entire response as JSON
+    try:
+        result = json.loads(response_text.strip())
+        if isinstance(result, dict) and ("tasks" in result or "parallel_task_groups" in result):
+            return result
+    except json.JSONDecodeError:
+        pass
+    
+    # Method 2: Try to extract JSON code block
+    json_block_patterns = [
+        r'```json\s*(\{.*?\})\s*```',
+        r'```\s*(\{.*?\})\s*```',
+    ]
+    
+    for pattern in json_block_patterns:
+        matches = re.findall(pattern, response_text, re.DOTALL | re.IGNORECASE)
+        for match in matches:
+            try:
+                result = json.loads(match)
+                if isinstance(result, dict) and ("tasks" in result or "parallel_task_groups" in result):
+                    return result
+            except json.JSONDecodeError:
+                continue
+    
+    # Method 3: Try to extract nested JSON object
+    brace_count = 0
+    start_idx = -1
+    for i, char in enumerate(response_text):
+        if char == '{':
+            if brace_count == 0:
+                start_idx = i
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0 and start_idx != -1:
+                try:
+                    json_str = response_text[start_idx:i+1]
+                    result = json.loads(json_str)
+                    if isinstance(result, dict) and ("tasks" in result or "parallel_task_groups" in result):
+                        return result
+                except json.JSONDecodeError:
+                    pass
+                start_idx = -1
+    
+    # If JSON parsing fails, return empty result
+    print("Warning: Unable to parse parallel inference JSON format")
+    return {
+        "tasks": [],
+        "parallel_task_groups": [],
+        "parallel_inference_summary": "Failed to parse LLM response"
+    }
+
+
+def _coarse_decompose_with_llm(
+    user_input: str,
+    execution_plan: Optional[str],
+    service_list: List[Dict[str, Any]],
+    llm
+) -> Optional[Dict[str, Any]]:
+    """
+    Use LLM for coarse decomposition (determine required service_ids)
+    
+    Args:
+        user_input: User's task description
+        execution_plan: User-provided execution plan (if any)
+        service_list: Service list (contains service_id and description)
+        llm: LLM instance
+    
+    Returns:
+        Dictionary containing required_service_ids, returns None if failed
+    """
+    system_prompt = COARSE_DECOMPOSITION_SYSTEM_PROMPT
+    user_prompt = get_coarse_decomposition_user_prompt(user_input, execution_plan, service_list)
+    
+    try:
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        response_text = response.content.strip()
+        
+        # Parse response
+        result = _parse_coarse_decomposition_response(response_text)
+        return result
+        
+    except Exception as e:
+        error_str = str(e).lower()
+        error_type = type(e).__name__
+        
+        if "authentication" in error_str or "api key" in error_str or "401" in error_str:
+            print(f"⚠ LLM API Key authentication failed: {error_type}")
+        elif "timeout" in error_str or "timed out" in error_str or "APITimeoutError" in error_type:
+            print(f"⚠ LLM API call timeout: {error_type}")
+        elif "rate limit" in error_str or "429" in error_str:
+            print(f"⚠ LLM API rate limit: {error_type}")
+        else:
+            print(f"⚠ LLM coarse decomposition failed: {error_type}: {str(e)[:100]}")
+        
+        import os
+        if os.getenv("DEBUG_LLM_ERRORS", "false").lower() == "true":
+            import traceback
+            traceback.print_exc()
+        
+        return None
+
+
+def _parse_coarse_decomposition_response(response_text: str) -> Dict[str, Any]:
+    """
+    Parse LLM's coarse decomposition response
+    
+    Args:
+        response_text: Text returned by LLM
+    
+    Returns:
+        Dictionary containing required_tool_categories
+    """
+    # Method 1: Try to parse entire response as JSON
+    try:
+        result = json.loads(response_text.strip())
+        if isinstance(result, dict) and "required_service_ids" in result:
+            return result
+    except json.JSONDecodeError:
+        pass
+    
+    # Method 2: Try to extract JSON code block
+    json_block_patterns = [
+        r'```json\s*(\{.*?\})\s*```',
+        r'```\s*(\{.*?\})\s*```',
+    ]
+    
+    for pattern in json_block_patterns:
+        matches = re.findall(pattern, response_text, re.DOTALL | re.IGNORECASE)
+        for match in matches:
+            try:
+                result = json.loads(match)
+                if isinstance(result, dict) and "required_service_ids" in result:
+                    return result
+            except json.JSONDecodeError:
+                continue
+    
+    # Method 3: Try to extract nested JSON object
+    brace_count = 0
+    start_idx = -1
+    for i, char in enumerate(response_text):
+        if char == '{':
+            if brace_count == 0:
+                start_idx = i
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0 and start_idx != -1:
+                try:
+                    json_str = response_text[start_idx:i+1]
+                    result = json.loads(json_str)
+                    if isinstance(result, dict) and "required_service_ids" in result:
+                        return result
+                except json.JSONDecodeError:
+                    pass
+                start_idx = -1
+    
+    # If JSON parsing fails, return empty result
+    print("Warning: Unable to parse coarse decomposition JSON format")
+    return {
+        "required_service_ids": []
+    }
+
+
+def _decompose_task_with_llm(
+    user_input: str, 
+    execution_plan: Optional[str],
+    available_tools: List[Dict[str, Any]],
+    llm
+) -> Optional[Dict[str, Any]]:
+    """
+    Use LLM for Stage 1 task decomposition (only decompose tasks and match tools, not considering parallel execution)
+    
+    Args:
+        user_input: User's task description
+        execution_plan: User-provided execution plan (if any)
+        available_tools: List of available tools
+        llm: LLM instance
+    
+    Returns:
+        Dictionary containing tasks, decomposition_summary, returns None if failed
+    """
+    # Use Stage 1 prompt template
+    system_prompt = TASK_DECOMPOSITION_SYSTEM_PROMPT
+    user_prompt = get_task_decomposition_user_prompt(user_input, execution_plan, available_tools)
+    
+    # Check input length (rough estimate, 1 Chinese character ≈ 2 tokens)
+    total_length = len(system_prompt) + len(user_prompt)
+    print(f"📊 Fine decomposition input length: {total_length} characters, tool count: {len(available_tools)}")
+    if total_length > 30000:  # If total length exceeds 30000 characters, may need further optimization
+        print(f"⚠ Prompt is long ({total_length} characters), if API call fails, will use fallback")
+    
+    try:
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        print(f"🔄 Starting LLM call for fine decomposition (tool count: {len(available_tools)})...")
+        import time
+        start_time = time.time()
+        
+        # LLM call (timeout set by LLM factory at creation, default 120 seconds)
+        try:
+            response = llm.invoke(messages)
+        except Exception as invoke_error:
+            elapsed = time.time() - start_time
+            error_type = type(invoke_error).__name__
+            print(f"⚠ LLM call exception (elapsed {elapsed:.1f}s): {error_type}: {str(invoke_error)[:200]}")
+            raise invoke_error
+        
+        elapsed = time.time() - start_time
+        print(f"✓ LLM call completed (elapsed {elapsed:.1f}s), response length: {len(response.content) if response.content else 0} characters")
+        response_text = response.content.strip()
+        
+        # Try to parse JSON format response
+        result = _parse_decomposition_response(response_text)
+        
+        return result
+        
+    except Exception as e:
+        # Check error type
+        error_str = str(e).lower()
+        error_type = type(e).__name__
+        
+        if "authentication" in error_str or "api key" in error_str or "401" in error_str:
+            print(f"⚠ LLM API Key authentication failed, will use fallback: {error_type}")
+        elif "timeout" in error_str or "timed out" in error_str or "APITimeoutError" in error_type:
+            print(f"⚠ LLM API call timeout, will use fallback: {error_type}")
+        elif "rate limit" in error_str or "429" in error_str:
+            print(f"⚠ LLM API rate limit, will use fallback: {error_type}")
+        elif "400" in error_str or "badrequest" in error_str or "invalidparameter" in error_str or "range of input" in error_str:
+            print(f"⚠ LLM API input parameter error (possibly input too long), will use fallback: {error_type}")
+            print(f"  Hint: Tool list may be too long, automatically optimized")
+        else:
+            print(f"⚠ LLM task decomposition failed, will use fallback: {error_type}: {str(e)[:100]}")
+        
+        import os
+        if os.getenv("DEBUG_LLM_ERRORS", "false").lower() == "true":
+            import traceback
+            traceback.print_exc()
+        
+        return None
+
+
+def _parse_decomposition_response(response_text: str) -> Dict[str, Any]:
+    """
+    Parse LLM's Stage 1 task decomposition response
+    
+    Args:
+        response_text: Text returned by LLM
+    
+    Returns:
+        Dictionary containing tasks, decomposition_summary
+    """
+    # Method 1: Try to parse entire response as JSON
+    try:
+        result = json.loads(response_text.strip())
+        if isinstance(result, dict) and "tasks" in result:
+            return result
+    except json.JSONDecodeError:
+        pass
+    
+    # Method 2: Try to extract JSON code block
+    json_block_patterns = [
+        r'```json\s*(\{.*?\})\s*```',
+        r'```\s*(\{.*?\})\s*```',
+    ]
+    
+    for pattern in json_block_patterns:
+        matches = re.findall(pattern, response_text, re.DOTALL | re.IGNORECASE)
+        for match in matches:
+            try:
+                result = json.loads(match)
+                if isinstance(result, dict) and "tasks" in result:
+                    return result
+            except json.JSONDecodeError:
+                continue
+    
+    # Method 3: Try to extract nested JSON object
+    brace_count = 0
+    start_idx = -1
+    for i, char in enumerate(response_text):
+        if char == '{':
+            if brace_count == 0:
+                start_idx = i
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0 and start_idx != -1:
+                try:
+                    json_str = response_text[start_idx:i+1]
+                    result = json.loads(json_str)
+                    if isinstance(result, dict) and "tasks" in result:
+                        return result
+                except json.JSONDecodeError:
+                    pass
+                start_idx = -1
+    
+    # Method 4: If JSON parsing fails, use fallback
+    print("Warning: Unable to parse Stage 1 JSON format, using fallback")
+    return {
+        "tasks": [],
+        "decomposition_summary": "Failed to parse LLM response, using fallback"
+    }
+
+
+def _map_task_type_to_enum(task_type_str: str, task_content: str) -> UserTaskType:
+    """
+    Map task type string to UserTaskType enum
+    
+    Args:
+        task_type_str: Task type string (may come from LLM or user input)
+        task_content: Task content (for auxiliary judgment)
+    
+    Returns:
+        UserTaskType enum value
+    """
+    # First try direct conversion
+    task_type_upper = task_type_str.upper()
+    try:
+        return UserTaskType(task_type_upper)
+    except ValueError:
+        pass
+    
+    # If direct conversion fails, intelligently judge based on content
+    content_lower = task_content.lower()
+    
+    # Check if contains execution plan related keywords
+    if any(keyword in content_lower for keyword in ["execute", "plan", "step", "follow", "analyze data", "generate report"]):
+        return UserTaskType.EXECUTE_PLAN
+    
+    # Check if contains immunology related keywords
+    if any(keyword in content_lower for keyword in ["immune", "antigen", "antibody", "vaccine", "immune system", "immune cell"]):
+        return UserTaskType.IMMUNOLOGY_TASK
+    
+    # Default to general Q&A
+    return UserTaskType.GENERAL_QA
+
+
+def _validate_and_convert_decomposition(result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validate and convert task decomposition results
+    
+    Supports two formats:
+    1. New format: {"tasks": [...], "parallel_task_groups": [...]} (includes tool information)
+    2. Old format: {"subtasks": [...], "parallel_task_groups": [...]} (compatible with old version)
+    
+    Args:
+        result: Raw result returned by LLM
+    
+    Returns:
+        Validated and converted result
+    """
+    subtasks = []
+    parallel_task_groups = {}
+    
+    # Process regular subtasks (supports new format "tasks" and old format "subtasks")
+    task_list = result.get("tasks") or result.get("subtasks", [])
+    if isinstance(task_list, list):
+        for i, task_data in enumerate(task_list):
+            try:
+                # Check if task_data is dict, skip if not
+                if not isinstance(task_data, dict):
+                    print(f"Warning: Subtask {i+1} is not dict format, type is {type(task_data).__name__}, skipping")
+                    continue
+                
+                # Ensure task ID exists
+                task_id = task_data.get("task_id") or f"task_{i+1}"
+                
+                # Convert task type (if string is provided, try to convert to UserTaskType)
+                task_type_str = task_data.get("task_type", "GENERAL_QA")
+                # Use name or content as task description
+                task_content = task_data.get("content") or task_data.get("description") or task_data.get("name", "")
+                task_type = _map_task_type_to_enum(task_type_str, task_content)
+                
+                # Build task content (includes tool information)
+                content_parts = []
+                if task_data.get("name"):
+                    content_parts.append(f"Task name: {task_data['name']}")
+                if task_data.get("description"):
+                    content_parts.append(f"Task description: {task_data['description']}")
+                elif task_content:
+                    content_parts.append(task_content)
+                
+                # Add tool information
+                if task_data.get("tools") and isinstance(task_data["tools"], list):
+                    tool_names = [tool.get("tool_name", tool.get("name", "")) for tool in task_data["tools"] if tool.get("tool_name") or tool.get("name")]
+                    if tool_names:
+                        content_parts.append(f"Tools: {', '.join(tool_names)}")
+                
+                # Add input/output information
+                if task_data.get("inputs"):
+                    content_parts.append(f"Inputs: {', '.join(task_data['inputs'])}")
+                if task_data.get("outputs"):
+                    content_parts.append(f"Outputs: {', '.join(task_data['outputs'])}")
+                
+                final_content = "\n".join(content_parts) if content_parts else task_content
+                
+                subtask = SubTask(
+                    task_id=task_id,
+                    task_type=task_type,
+                    content=final_content,
+                    dependencies=task_data.get("dependencies", []),
+                    parallel_group_id=task_data.get("parallel_group_id")
+                )
+                
+                # Store tool information in result field (as metadata)
+                if task_data.get("tools") or task_data.get("parameters"):
+                    subtask.result = {
+                        "tools": task_data.get("tools", []),
+                        "parameters": task_data.get("parameters", {}),
+                        "inputs": task_data.get("inputs", []),
+                        "outputs": task_data.get("outputs", [])
+                    }
+                subtasks.append(subtask)
+            except Exception as e:
+                task_data_str = str(task_data)[:100] if task_data else "None"
+                print(f"Warning: Skipping invalid subtask data at index {i}: {e}, data type: {type(task_data).__name__}, value: {task_data_str}")
+                continue
+    
+    # Process parallel task groups (supports new format "tasks" and old format "subtasks")
+    if "parallel_task_groups" in result and isinstance(result["parallel_task_groups"], list):
+        for group_idx, group_data in enumerate(result["parallel_task_groups"]):
+            try:
+                # Check if group_data is dict, skip if not
+                if not isinstance(group_data, dict):
+                    print(f"Warning: Parallel task group {group_idx+1} is not dict format, type is {type(group_data).__name__}, skipping")
+                    continue
+                
+                group_id = group_data.get("group_id") or f"group_{len(parallel_task_groups)+1}"
+                group_subtasks = []
+                
+                # Supports new format "tasks" and old format "subtasks"
+                group_task_list = group_data.get("tasks") or group_data.get("subtasks", [])
+                if isinstance(group_task_list, list):
+                    for i, task_data in enumerate(group_task_list):
+                        try:
+                            # Check if task_data is dict, skip if not
+                            if not isinstance(task_data, dict):
+                                print(f"Warning: Task {i+1} in parallel group {group_id} is not dict format, type is {type(task_data).__name__}, value: {str(task_data)[:100]}, skipping")
+                                continue
+                            
+                            task_id = task_data.get("task_id") or f"{group_id}_task_{i+1}"
+                            task_type_str = task_data.get("task_type", "GENERAL_QA")
+                            task_content = task_data.get("content") or task_data.get("description") or task_data.get("name", "")
+                            task_type = _map_task_type_to_enum(task_type_str, task_content)
+                            
+                            # Build task content (includes tool information)
+                            content_parts = []
+                            if task_data.get("name"):
+                                content_parts.append(f"Task name: {task_data['name']}")
+                            if task_data.get("description"):
+                                content_parts.append(f"Task description: {task_data['description']}")
+                            elif task_content:
+                                content_parts.append(task_content)
+                            
+                            # Add tool information
+                            if task_data.get("tools") and isinstance(task_data["tools"], list):
+                                tool_names = [tool.get("tool_name", tool.get("name", "")) for tool in task_data["tools"] if tool.get("tool_name") or tool.get("name")]
+                                if tool_names:
+                                    content_parts.append(f"Tools: {', '.join(tool_names)}")
+                            
+                            final_content = "\n".join(content_parts) if content_parts else task_content
+                            
+                            subtask = SubTask(
+                                task_id=task_id,
+                                task_type=task_type,
+                                content=final_content,
+                                dependencies=task_data.get("dependencies", []),
+                                parallel_group_id=group_id
+                            )
+                            
+                            # Store tool information in result field (as metadata)
+                            if task_data.get("tools") or task_data.get("parameters"):
+                                subtask.result = {
+                                    "tools": task_data.get("tools", []),
+                                    "parameters": task_data.get("parameters", {}),
+                                    "inputs": task_data.get("inputs", []),
+                                    "outputs": task_data.get("outputs", [])
+                                }
+                            
+                            group_subtasks.append(subtask)
+                        except Exception as e:
+                            task_data_str = str(task_data)[:100] if task_data else "None"
+                            print(f"Warning: Skipping invalid task {i+1} in parallel group {group_id}: {e}, data type: {type(task_data).__name__}, value: {task_data_str}")
+                            continue
+                
+                parallel_group = ParallelTaskGroup(
+                    group_id=group_id,
+                    subtasks=group_subtasks,
+                    status=TaskStatus.PENDING
+                )
+                parallel_task_groups[group_id] = parallel_group
+            except Exception as e:
+                print(f"Warning: Skipping invalid parallel task group: {e}")
+                continue
+    
+    return {
+        "subtasks": subtasks,
+        "parallel_task_groups": parallel_task_groups,
+        "decomposition_summary": result.get("decomposition_summary", "")
+    }
+
+
+def _decompose_task_fallback(
+    user_input: str, 
+    execution_plan: Optional[str]
+) -> Dict[str, Any]:
+    """
+    Fallback: Simple task decomposition when LLM is unavailable
+    
+    Args:
+        user_input: User's task description
+        execution_plan: User-provided execution plan (if any)
+    
+    Returns:
+        Dictionary containing subtasks, parallel_task_groups, decomposition_summary
+    """
+    subtasks = []
+    parallel_task_groups = {}
+    
+    # If there's an execution plan, try to extract steps from it
+    if execution_plan:
+        # Simple step extraction (by line or numbering)
+        lines = execution_plan.split('\n')
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if line and (line[0].isdigit() or line.startswith('-') or line.startswith('•')):
+                # Extract step content
+                content = re.sub(r'^[\d\-•\.\s]+', '', line).strip()
+                if content:
+                    subtask = SubTask(
+                        task_id=f"task_{i+1}",
+                        task_type=UserTaskType.EXECUTE_PLAN,
+                        content=content,
+                        dependencies=[f"task_{j}" for j in range(1, i)] if i > 0 else [],
+                        parallel_group_id=None
+                    )
+                    subtasks.append(subtask)
+    else:
+        # If no execution plan, create a simple task
+        subtask = SubTask(
+            task_id="task_1",
+            task_type=UserTaskType.GENERAL_QA,
+            content=user_input,
+            dependencies=[],
+            parallel_group_id=None
+        )
+        subtasks.append(subtask)
+    
+    return {
+        "subtasks": subtasks,
+        "parallel_task_groups": parallel_task_groups,
+        "decomposition_summary": "Using fallback for task decomposition, recommend configuring LLM API Key for better decomposition results"
+    }
+
+
+# ---------------------- Tool Description Cleaning Function =====================
+def _clean_tool_description(description: str) -> str:
+    """
+    Clean and optimize tool description to make it more suitable for semantic matching in task_decomposition subgraph
+    
+    Optimization strategy:
+    1. Remove redundant spaces and line breaks
+    2. Remove "Args:", "Yields:" etc. parameter sections (parameter info already in params)
+    3. Retain core functionality description, keep it concise and clear
+    4. Normalize format for easier LLM semantic matching
+    """
+    if not description:
+        return ""
+    
+    # Remove leading whitespace
+    description = description.strip()
+    
+    # Remove leading indentation (common 4-space indentation in code docs)
+    lines = description.split('\n')
+    cleaned_lines = []
+    in_args_section = False
+    
+    for line in lines:
+        # Remove leading 4-space indentation
+        line = re.sub(r'^ {4,}', '', line).rstrip()
+        
+        # Detect "Args:", "Yields:", "Returns:" etc. markers
+        if re.match(r'^(Args|Yields|Returns|Parameters|Example):', line, re.IGNORECASE):
+            in_args_section = True
+            continue
+        
+        # If in args section, skip parameter description lines
+        if in_args_section:
+            # Parameter lines usually formatted as "param_name: description" or "    param_name: description"
+            if re.match(r'^\s*[a-z_]+(\s|:).*', line, re.IGNORECASE):
+                continue
+            # If encounter empty line, might be end of args section
+            if not line:
+                continue
+            # If encounter new paragraph (non-parameter format), stop skipping
+            if line and not re.match(r'^\s*[a-z_]+(\s|:).*', line, re.IGNORECASE):
+                in_args_section = False
+        
+        # Retain non-parameter sections
+        if not in_args_section:
+            cleaned_lines.append(line)
+    
+    description = '\n'.join(cleaned_lines)
+    
+    # Normalize line breaks: merge multiple consecutive line breaks to at most two
+    description = re.sub(r'\n{3,}', '\n\n', description)
+    
+    # Remove trailing spaces
+    description = '\n'.join(line.rstrip() for line in description.split('\n'))
+    
+    # Remove leading empty lines
+    description = description.lstrip('\n')
+    
+    # Final cleanup
+    description = description.strip()
+    
+    return description
+
+
+# ---------------------- Tool Loading Function =====================
+def _load_available_tools() -> List[Dict[str, Any]]:
+    """
+    Load list of available tools (MCP tools, Skills, persistent tools)
+    
+    Load tool information from mcp_tools.json (already contains tool list and parameter information)
+    
+    Returns:
+        Tool list, each tool contains name, description, tool fields, etc.
+    """
+    tools = []
+    
+    # 1. Load MCP tool configuration
+    try:
+        mcp_tools_path = agent_dir / "config" / "mcp_tools.json"
+        if mcp_tools_path.exists():
+            with open(mcp_tools_path, 'r', encoding='utf-8') as f:
+                mcp_config = json.load(f)
+                
+                # Handle two formats:
+                # 1. If dict, try to get "mcp_tools" key
+                # 2. If list, use directly
+                if isinstance(mcp_config, dict):
+                    mcp_tools = mcp_config.get("mcp_tools", [])
+                elif isinstance(mcp_config, list):
+                    mcp_tools = mcp_config
+                else:
+                    print(f"Warning: MCP tool configuration format incorrect, expected dict or list, actual {type(mcp_config)}")
+                    mcp_tools = []
+                
+                for tool in mcp_tools:
+                    tool_name = tool.get("name", "")
+                    if not tool_name:
+                        continue
+                    
+                    # Get tool description and optimize (remove redundant format, easier for LLM semantic matching)
+                    tool_description = _clean_tool_description(tool.get("description", ""))
+                    
+                    # Get tool parameters
+                    tool_params = tool.get("params", [])
+                    
+                    # Build parameter description (for LLM understanding)
+                    params_description = ""
+                    if tool_params:
+                        params_parts = []
+                        for param in tool_params:
+                            param_name = param.get("name", "")
+                            param_desc = param.get("description", "")
+                            param_type = param.get("type", "string")
+                            param_required = param.get("required", False)
+                            param_default = param.get("default")
+                            
+                            param_str = f"- {param_name}"
+                            if param_type:
+                                param_str += f" ({param_type})"
+                            if param_required:
+                                param_str += " [Required]"
+                            if param_default is not None:
+                                param_str += f" [Default: {param_default}]"
+                            if param_desc:
+                                param_str += f": {param_desc}"
+                            
+                            params_parts.append(param_str)
+                        
+                        if params_parts:
+                            params_description = "\nParameters:\n" + "\n".join(params_parts)
+                    
+                    # Build complete tool description (includes parameter information)
+                    full_description = tool_description
+                    if params_description:
+                        full_description = f"{tool_description}\n{params_description}"
+                    
+                    # Standardize tool format (each tool name corresponds to one executable tool)
+                    standardized_tool = {
+                        "name": tool_name,
+                        "description": full_description,
+                        "service": tool.get("service", ""),
+                        "tool": [{
+                            "tool_name": tool_name,
+                            "description": full_description,
+                            "parameters": tool_params  # Retain parameter info for subsequent use
+                        }]
+                    }
+                    
+                    tools.append(standardized_tool)
+                
+                print(f"Successfully loaded {len(tools)} MCP tools")
+        else:
+            print(f"Warning: MCP tool configuration file does not exist: {mcp_tools_path}")
+    except Exception as e:
+        print(f"Warning: Failed to load MCP tool configuration: {e}")
+        if os.getenv("DEBUG_LLM_ERRORS", "false").lower() == "true":
+            import traceback
+            traceback.print_exc()
+    
+    # 2. TODO: Load Skills (if exists)
+    # 3. TODO: Load persistent code cache tools (if exists)
+    
+    return tools
+
+
+# ---------------------- State Mapping Functions =====================
+def task_decomposition_input_mapper(global_state: GlobalState) -> TaskDecompositionState:
+    """
+    Main graph → subgraph state mapping
+    
+    Map main graph's GlobalState to TaskDecompositionState, extract information needed by subgraph.
+    Automatically load available tool information.
+    
+    Args:
+        global_state: Main graph's global state
+    
+    Returns:
+        TaskDecompositionState: Subgraph state
+    """
+    # Load available tools
+    available_tools = _load_available_tools()
+    
+    return TaskDecompositionState(
+        user_input=global_state.user_input,
+        execution_plan=global_state.execution_plan,
+        available_tools=available_tools,
+        required_service_ids=[],
+        filtered_tools=[],
+        subtasks=[],
+        parallel_task_groups={},
+        decomposition_summary=None
+    )
+
+
+def task_decomposition_output_mapper(
+    subgraph_output: TaskDecompositionState | dict, 
+    global_state: GlobalState
+) -> GlobalState:
+    """
+    Subgraph → main graph state mapping
+    
+    Sync TaskDecompositionState results from subgraph back to main graph's GlobalState.
+    
+    Args:
+        subgraph_output: State output from subgraph (may be TaskDecompositionState object or dict)
+        global_state: Main graph's global state (will be updated)
+    
+    Returns:
+        GlobalState: Updated main graph state
+    """
+    
+    # Handle dict format state (LangGraph may return dict)
+    if isinstance(subgraph_output, dict):
+        subgraph_output = TaskDecompositionState(**subgraph_output)
+    
+    # Sync subtask list
+    if subgraph_output.subtasks:
+        global_state.subtasks = subgraph_output.subtasks
+    
+    # Sync parallel task groups
+    if subgraph_output.parallel_task_groups:
+        global_state.parallel_task_groups = subgraph_output.parallel_task_groups
+    
+    # Store decomposition summary and parameter inference results in merged_result
+    if not global_state.merged_result:
+        global_state.merged_result = {}
+    
+    if subgraph_output.decomposition_summary:
+        global_state.merged_result["decomposition_summary"] = subgraph_output.decomposition_summary
+    
+    # Store parameter inference results (for executor use)
+    if hasattr(subgraph_output, 'parameter_inference_results') and subgraph_output.parameter_inference_results:
+        # Convert parameter inference results to dict format for storage
+        parameter_inference_dict = {}
+        for task_id, inference_result in subgraph_output.parameter_inference_results.items():
+            parameter_inference_dict[task_id] = {
+                'tool_name': inference_result.tool_name,
+                'parameters': {
+                    param_name: {
+                        'source_type': param_result.source_type.value if hasattr(param_result.source_type, 'value') else str(param_result.source_type),
+                        'value': param_result.value,
+                        'source_task_id': param_result.source_task_id,
+                        'source_output_key': param_result.source_output_key,
+                        'user_prompt': param_result.user_prompt,
+                        'reason': param_result.reason
+                    }
+                    for param_name, param_result in inference_result.parameters.items()
+                }
+            }
+        global_state.merged_result["parameter_inference_results"] = parameter_inference_dict
+    
+    if hasattr(subgraph_output, 'parameter_inference_summary') and subgraph_output.parameter_inference_summary:
+        global_state.merged_result["parameter_inference_summary"] = subgraph_output.parameter_inference_summary
+    
+    # Return updated global state
+    return global_state
+
+
+# ---------------------- Build Task Decomposition Agent Subgraph ----------------------
+def build_task_decomposition_subgraph():
+    """
+    Build task decomposition Agent subgraph (four-stage decomposition)
+    
+    Stage 0: Coarse decomposition (determine required tool types, no tool list passed)
+    Stage 1: Fine decomposition (detailed task decomposition and tool matching based on filtered tools)
+    Stage 2: Parallel task inference (infer parallel relationships based on fine decomposition results)
+    Stage 3: Parameter inference (infer task parameter values, supports three result types: determined value, from task, user input required)
+    
+    Returns:
+        Compiled subgraph
+    """
+    graph = StateGraph(TaskDecompositionState)
+    
+    # Add nodes
+    graph.add_node("coarse_decompose", coarse_decomposition_node)  # Stage 0: Coarse decomposition
+    graph.add_node("fine_decompose", fine_decomposition_node)  # Stage 1: Fine decomposition
+    graph.add_node("infer_parallel", parallel_inference_node)  # Stage 2: Parallel inference
+    graph.add_node("infer_parameters", infer_parameters_node)  # Stage 3: Parameter inference
+    
+    # Define flow rules
+    graph.add_edge(START, "coarse_decompose")
+    graph.add_edge("coarse_decompose", "fine_decompose")  # Enter fine decomposition after coarse decomposition
+    graph.add_edge("fine_decompose", "infer_parallel")  # Enter parallel inference after fine decomposition
+    graph.add_edge("infer_parallel", "infer_parameters")  # Enter parameter inference after parallel inference
+    graph.add_edge("infer_parameters", END)  # End after parameter inference
+    
+    return graph.compile()
+

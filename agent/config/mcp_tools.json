@@ -1,19 +1,907 @@
-{
-    "mcp_tools": [
-        {
-            "name": "metabcr",
-            "description": "Metabcr is a tool for analyzing antibody-antigen interactions.",
-            "params": [
-                { "name": "antibody_file", "type": "file", "description": "The antibody file to be analyzed" },
-                { "name": "antigen_file", "type": "file", "description": "The antigen file to be analyzed" },
-                { "name": "output_file", "type": "file", "description": "The output file to be saved" }
-            ],
-            "return_type": "file",
-            "example": {
-                "antibody_file": "antibody.csv",
-                "antigen_file": "antigen.csv",
-                "output_file": "output.csv"
-            }
-        }
-    ]
-}
+[
+  {
+    "name": "alphafold3",
+    "service": "af3",
+    "description": "Predict 3D structures from Excel antibody sequences (heavy/light chains) using AlphaFold3, output PDB files with streaming progress"
+  },
+  {
+    "name": "analyze_affinity_maturation",
+    "service": "r_bcell",
+    "description": "Analyze correlation between SHM and pseudotime, output correlation plots, regression models, and maturation dynamics"
+  },
+  {
+    "name": "analyze_bcell_trajectory",
+    "service": "r_bcell",
+    "description": "Analyze B cell differentiation trajectories using Monocle3/Slingshot, output pseudotime values, trajectory plots, and branch point analysis"
+  },
+  {
+    "name": "analyze_clonal_expansion",
+    "service": "r_bcell",
+    "description": "Analyze clonal expansion from BCR clonotypes, output clonal frequency, expansion plots, and Jaccard index"
+  },
+  {
+    "name": "analyze_design_results",
+    "service": "bindcraft",
+    "description": "Analyze BindCraft design results, sort by comprehensive/single metrics, output sequences, metrics, statistics, and PDB paths"
+  },
+  {
+    "name": "analyze_gc_dynamics",
+    "service": "r_bcell",
+    "description": "Analyze germinal center dark zone/light zone dynamics, output differential genes and pathway enrichment results"
+  },
+  {
+    "name": "analyze_isotype_distribution",
+    "service": "r_bcell",
+    "description": "Analyze BCR isotype distribution and switching patterns, output distribution plots and statistics"
+  },
+  {
+    "name": "analyze_signaling_pathways",
+    "service": "r_communication",
+    "description": "Analyze signaling pathway activity based on CellChat, output pathway activity data, heatmaps, and network plots"
+  },
+  {
+    "name": "analyze_vdj_batch",
+    "service": "igblast",
+    "description": "Batch analyze V(D)J recombination using IgBLAST+ChangeO, output AIRR format results"
+  },
+  {
+    "name": "analyze_vdj_usage",
+    "service": "r_bcell",
+    "description": "Parse V(D)J gene family usage from AIRR data, output frequency statistics and heatmaps"
+  },
+  {
+    "name": "annotate_by_markers",
+    "service": "r_annotation",
+    "description": "Manually annotate cell types based on marker genes, output annotated RDS files and mapping relationships"
+  },
+  {
+    "name": "antigen_binding_neutralization_density_visualization",
+    "service": "bioinformatics",
+    "description": "UMAP density visualization for single-cell antigen binding/neutralization predictions, output density plots, statistics, and coordinates"
+  },
+  {
+    "name": "antigen_binding_prediction_visualization",
+    "service": "bioinformatics",
+    "description": "Visualize single-cell B cell antigen binding predictions, output binding distribution plots, statistics, and CSV"
+  },
+  {
+    "name": "batch_design_and_score",
+    "service": "mpnn",
+    "description": "Batch process PDB structures for antibody library design, mutation optimization, and large-scale screening"
+  },
+  {
+    "name": "batch_process_oas",
+    "service": "oas",
+    "description": "Batch download/analyze OAS datasets, output processing results and success/failure statistics"
+  },
+  {
+    "name": "bcell_celltype_distribution_analysis",
+    "service": "bioinformatics",
+    "description": "Single-cell B cell subtype distribution analysis, output distribution charts, cell proportions, and CSV"
+  },
+  {
+    "name": "bcell_celltype_umap_visualization",
+    "service": "bioinformatics",
+    "description": "UMAP spatial distribution visualization for single-cell B cell subtypes, output publication-quality UMAP plots and statistics"
+  },
+  {
+    "name": "bcell_marker_gene_dotplot_analysis",
+    "service": "bioinformatics",
+    "description": "B cell subtype marker gene expression dot plot analysis, output dot plots, expression statistics, and gene lists"
+  },
+  {
+    "name": "bcell_marker_gene_expression_dotplot",
+    "service": "bioinformatics",
+    "description": "Visualize B cell subtype marker gene expression, output dot plots, statistics, and PDF"
+  },
+  {
+    "name": "bcr_isotype_distribution_shm_analysis",
+    "service": "bioinformatics",
+    "description": "BCR isotype distribution and SHM rate analysis, output combined plots, statistical test results, and data"
+  },
+  {
+    "name": "binding_prediction_interval_distribution_analysis",
+    "service": "bioinformatics",
+    "description": "Antigen binding prediction value interval distribution analysis, output histograms, CDF curves, and quantile statistics"
+  },
+  {
+    "name": "calculate_network_centrality",
+    "service": "r_communication",
+    "description": "Calculate cell communication network centrality scores, output score data and network role plots"
+  },
+  {
+    "name": "calculate_repertoire_diversity",
+    "service": "r_bcell",
+    "description": "Calculate BCR repertoire diversity (Shannon/Simpson/Hill indices), output grouped scores and visualization plots"
+  },
+  {
+    "name": "calculate_shm_rates",
+    "service": "r_bcell",
+    "description": "Calculate SHM rates in V/D/J regions from AIRR data, output cell/cluster-level SHM distribution and statistics"
+  },
+  {
+    "name": "check_design_status",
+    "service": "bindcraft",
+    "description": "Monitor BindCraft design task progress, return trajectory count, sequence count, running status, and resource usage"
+  },
+  {
+    "name": "check_mpnn_design_novelty",
+    "service": "foldseek",
+    "description": "Evaluate structural novelty of MPNN-designed sequences using ProstT5+Foldseek, output novelty classification and validation suggestions"
+  },
+  {
+    "name": "check_peptide_support",
+    "service": "nettcr",
+    "description": "Verify if peptides are supported by pre-trained models, return model availability and suggestions"
+  },
+  {
+    "name": "clear_cache",
+    "service": "oas",
+    "description": "Clear OAS cache, free disk space, return cleanup statistics"
+  },
+  {
+    "name": "cluster_structures",
+    "service": "foldseek",
+    "description": "Cluster protein structures by structural similarity for deduplication, representative structure selection, and diversity analysis"
+  },
+  {
+    "name": "compare_communication_networks",
+    "service": "r_communication",
+    "description": "Compare cell communication networks under different conditions, output differential communication pathways and comparison plots"
+  },
+  {
+    "name": "compare_rsv_a_vs_b_bcells",
+    "service": "r_bcell",
+    "description": "Compare B cell responses to RSV-A/B infection, output differential genes and pathway enrichment results"
+  },
+  {
+    "name": "convert_csv_to_fasta",
+    "service": "file_utils",
+    "description": "Convert CSV to FASTA, automatically identify column names, support local/URL files, stream progress"
+  },
+  {
+    "name": "convert_csv_to_xlsx",
+    "service": "file_utils",
+    "description": "Convert CSV to XLSX, preserve all data, support local/URL files"
+  },
+  {
+    "name": "convert_excel_to_fasta",
+    "service": "file_utils",
+    "description": "Convert Excel to FASTA, support XLS/XLSX, automatically identify column names, stream progress"
+  },
+  {
+    "name": "convert_xls_to_csv",
+    "service": "file_utils",
+    "description": "Convert XLS to CSV, preserve all data, support local/URL files, stream progress"
+  },
+  {
+    "name": "convert_xls_to_fasta",
+    "service": "file_utils",
+    "description": "Convert XLS to FASTA, automatically identify column names, support local/URL files, stream progress"
+  },
+  {
+    "name": "convert_xlsx_to_csv",
+    "service": "file_utils",
+    "description": "Convert XLSX to CSV, preserve all data, support local/URL files, stream progress"
+  },
+  {
+    "name": "convert_xlsx_to_fasta",
+    "service": "file_utils",
+    "description": "Convert XLSX to FASTA, automatically identify column names, support local/URL files, stream progress"
+  },
+  {
+    "name": "create_csv",
+    "service": "file_utils",
+    "description": "Create blank or header-only CSV files, support temporary files, stream progress"
+  },
+  {
+    "name": "create_custom_database",
+    "service": "foldseek",
+    "description": "Create custom Foldseek database from PDB/mmCIF files for structure search"
+  },
+  {
+    "name": "design_sequences_from_backbone",
+    "service": "mpnn",
+    "description": "Design sequences based on protein backbone for antibody optimization, stability improvement, and de novo design"
+  },
+  {
+    "name": "design_with_amino_acid_bias",
+    "service": "mpnn",
+    "description": "Sequence design with physicochemical constraints, avoid sensitive residues, control hydrophobicity/charge distribution"
+  },
+  {
+    "name": "design_with_fixed_positions",
+    "service": "mpnn",
+    "description": "Design sequences with fixed key positions, preserve CDR regions, functional residues, and disulfide bond cysteines"
+  },
+  {
+    "name": "design_with_pssm",
+    "service": "mpnn",
+    "description": "Design sequences based on PSSM evolutionary information, balance structural and evolutionary constraints"
+  },
+  {
+    "name": "detect_cluster_markers",
+    "service": "r_annotation",
+    "description": "Identify cluster-specific marker genes using Seurat, output marker gene lists and summary tables"
+  },
+  {
+    "name": "differential_gene_correlation_analysis",
+    "service": "bioinformatics",
+    "description": "Differential gene correlation analysis, output correlation scatter plots, statistics, and CSV"
+  },
+  {
+    "name": "differential_gene_expression_correlation_pipeline",
+    "service": "bioinformatics",
+    "description": "Integrated pipeline for differential gene volcano plots and correlation analysis, output complete analysis files"
+  },
+  {
+    "name": "download_airr_sequences",
+    "service": "airr",
+    "description": "Download BCR sequences from AIRR library, output AIRR format files compatible with IgBLAST"
+  },
+  {
+    "name": "download_geo_sequences",
+    "service": "geo_iedb",
+    "description": "Download BCR-seq data from GEO, support multiple output formats, return FTP download links"
+  },
+  {
+    "name": "download_iedb_dataset",
+    "service": "geo_iedb",
+    "description": "Batch download IEDB epitope data, support disease/antigen filtering, output JSON/TSV"
+  },
+  {
+    "name": "download_mcpas_database",
+    "service": "mcpas",
+    "description": "Download McPAS-TCR database containing pathology-related TCR sequences, support caching"
+  },
+  {
+    "name": "download_oas_dataset",
+    "service": "oas",
+    "description": "Download OAS datasets, support resumable downloads, convert to AIRR format, return cache status"
+  },
+  {
+    "name": "download_pdb_structure",
+    "service": "sabdab",
+    "description": "Download numbered antibody PDB structures from SAbDab, output file contents and paths"
+  },
+  {
+    "name": "download_prebuilt_database",
+    "service": "foldseek",
+    "description": "Download Foldseek pre-built databases (PDB/AlphaFoldDB, etc.), support background operation"
+  },
+  {
+    "name": "download_sabdab_dataset",
+    "service": "sabdab",
+    "description": "Download complete SAbDab dataset, return data content and metadata"
+  },
+  {
+    "name": "download_sabdab_summary_csv",
+    "service": "sabdab",
+    "description": "Download SAbDab summary CSV containing antibody PDB, chain information, and other metadata"
+  },
+  {
+    "name": "download_url",
+    "service": "file_utils",
+    "description": "Download any file from URL, automatically identify format, support streaming download for large files"
+  },
+  {
+    "name": "easy_multimercluster",
+    "service": "foldseek",
+    "description": "Cluster protein complex structures considering overall/single-chain/interface similarity, output clustering results and representative sequences"
+  },
+  {
+    "name": "easy_multimersearch",
+    "service": "foldseek",
+    "description": "Search protein complex structures, suitable for antibody-antigen complexes, output similarity metrics"
+  },
+  {
+    "name": "easy_search",
+    "service": "foldseek",
+    "description": "Fast protein structure search, 10,000x faster than TMalign, support GPU acceleration, for homology identification"
+  },
+  {
+    "name": "enrich_sequences_with_iedb",
+    "service": "geo_iedb",
+    "description": "Enrich GEO sequences with IEDB epitope data, add epitope matching and structural information"
+  },
+  {
+    "name": "export_annotations",
+    "service": "r_annotation",
+    "description": "Export cell type annotation results, support multiple formats, output summary statistics"
+  },
+  {
+    "name": "extract_cdr3_from_airr",
+    "service": "igblast",
+    "description": "Extract CDR3 information from AIRR data, support multiple input formats, stream progress"
+  },
+  {
+    "name": "extract_seurat_umap_metadata",
+    "service": "lineage_analysis",
+    "description": "Extract UMAP coordinates and cell metadata from Seurat RDS, output CSV files"
+  },
+  {
+    "name": "fdg",
+    "service": "fdg",
+    "description": "Run FoldX/DDG/GearBind analysis on AlphaFold3 PDB files, output antibody candidates and result CSV"
+  },
+  {
+    "name": "filter_by_vdj_genes",
+    "service": "airr",
+    "description": "Filter sequences by V(D)J gene usage patterns, output filtered results and gene usage statistics"
+  },
+  {
+    "name": "filter_oas_by_vgene",
+    "service": "oas",
+    "description": "Filter OAS sequences by V gene, output filtered results and statistics"
+  },
+  {
+    "name": "generate_bcell_report",
+    "service": "r_bcell",
+    "description": "Generate comprehensive B cell analysis report integrating subtype, SHM, trajectory results, output HTML/PDF"
+  },
+  {
+    "name": "generate_cds",
+    "service": "gemorna",
+    "description": "Generate codon-optimized mRNA sequences (CDS) from protein sequences, output result file paths"
+  },
+  {
+    "name": "generate_design_report",
+    "service": "bindcraft",
+    "description": "Generate comprehensive BindCraft design report including sequences, structures, metrics, output archive files"
+  },
+  {
+    "name": "generate_utr",
+    "service": "gemorna",
+    "description": "Generate 5'/3' UTR sequences of specified length, output result file paths"
+  },
+  {
+    "name": "get_airr_statistics",
+    "service": "airr",
+    "description": "Get BCR repertoire statistics including sequence count, V gene usage, CDR3 length distribution"
+  },
+  {
+    "name": "get_airr_study_metadata",
+    "service": "airr",
+    "description": "Get detailed metadata for AIRR studies including samples and disease information"
+  },
+  {
+    "name": "get_all_geo_bcr_studies",
+    "service": "geo_iedb",
+    "description": "Retrieve all BCR-seq studies from GEO, return deduplicated metadata, support species filtering"
+  },
+  {
+    "name": "get_all_oas_studies",
+    "service": "oas",
+    "description": "Get all OAS study lists including species/disease/tissue classifications, support caching"
+  },
+  {
+    "name": "get_cache_info",
+    "service": "oas",
+    "description": "Get OAS cache information including cached study count and disk usage"
+  },
+  {
+    "name": "get_geo_metadata",
+    "service": "geo_iedb",
+    "description": "Get detailed metadata for GEO studies/samples"
+  },
+  {
+    "name": "get_iedb_antibody_data",
+    "service": "geo_iedb",
+    "description": "Get detailed antibody information from IEDB including sequences, epitopes, and PDB structures"
+  },
+  {
+    "name": "get_mcpas_statistics",
+    "service": "mcpas",
+    "description": "Get McPAS-TCR database statistics including classifications, species, and MHC distribution"
+  },
+  {
+    "name": "get_oas_summary",
+    "service": "oas",
+    "description": "Get OAS database or specific study statistics including V gene and isotype distribution"
+  },
+  {
+    "name": "get_position_probabilities",
+    "service": "mpnn",
+    "description": "Get amino acid probability distribution at each position of sequences for guiding mutation experiments and sequence logo generation"
+  },
+  {
+    "name": "get_sabdab_statistics",
+    "service": "sabdab",
+    "description": "Get SAbDab database statistics and metadata"
+  },
+  {
+    "name": "identify_antigen_specific_bcells",
+    "service": "r_bcell",
+    "description": "Identify antigen-specific B cells based on binding prediction scores, output annotated RDS files"
+  },
+  {
+    "name": "identify_bcell_subsets",
+    "service": "r_bcell",
+    "description": "Identify B cell subtypes based on classic marker genes, output Seurat RDS with subtype annotations"
+  },
+  {
+    "name": "identify_convergent_sequences",
+    "service": "r_bcell",
+    "description": "Identify convergent CDR3 sequences across samples, output convergent groups and sequence logos"
+  },
+  {
+    "name": "identify_ligand_receptor_pairs",
+    "service": "r_communication",
+    "description": "Identify expressed ligand-receptor pairs from CellChatDB, output pairing tables and dot plots"
+  },
+  {
+    "name": "identify_multimodal_clusters",
+    "description": "Identify multimodal clusters from WNN integrated data, output clustering results and marker genes"
+  },
+  {
+    "name": "integrate_bcr_data_complete",
+    "service": "r_data_integration",
+    "description": "Complete BCR data integration pipeline including format conversion, UMAP, clustering, annotation, support version control"
+  },
+  {
+    "name": "integrate_binding_neutralization_experiments",
+    "service": "lineage_analysis",
+    "description": "Integrate antibody binding/neutralization experimental data, standardize to binary labels, output merged results"
+  },
+  {
+    "name": "integrate_multimodal_wnn",
+    "service": "r_multimodal",
+    "description": "WNN multimodal integration (RNA+ATAC+ADT), output integrated objects and UMAP embeddings"
+  },
+  {
+    "name": "integrate_predictions_with_experimental_data",
+    "service": "lineage_analysis",
+    "description": "Integrate machine learning prediction results with experimental data, output comprehensive datasets with features"
+  },
+  {
+    "name": "integrate_scbcr_bulk_bcr_data",
+    "service": "lineage_analysis",
+    "description": "Integrate single-cell and bulk BCR sequencing data, add UMAP and cell type annotations"
+  },
+  {
+    "name": "link_peaks_to_genes",
+    "service": "r_multimodal",
+    "description": "Link ATAC-seq peaks to genes, calculate gene activity scores, output linking results and motif enrichment"
+  },
+  {
+    "name": "list_available_peptides",
+    "service": "nettcr",
+    "description": "List peptides supported by pre-trained models, include HLA associations and training data statistics"
+  },
+  {
+    "name": "list_geo_bcr_datasets",
+    "service": "geo_iedb",
+    "description": "List filtered high-quality BCR-seq datasets in GEO"
+  },
+  {
+    "name": "list_hla_alleles",
+    "service": "netmhcpan",
+    "description": "List HLA alleles supported by NetMHCpan, include supertype classifications"
+  },
+  {
+    "name": "map_cdr3_to_epitopes",
+    "service": "geo_iedb",
+    "description": "Batch map CDR3 sequences to known epitopes, output binding predictions and confidence"
+  },
+  {
+    "name": "merge_csv_by_key",
+    "service": "file_utils",
+    "description": "Merge two CSV files by key, automatically handle column name conflicts, stream progress"
+  },
+  {
+    "name": "merge_csv_cartesian",
+    "service": "file_utils",
+    "description": "Cartesian product merge of antibody and antigen CSV files, generate all antibody-antigen pairs, stream progress"
+  },
+  {
+    "name": "metabcr",
+    "service": "metabcr",
+    "description": "MetaBCR deep learning model predicts antibody-antigen binding affinity, stream progress"
+  },
+  {
+    "name": "mixtcrpred_download_models",
+    "service": "mixtcrpred",
+    "description": "Download MixTCRpred models from Zenodo, support specified/all/high-confidence models"
+  },
+  {
+    "name": "mixtcrpred_list_models",
+    "service": "mixtcrpred",
+    "description": "List available MixTCRpred models including epitope, MHC, training sample count, and other information"
+  },
+  {
+    "name": "mixtcrpred_predict",
+    "service": "mixtcrpred",
+    "description": "Predict TCR-epitope binding using MixTCRpred, output binding scores and percentile rankings"
+  },
+  {
+    "name": "mixtcrpred_validate_input",
+    "service": "mixtcrpred",
+    "description": "Validate TCR input data format, check sequence validity and required columns"
+  },
+  {
+    "name": "neutralizing_antibody_shm_comparison_analysis",
+    "service": "bioinformatics",
+    "description": "Comparison analysis of SHM rates between neutralizing and non-neutralizing antibodies, output combined plots and statistics"
+  },
+  {
+    "name": "number_antibody_batch",
+    "service": "anarci",
+    "description": "Batch number antibody sequences using ANARCI, output complete numbering results"
+  },
+  {
+    "name": "number_single_sequence",
+    "service": "anarci",
+    "description": "Quickly number a single antibody sequence using ANARCI, output numbering and chain type"
+  },
+  {
+    "name": "optimize_codon_sequences",
+    "service": "codontransformer",
+    "description": "Batch optimize codons for protein sequences, support multiple input formats, output DNA sequences"
+  },
+  {
+    "name": "optimize_single_sequence",
+    "service": "codontransformer",
+    "description": "Optimize codons for a single protein sequence, support specified species, output DNA sequences"
+  },
+  {
+    "name": "plot_communication_network",
+    "service": "r_communication",
+    "description": "Visualize cell communication networks, output circular plots, chord diagrams, and hierarchical plots"
+  },
+  {
+    "name": "plot_multimodal_features",
+    "service": "r_multimodal",
+    "description": "Visualize multimodal features, output cross-modal comparison plots, co-embedding plots, and weight plots"
+  },
+  {
+    "name": "predict_5utr_mrl",
+    "service": "rinalmo",
+    "description": "Predict ribosome loading rate for 5' UTR sequences, output result file paths"
+  },
+  {
+    "name": "predict_mrna_mrl",
+    "service": "rinalmo",
+    "description": "Predict ribosome loading rate for complete mRNA sequences, output result file paths"
+  },
+  {
+    "name": "predict_peptide_mhc_binding",
+    "service": "netmhcpan",
+    "description": "Predict peptide-MHC binding, output binding affinity, rankings, and binding levels"
+  },
+  {
+    "name": "predict_plasma_potential",
+    "service": "r_bcell",
+    "description": "Predict plasma cell differentiation potential based on gene features, output cell scores and feature genes"
+  },
+  {
+    "name": "predict_ribosome_loading",
+    "service": "rinalmo",
+    "description": "Predict ribosome loading rate for RNA sequences, support 5UTR/CDS/mRNA types"
+  },
+  {
+    "name": "predict_stability",
+    "service": "gemorna",
+    "description": "Predict UTR sequence stability, support 5'/3' UTR, output result file paths"
+  },
+  {
+    "name": "predict_tcr_binding_complete",
+    "service": "nettcr",
+    "description": "Complete NetTCR prediction pipeline integrating ensemble models, TCRbase, and statistical rankings, output publication-quality results"
+  },
+  {
+    "name": "predict_tcr_binding_ensemble",
+    "service": "nettcr",
+    "description": "NetTCR ensemble model prediction, average multiple model results, balance speed and accuracy"
+  },
+  {
+    "name": "predict_tcr_binding_fast",
+    "service": "nettcr",
+    "description": "NetTCR fast prediction, single model inference, suitable for large-scale initial screening"
+  },
+  {
+    "name": "prediction_value_density_visualization",
+    "service": "bioinformatics",
+    "description": "UMAP density visualization of prediction values, output density plots, threshold analysis, and coordinate data"
+  },
+  {
+    "name": "prepare_bindcraft_config",
+    "service": "bindcraft",
+    "description": "Generate BindCraft design configuration file, return configuration ID and file path"
+  },
+  {
+    "name": "process_adt_data",
+    "service": "r_multimodal",
+    "description": "Process CITE-seq ADT data including quality control, normalization, dimensionality reduction, output analysis results"
+  },
+  {
+    "name": "process_atac_data",
+    "service": "r_multimodal",
+    "description": "Process ATAC-seq data using Signac including peak identification, normalization, dimensionality reduction, output RDS files"
+  },
+  {
+    "name": "pseudotime_celltype_boxplot_analysis",
+    "service": "bioinformatics",
+    "description": "Box plot analysis of pseudotime and cell type distribution, output statistical test results and plots"
+  },
+  {
+    "name": "pseudotime_trajectory_analysis",
+    "service": "bioinformatics",
+    "description": "Analyze B cell pseudotime trajectories using Monocle3, output trajectory plots, CDS objects, and pseudotime data"
+  },
+  {
+    "name": "ribonn_predict",
+    "service": "ribonn",
+    "description": "Predict mRNA translation efficiency using RiboNN, support human/mouse species, output result files"
+  },
+  {
+    "name": "run_bindcraft_design",
+    "service": "bindcraft",
+    "description": "Run BindCraft binder design pipeline, support async/sync modes, return task ID"
+  },
+  {
+    "name": "run_cellchat_analysis",
+    "service": "r_communication",
+    "description": "Run CellChat cell communication analysis, output communication networks, probabilities, and visualization plots"
+  },
+  {
+    "name": "run_clustering_analysis",
+    "service": "r_scrna",
+    "description": "Run graph clustering analysis, output clustering results and UMAP visualization"
+  },
+  {
+    "name": "run_cytotrace_analysis",
+    "service": "r_bcell",
+    "description": "Run CytoTRACE to predict B cell differentiation state, output differentiation scores and related genes"
+  },
+  {
+    "name": "run_deg_analysis",
+    "service": "r_scrna",
+    "description": "Run differential gene analysis, support multiple testing methods, output volcano plots and heatmaps"
+  },
+  {
+    "name": "run_dim_reduction",
+    "service": "r_scrna",
+    "description": "Run dimensionality reduction analysis (PCA/UMAP/tSNE), output embedding results and visualization plots"
+  },
+  {
+    "name": "run_doublet_detection",
+    "service": "r_scrna",
+    "description": "Identify doublets using DoubletFinder, output filtered Seurat objects and quality control plots"
+  },
+  {
+    "name": "run_full_preprocessing_pipeline",
+    "service": "r_scrna",
+    "description": "Complete single-cell data preprocessing pipeline (QC→normalization→dimensionality reduction→clustering), output final RDS"
+  },
+  {
+    "name": "run_integration_harmony",
+    "service": "r_scrna",
+    "description": "Remove batch effects using Harmony, output integrated Seurat objects and quality control plots"
+  },
+  {
+    "name": "run_marker_detection",
+    "service": "r_scrna",
+    "description": "Identify marker genes for all clusters, output marker gene tables and visualization plots"
+  },
+  {
+    "name": "run_nichenet_analysis",
+    "service": "r_communication",
+    "description": "Run NicheNet ligand-target regulation analysis, output ligand activity and regulation matrices"
+  },
+  {
+    "name": "run_normalization_sct",
+    "service": "r_scrna",
+    "description": "Normalize single-cell data using SCTransform, output normalized Seurat objects"
+  },
+  {
+    "name": "run_pathway_enrichment",
+    "service": "r_scrna",
+    "description": "Run pathway enrichment analysis (GO/KEGG/GSEA), output enrichment tables and dot plots"
+  },
+  {
+    "name": "run_qc_filtering",
+    "service": "r_scrna",
+    "description": "Quality control filtering for single-cell data based on gene count/UMI count/mitochondrial ratio, output filtered objects"
+  },
+  {
+    "name": "run_singler_annotation",
+    "service": "r_annotation",
+    "description": "Automatically annotate cell types using SingleR, output annotation results and summary statistics"
+  },
+  {
+    "name": "run_spatial_communication",
+    "service": "r_communication",
+    "description": "Run spatial transcriptome cell communication analysis, output spatial communication networks and visualization plots"
+  },
+  {
+    "name": "run_subset_cells",
+    "service": "r_scrna",
+    "description": "Filter cell subsets by metadata, output subset Seurat objects and statistics"
+  },
+  {
+    "name": "scan_protein_for_epitopes",
+    "service": "netmhcpan",
+    "description": "Scan protein sequences to predict potential T cell epitopes, output binding affinity and rankings"
+  },
+  {
+    "name": "score_annotation_confidence",
+    "service": "r_annotation",
+    "description": "Calculate cell annotation confidence scores, output score tables and visualization plots"
+  },
+  {
+    "name": "score_sequences_on_backbone",
+    "service": "mpnn",
+    "description": "Evaluate sequence compatibility with protein backbone for mutation validation and library screening"
+  },
+  {
+    "name": "search_airr_repertoires",
+    "service": "airr",
+    "description": "Search BCR repertoires in AIRR library, return matching studies and sample information"
+  },
+  {
+    "name": "search_from_sequence",
+    "service": "foldseek",
+    "description": "Quickly search structure databases from amino acid sequences based on ProstT5 3Di encoding, completes in minutes"
+  },
+  {
+    "name": "search_geo_studies",
+    "service": "geo_iedb",
+    "description": "Search BCR-seq studies in GEO using NCBI E-utilities, return matching results"
+  },
+  {
+    "name": "search_iedb_epitopes",
+    "service": "geo_iedb",
+    "description": "Search antibody-epitope binding data in IEDB, support antigen/disease filtering"
+  },
+  {
+    "name": "search_mcpas_tcr",
+    "service": "mcpas",
+    "description": "Search McPAS-TCR database, support filtering and sequence fuzzy matching"
+  },
+  {
+    "name": "search_oas_studies",
+    "service": "oas",
+    "description": "Search OAS studies by conditions, return matching study lists and sequence statistics"
+  },
+  {
+    "name": "tcrdist3_analyze_repertoire",
+    "service": "tcrdist3",
+    "description": "Analyze TCR repertoires using tcrdist3, calculate pairwise distance matrices"
+  },
+  {
+    "name": "tcrdist3_calculate_radii",
+    "service": "tcrdist3",
+    "description": "Calculate TCR distance radii for FDR-controlled clustering analysis"
+  },
+  {
+    "name": "tcrdist3_compute_sparse_distances",
+    "service": "tcrdist3",
+    "description": "Calculate sparse distance matrices for large-scale TCR repertoires, save memory"
+  },
+  {
+    "name": "tcrdist3_find_neighbors",
+    "service": "tcrdist3",
+    "description": "Find TCR neighbors within specified radius for clonotype clustering"
+  },
+  {
+    "name": "tcrdist3_generate_background",
+    "service": "tcrdist3",
+    "description": "Generate background TCR repertoires using OLGA, support V-J frequency matching"
+  },
+  {
+    "name": "tcrdist3_identify_public_tcrs",
+    "service": "tcrdist3",
+    "description": "Identify public/quasi-public TCR clonotypes, output cross-individual clonotypes"
+  },
+  {
+    "name": "tcrdist3_infer_cdrs",
+    "service": "tcrdist3",
+    "description": "Infer CDR1/CDR2 sequences from V genes for complete TCR similarity analysis"
+  },
+  {
+    "name": "trajectory_polynomial_regression_analysis",
+    "service": "bioinformatics",
+    "description": "Trajectory polynomial regression analysis and gene module scoring, output trend plots and key nodes"
+  },
+  {
+    "name": "trajectory_supplementary_analysis",
+    "service": "bioinformatics",
+    "description": "Generate supplementary plots for trajectory analysis and transcript marker analysis, output publication-quality charts"
+  },
+  {
+    "name": "umap_dimensionality_reduction_visualization",
+    "service": "bioinformatics",
+    "description": "Single-cell B cell UMAP dimensionality reduction and visualization, output publication-quality UMAP plots and coordinate data"
+  },
+  {
+    "name": "validate_annotation",
+    "service": "r_annotation",
+    "description": "Cross-validate cell annotation results, output confusion matrices and consistency scores"
+  },
+  {
+    "name": "validate_epitope_binding",
+    "service": "geo_iedb",
+    "description": "Validate CDR3 sequence binding to known epitopes, output matching results and similarity scores"
+  },
+  {
+    "name": "validate_target_pdb",
+    "service": "bindcraft",
+    "description": "Validate target PDB structure integrity, estimate GPU memory requirements, provide design suggestions"
+  },
+  {
+    "name": "validate_tcr_input",
+    "service": "nettcr",
+    "description": "Validate TCR input data format, check sequence validity and column completeness"
+  },
+
+  {
+    "name": "foldx_repair_pdb",
+    "service": "mutatex",
+    "description": "Identify and repair protein structures with residues having poor torsion angles, van der Waals collisions, or total energy issues"
+  },
+  {
+    "name": "foldx_build_model",
+    "service": "mutatex",
+    "description": "Quickly build mutant protein structures based on mutation information, predict Gibbs free energy of original and mutant proteins and their energy differences"
+  },
+  {
+    "name": "mutatex_saturation_scan",
+    "service": "mutatex",
+    "description": "Use FoldX to predict protein Gibbs free energy and energy differences after saturation point mutations"
+  },
+  {
+    "name": "run_spired_fitness",
+    "service": "spired_fitness",
+    "description": "Predict fitness of saturation-mutated proteins"
+  },
+  {
+    "name": "cif_to_pdb_batch",
+    "service": "protein_energy_design",
+    "description": "Convert CIF protein structure files to PDB format"
+  },
+  {
+    "name": "run_post_analysis_pipeline",
+    "service": "protein_energy_design",
+    "description": "Merge fitness and FoldX results, generate mutant sequences from original FASTA based on selected best mutations"
+  },  
+  {
+    "name": "merge_fasta_files_in_directory",
+    "service": "fasta_combine",
+    "description": "Merge multiple FASTA files into one FASTA"
+  },
+  {
+    "name": "generate_cds",
+    "service": "gemorna",
+    "description": "Generate optimized CDS sequences from protein sequences"
+  },
+  {
+    "name": "generate_cds_from_file",
+    "service": "gemorna",
+    "description": "Generate optimized CDS sequences from protein sequence files"
+  },
+  {
+    "name": "generate_5utr",
+    "service": "gemorna",
+    "description": "Output optimal 5' UTR based on length range"
+  },
+  {
+    "name": "generate_3utr",
+    "service": "gemorna",
+    "description": "Output optimal 3' UTR based on length range"
+  },
+  {
+    "name": "generate_full_mrna",
+    "service": "gemorna",
+    "description": "Generate highly expressed and stable mRNA from amino acid sequences"
+  },
+  {
+    "name": "predict_and_fix_ribonn_te",
+    "service": "ribonn",
+    "description": "Predict mRNA translation efficiency in different cell types"
+  },
+  {
+    "name": "sort_ribonn_prediction_results",
+    "service": "ribonn",
+    "description": "Sort mRNA translation efficiency results"
+  }
+]

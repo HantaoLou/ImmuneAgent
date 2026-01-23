@@ -129,7 +129,16 @@ def _classify_user_task_type_with_llm(user_input: str, llm) -> Optional[UserTask
                 return UserTaskType.GENERAL_QA
                 
     except Exception as e:
-        print(f"错误：LLM判断任务类型失败: {e}")
+        # 检查是否是认证错误（API Key 错误）
+        error_str = str(e).lower()
+        if "authentication" in error_str or "api key" in error_str or "401" in error_str:
+            print(f"⚠ LLM API Key 认证失败，将使用关键字判断降级方案: {type(e).__name__}")
+            print(f"  提示：请检查环境变量中的 API Key 是否正确配置")
+        elif "rate limit" in error_str or "429" in error_str:
+            print(f"⚠ LLM API 调用频率限制，将使用关键字判断降级方案: {type(e).__name__}")
+        else:
+            print(f"⚠ LLM判断任务类型失败，将使用关键字判断降级方案: {type(e).__name__}: {str(e)[:100]}")
+        
         return None
 
 def _classify_user_task_type(user_input: str) -> UserTaskType:
@@ -282,12 +291,10 @@ def build_supervisor_subgraph():
     """
     graph = StateGraph(SupervisorState)
     
-    # 添加节点
     graph.add_node("classify_user_description", user_description_classify_node)
     
-    # 定义流转规则
     graph.add_edge(START, "classify_user_description")
-    # TODO: 根据判别结果路由到不同的后续节点
+
     graph.add_edge("classify_user_description", END)
     
     return graph.compile()
