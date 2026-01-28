@@ -155,46 +155,6 @@
     "description": "Compare B cell responses to RSV-A/B infection, output differential genes and pathway enrichment results"
   },
   {
-    "name": "convert_csv_to_fasta",
-    "service": "file_utils",
-    "description": "Convert CSV to FASTA, automatically identify column names, support local/URL files, stream progress"
-  },
-  {
-    "name": "convert_csv_to_xlsx",
-    "service": "file_utils",
-    "description": "Convert CSV to XLSX, preserve all data, support local/URL files"
-  },
-  {
-    "name": "convert_excel_to_fasta",
-    "service": "file_utils",
-    "description": "Convert Excel to FASTA, support XLS/XLSX, automatically identify column names, stream progress"
-  },
-  {
-    "name": "convert_xls_to_csv",
-    "service": "file_utils",
-    "description": "Convert XLS to CSV, preserve all data, support local/URL files, stream progress"
-  },
-  {
-    "name": "convert_xls_to_fasta",
-    "service": "file_utils",
-    "description": "Convert XLS to FASTA, automatically identify column names, support local/URL files, stream progress"
-  },
-  {
-    "name": "convert_xlsx_to_csv",
-    "service": "file_utils",
-    "description": "Convert XLSX to CSV, preserve all data, support local/URL files, stream progress"
-  },
-  {
-    "name": "convert_xlsx_to_fasta",
-    "service": "file_utils",
-    "description": "Convert XLSX to FASTA, automatically identify column names, support local/URL files, stream progress"
-  },
-  {
-    "name": "create_csv",
-    "service": "file_utils",
-    "description": "Create blank or header-only CSV files, support temporary files, stream progress"
-  },
-  {
     "name": "create_custom_database",
     "service": "foldseek",
     "description": "Create custom Foldseek database from PDB/mmCIF files for structure search"

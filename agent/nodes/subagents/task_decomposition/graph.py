@@ -88,8 +88,11 @@ class TaskDecompositionState(BaseModel):
     parallel_task_groups: Dict[str, ParallelTaskGroup] = Field(default_factory=dict, description="Parallel task groups")
     decomposition_summary: Optional[str] = Field(default=None, description="Overall description of task decomposition")
     # Stage 3: Parameter inference results
-    parameter_inference_results: Dict[str, TaskParameterInference] = Field(default_factory=dict, description="Task parameter inference results")
-    parameter_inference_summary: Optional[str] = Field(default=None, description="Overall description of parameter inference")
+    # NOTE: Parameter inference has been moved to executor subgraph.
+    # These fields are kept for compatibility but are no longer populated here.
+    parameter_inference_results: Dict[str, TaskParameterInference] = Field(default_factory=dict, description="Task parameter inference results (deprecated, handled in executor)")
+    parameter_inference_summary: Optional[str] = Field(default=None, description="Overall description of parameter inference (deprecated, handled in executor)")
+    context_extracted_params: Dict[str, Dict[str, Dict[str, Any]]] = Field(default_factory=dict, description="Context-extracted parameters (deprecated, handled in executor)")
 
 
 # ---------------------- LLM Instantiation (using public LLM factory) ----------------------
@@ -556,8 +559,94 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
     llm = _get_llm_for_inference()
     tools_params_map = _load_tools_params_table()
     
+    # Step 1: Extract parameters from context (user input, execution plan, task descriptions)
+    # This creates a parameter table for each task/tool combination
+    print("  Step 1: Extracting parameters from context (user input, execution plan, task descriptions)...")
+    context_extracted_params = {}  # task_id -> tool_name -> param_name -> value
+    
+    for task in all_tasks:
+        task_id = task.task_id
+        task_result = task.result if isinstance(task.result, dict) else {}
+        tools = task_result.get("tools", [])
+        
+        if not tools:
+            continue
+        
+        context_extracted_params[task_id] = {}
+        
+        for tool_item in tools:
+            tool_name = None
+            if isinstance(tool_item, str):
+                tool_name = tool_item
+            elif isinstance(tool_item, dict):
+                tool_name = tool_item.get("tool_name") or tool_item.get("name", "")
+            
+            if not tool_name:
+                continue
+            
+            # Find tool parameter definition
+            tool_params = tools_params_map.get(tool_name)
+            if not tool_params:
+                # Try fuzzy matching (same logic as below)
+                for key in tools_params_map.keys():
+                    if "_" in key:
+                        parts = key.split("_", 1)
+                        if len(parts) > 1 and (parts[1] == tool_name or parts[0] == tool_name):
+                            tool_params = tools_params_map.get(key)
+                            if tool_params:
+                                break
+                    if key == tool_name:
+                        tool_params = tools_params_map.get(key)
+                        if tool_params:
+                            break
+                
+                if not tool_params:
+                    tool_name_lower = tool_name.lower()
+                    for key in tools_params_map.keys():
+                        key_lower = key.lower()
+                        if tool_name_lower in key_lower or key_lower in tool_name_lower:
+                            tool_params = tools_params_map.get(key)
+                            if tool_params:
+                                break
+            
+            if tool_params:
+                # Extract parameters from context using semantic analysis
+                extracted = _extract_parameters_from_context(
+                    state.user_input,
+                    state.execution_plan,
+                    task.content,
+                    tool_name,
+                    tool_params.get("input_params", []),
+                    llm
+                )
+                if extracted:
+                    context_extracted_params[task_id][tool_name] = extracted
+    
+    extracted_count = sum(len(tools) for tools in context_extracted_params.values())
+    print(f"  ✓ Extracted parameters from context for {extracted_count} tool(s)")
+    
+    # Print extracted parameters table
+    if context_extracted_params:
+        print(f"\n  【从上下文抽取的参数表】")
+        print(f"  {'='*70}")
+        for task_id, tools_params in context_extracted_params.items():
+            print(f"  Task {task_id}:")
+            for tool_name, extracted_params in tools_params.items():
+                print(f"    工具: {tool_name}")
+                if extracted_params:
+                    print(f"    抽取的参数:")
+                    for param_name, param_value in extracted_params.items():
+                        print(f"      - {param_name}: {param_value}")
+                else:
+                    print(f"    未抽取到参数")
+            print()
+        print(f"  {'='*70}")
+    
+    # Store extracted parameters in state for logging/debugging
+    state.context_extracted_params = context_extracted_params
+    
+    # Step 2: Infer parameters for each task using the extracted parameter table
     inference_results = {}
-    inference_summaries = []
     
     for task in all_tasks:
         task_id = task.task_id
@@ -585,6 +674,9 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
             
             if tool_name not in task_tool_names:
                 task_tool_names.append(tool_name)
+            
+            # Get extracted parameters for this task/tool combination
+            extracted_params = context_extracted_params.get(task_id, {}).get(tool_name, {})
             
             # Find tool parameter definition (supports fuzzy matching)
             tool_params = tools_params_map.get(tool_name)
@@ -626,7 +718,7 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
                         if input_param not in task_params:
                             inference_result = _infer_single_parameter(
                                 task, tool_name, input_param, None, None, None, None, None,
-                                inputs, llm, all_tasks
+                                inputs, llm, all_tasks, extracted_params
                             )
                             task_params[input_param] = inference_result
                     continue
@@ -644,10 +736,10 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
                 if not param_name or param_name in task_params:
                     continue
                 
-                # Infer single parameter (pass example value and options)
+                # Infer single parameter (pass extracted_params for priority checking)
                 inference_result = _infer_single_parameter(
                     task, tool_name, param_name, param_type, param_desc, param_deme, param_options, is_optional,
-                    inputs, llm, all_tasks
+                    inputs, llm, all_tasks, extracted_params
                 )
                 task_params[param_name] = inference_result
         
@@ -691,6 +783,199 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
     return state
 
 
+def _extract_parameters_from_context(
+    user_input: str,
+    execution_plan: Optional[str],
+    task_description: str,
+    tool_name: str,
+    tool_params: List[Dict[str, Any]],
+    llm: Optional[Any]
+) -> Dict[str, Any]:
+    """
+    Extract parameter values from user input, execution plan, and task description using semantic analysis
+    
+    Args:
+        user_input: User's original input
+        execution_plan: User-provided execution plan (if any)
+        task_description: Task description
+        tool_name: Tool name
+        tool_params: List of tool parameter definitions
+        llm: LLM instance for semantic analysis
+    
+    Returns:
+        Dictionary mapping parameter names to extracted values (if found)
+    """
+    if not llm or not tool_params:
+        return {}
+    
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        
+        # Build parameter information for LLM
+        param_info_list = []
+        for param in tool_params:
+            param_name = param.get("name", "")
+            param_type = param.get("type", "")
+            param_desc = param.get("description", "")
+            if param_name:
+                param_info = f"- {param_name}"
+                if param_type:
+                    param_info += f" (type: {param_type})"
+                if param_desc:
+                    param_info += f": {param_desc}"
+                param_info_list.append(param_info)
+        
+        # Build context information
+        context_parts = []
+        if user_input:
+            context_parts.append(f"User Input: {user_input}")
+        if execution_plan:
+            context_parts.append(f"Execution Plan: {execution_plan}")
+        if task_description:
+            context_parts.append(f"Task Description: {task_description}")
+        
+        context_text = "\n\n".join(context_parts)
+        
+        extraction_prompt = f"""Please analyze the following context information and extract parameter values for tool "{tool_name}".
+
+Context Information:
+{context_text}
+
+Tool Parameters:
+{chr(10).join(param_info_list) if param_info_list else 'No parameter information available'}
+
+Please carefully analyze the semantic meaning of the context and extract parameter values that match the tool parameters. 
+Important principles:
+1. **Semantic matching**: Match parameters based on meaning, not just keyword matching. For example:
+   - "organism" parameter can match "species", "organism name", "target organism", etc.
+   - "sequence" parameter can match "protein sequence", "DNA sequence", "input sequence", etc.
+   - "file" or "path" parameters can match file paths, file names, input files mentioned in context
+   
+2. **Context understanding**: Understand the context to determine which values correspond to which parameters:
+   - If user mentions "analyze human proteins", extract organism="human" or species="human"
+   - If user provides a file path, extract it as file/path parameter
+   - If user specifies numeric values (like "top 100 results"), extract as max_results=100
+   
+3. **Input vs Output files**: **CRITICAL** - Distinguish between input files and output files:
+   - **Input files**: Files explicitly provided by the user (e.g., "fasta文件: /path/to/file.fasta", "抗体文件: /path/to/file.csv", "抗原文件: /path/to/file.xlsx")
+     - These should be extracted as input parameters (e.g., "input_file", "sequences", "antibody_file", "antigen_file")
+   - **Output files**: Files that will be generated by the tool (e.g., "output_file_path", "output_file")
+     - **DO NOT** extract user-provided input file paths as output file parameters
+     - Only extract output file paths if the user explicitly specifies an output file path (e.g., "输出文件: /path/to/output.txt")
+     - If user does not specify output file path, **DO NOT** include output file parameters in the result
+   
+4. **File type distinction**: **CRITICAL** - When extracting file parameters, carefully distinguish between different file types and purposes:
+   - **Antibody files** (抗体文件): Files containing antibody sequences/data (e.g., CSV files with antibody information)
+     - Match to parameters like "antibody_file", "antibody_csv", "antibody_data"
+     - Example: If user says "抗体文件: /path/to/flu-simple.csv", extract antibody_file="/path/to/flu-simple.csv"
+   - **Antigen files** (抗原文件): Files containing antigen sequences/data (e.g., XLSX files with antigen information, or FASTA files with antigen sequences)
+     - Match to parameters like "antigen_file", "antigen_csv", "antigen_data", "antigen_fasta"
+     - Example: If user says "抗原文件: /path/to/flu_bind_variant_seq.xlsx", extract antigen_file="/path/to/flu_bind_variant_seq.xlsx"
+   - **Sequence files** (序列文件): Files containing sequence data (e.g., FASTA files)
+     - Match to parameters like "sequences", "input_file", "sequence_file", "fasta_file"
+     - Example: If user says "fasta文件: /path/to/flu.fasta", extract sequences="/path/to/flu.fasta" or input_file="/path/to/flu.fasta"
+   - **IMPORTANT**: Do NOT confuse antibody files with antigen files. They are different and should be extracted to different parameters.
+     - If user provides both "抗体文件" and "抗原文件", extract them to "antibody_file" and "antigen_file" respectively
+     - Do NOT use the same file path for both antibody_file and antigen_file unless the user explicitly states they are the same file
+   
+5. **Return format**: Return JSON format with parameter names as keys and extracted values as values.
+   Only include parameters that can be clearly extracted from context. If a parameter cannot be determined, do not include it.
+
+Example output:
+{{
+  "organism": "human",
+  "max_results": 100,
+  "input_file": "/path/to/file.fasta",
+  "antibody_file": "/path/to/antibody.csv",
+  "antigen_file": "/path/to/antigen.xlsx"
+}}
+
+Return only the JSON object, no additional text."""
+        
+        system_message_content = """You are a professional parameter extraction expert. Your task is to analyze context information (user input, execution plan, task description) and extract parameter values for tools using semantic understanding.
+
+Key capabilities:
+1. **Semantic matching**: Understand parameter meanings and match them with context information semantically, not just by keywords
+2. **Context comprehension**: Understand the overall context to determine which values correspond to which parameters
+3. **Accurate extraction**: Only extract values that can be clearly determined from context, avoid guessing
+4. **Input/Output distinction**: **CRITICAL** - Never extract user-provided input file paths as output file parameters. Output files are generated by tools, not provided by users.
+5. **File type distinction**: **CRITICAL** - Carefully distinguish between different file types:
+   - **Antibody files** (抗体文件): Files containing antibody data - extract to "antibody_file" or similar parameters
+   - **Antigen files** (抗原文件): Files containing antigen data - extract to "antigen_file" or similar parameters
+   - **Sequence files** (序列文件, fasta文件): Files containing sequence data - extract to "sequences", "input_file", or similar parameters
+   - **IMPORTANT**: Do NOT confuse antibody files with antigen files. They are different entities and should be extracted to different parameters.
+
+Important: 
+- Focus on semantic meaning rather than exact keyword matching to ensure parameters are correctly extracted and used by tools.
+- **DO NOT** extract input file paths (provided by user) as output file parameters (generated by tool).
+- **DO NOT** use the same file path for both antibody_file and antigen_file unless the user explicitly states they are the same file.
+- When user provides both "抗体文件" and "抗原文件", extract them to "antibody_file" and "antigen_file" respectively."""
+        
+        messages = [
+            SystemMessage(content=system_message_content),
+            HumanMessage(content=extraction_prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        response_text = response.content.strip()
+        
+        # Parse JSON response
+        extracted_params = {}
+        
+        # Try to parse entire response as JSON
+        try:
+            extracted_params = json.loads(response_text.strip())
+        except json.JSONDecodeError:
+            # Try to extract JSON from code blocks
+            import re
+            json_block_patterns = [
+                r'```json\s*(\{.*?\})\s*```',
+                r'```\s*(\{.*?\})\s*```',
+            ]
+            for pattern in json_block_patterns:
+                matches = re.findall(pattern, response_text, re.DOTALL | re.IGNORECASE)
+                for match in matches:
+                    try:
+                        extracted_params = json.loads(match)
+                        break
+                    except json.JSONDecodeError:
+                        continue
+                if extracted_params:
+                    break
+            
+            # Try to extract nested JSON object
+            if not extracted_params:
+                brace_count = 0
+                start_idx = -1
+                for i, char in enumerate(response_text):
+                    if char == '{':
+                        if brace_count == 0:
+                            start_idx = i
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0 and start_idx != -1:
+                            try:
+                                json_str = response_text[start_idx:i+1]
+                                extracted_params = json.loads(json_str)
+                                break
+                            except json.JSONDecodeError:
+                                pass
+                            start_idx = -1
+        
+        if extracted_params and isinstance(extracted_params, dict):
+            print(f"  [DEBUG] Extracted {len(extracted_params)} parameters from context for tool {tool_name}")
+            return extracted_params
+        
+    except Exception as e:
+        print(f"  ⚠ Failed to extract parameters from context: {e}")
+        if os.getenv("DEBUG_LLM_ERRORS", "false").lower() == "true":
+            import traceback
+            traceback.print_exc()
+    
+    return {}
+
+
 def _infer_single_parameter(
     task: SubTask,
     tool_name: str,
@@ -702,10 +987,19 @@ def _infer_single_parameter(
     is_optional: bool,
     inputs: List[str],
     llm: Optional[Any],
-    all_tasks: List[SubTask]
+    all_tasks: List[SubTask],
+    extracted_params: Optional[Dict[str, Any]] = None,
+    user_input: Optional[str] = None
 ) -> ParameterInferenceResult:
     """
     Infer value for a single parameter
+    
+    Priority order:
+    1. Extracted parameters from context (user input, execution plan, task description)
+    2. Dependency task outputs
+    3. Demo/recommended values from tools parameters table
+    4. LLM inference based on context
+    5. User required (fallback)
     
     Args:
         task: Current task
@@ -719,10 +1013,135 @@ def _infer_single_parameter(
         inputs: Task input list
         llm: LLM instance
         all_tasks: All tasks list (for checking parameter sources)
+        extracted_params: Pre-extracted parameters from context (user input, execution plan, task description)
     
     Returns:
         Parameter inference result
     """
+    # Priority 1: Check dependency task outputs FIRST (before context extraction)
+    # This ensures that if a parameter can be obtained from a dependency task's output,
+    # it takes precedence over context-extracted values
+    if task.dependencies:
+        # Determine if parameter is file type (needed for matching dependency outputs)
+        is_file_type = False
+        if param_type:
+            param_type_lower = param_type.lower()
+            is_file_type = any(keyword in param_type_lower for keyword in [
+                'file', 'path', 'pdb', 'csv', 'tsv', 'json', 'fasta', 'fastq', 
+                'airr', 'excel', 'xlsx', 'txt', 'dir', 'directory'
+            ])
+        
+        # Check each dependency task's outputs
+        for dep_task_id in task.dependencies:
+            dep_task = next((t for t in all_tasks if t.task_id == dep_task_id), None)
+            if dep_task:
+                dep_result = dep_task.result if isinstance(dep_task.result, dict) else {}
+                dep_outputs = dep_result.get("outputs", [])
+                
+                # Try to match parameter with dependency task outputs
+                # Match by parameter name, output name, or semantic similarity
+                for output in dep_outputs:
+                    if isinstance(output, str):
+                        # Direct match: parameter name matches output name
+                        if param_name.lower() in output.lower() or output.lower() in param_name.lower():
+                            return ParameterInferenceResult(
+                                param_name=param_name,
+                                source_type=ParameterSourceType.FROM_TASK,
+                                source_task_id=dep_task_id,
+                                source_output_key=output,
+                                reason=f"Parameter value will be obtained from dependency task {dep_task_id}'s output: {output}"
+                            )
+                        
+                        # Semantic match for file types: check if output file type matches parameter requirement
+                        if is_file_type:
+                            # Check if output file extension/type matches parameter requirement
+                            output_lower = output.lower()
+                            param_lower = param_name.lower()
+                            
+                            # Match file types: if parameter needs CSV and output is CSV, or parameter needs FASTA and output is FASTA
+                            file_type_matches = [
+                                ('csv', 'csv'), ('fasta', 'fasta'), ('xlsx', 'xlsx'), 
+                                ('json', 'json'), ('tsv', 'tsv'), ('txt', 'txt')
+                            ]
+                            for param_type_keyword, output_type_keyword in file_type_matches:
+                                if param_type_keyword in param_lower and output_type_keyword in output_lower:
+                                    return ParameterInferenceResult(
+                                        param_name=param_name,
+                                        source_type=ParameterSourceType.FROM_TASK,
+                                        source_task_id=dep_task_id,
+                                        source_output_key=output,
+                                        reason=f"Parameter value will be obtained from dependency task {dep_task_id}'s output: {output} (file type match)"
+                                    )
+                            
+                            # Special case: if parameter name contains "antigen" and output contains "antigen"
+                            # This handles cases where task outputs antigen data (even if format differs slightly)
+                            if 'antigen' in param_lower and 'antigen' in output_lower:
+                                return ParameterInferenceResult(
+                                    param_name=param_name,
+                                    source_type=ParameterSourceType.FROM_TASK,
+                                    source_task_id=dep_task_id,
+                                    source_output_key=output,
+                                    reason=f"Parameter value will be obtained from dependency task {dep_task_id}'s output: {output} (semantic match: antigen)"
+                                )
+                            
+                            # Special case: if parameter name contains "antibody" and output contains "antibody"
+                            if 'antibody' in param_lower and 'antibody' in output_lower:
+                                return ParameterInferenceResult(
+                                    param_name=param_name,
+                                    source_type=ParameterSourceType.FROM_TASK,
+                                    source_task_id=dep_task_id,
+                                    source_output_key=output,
+                                    reason=f"Parameter value will be obtained from dependency task {dep_task_id}'s output: {output} (semantic match: antibody)"
+                                )
+                            
+                            # Special case: if parameter is input_file and output matches task description
+                            # This handles generic input_file parameters that should use dependency outputs
+                            if 'input' in param_lower and 'file' in param_lower:
+                                # If this is a file input parameter and there's a dependency output, use it
+                                # This is a fallback for cases where parameter name doesn't match output name
+                                return ParameterInferenceResult(
+                                    param_name=param_name,
+                                    source_type=ParameterSourceType.FROM_TASK,
+                                    source_task_id=dep_task_id,
+                                    source_output_key=output,
+                                    reason=f"Parameter value will be obtained from dependency task {dep_task_id}'s output: {output} (generic input file match)"
+                                )
+    
+    # Priority 2: Check extracted parameters from context (user input, execution plan, task description)
+    # Only use context-extracted values if not available from dependency tasks
+    if extracted_params and param_name in extracted_params:
+        extracted_value = extracted_params[param_name]
+        if extracted_value is not None:
+            # Validation: Check if this is an output file parameter being set to an input file path
+            # Output file parameters should not be set to user-provided input file paths
+            is_output_param = any(keyword in param_name.lower() for keyword in ['output', 'result', 'save', 'export'])
+            input_file_indicators = ['input', '输入', 'file', '文件', 'fasta', 'csv', 'xlsx', 'txt']
+            
+            if is_output_param and isinstance(extracted_value, str):
+                # Check if the value looks like an input file (user-provided file path)
+                # If it's mentioned in user input as an input file, don't use it as output
+                if any(indicator in str(extracted_value).lower() for indicator in input_file_indicators):
+                    # This might be an input file being incorrectly extracted as output
+                    # Skip this extraction and let it fall through to other inference methods
+                    print(f"  [WARN] Parameter {param_name} extracted value {extracted_value} appears to be an input file, skipping for output parameter")
+                    # Don't return here, let it fall through to other inference methods
+                else:
+                    # Valid output file path, use it
+                    return ParameterInferenceResult(
+                        param_name=param_name,
+                        source_type=ParameterSourceType.DETERMINED,
+                        value=extracted_value,
+                        reason=f"Parameter value extracted from user input/execution plan/task description: {extracted_value}"
+                    )
+            else:
+                # Not an output parameter, or not a string, use the extracted value
+                return ParameterInferenceResult(
+                    param_name=param_name,
+                    source_type=ParameterSourceType.DETERMINED,
+                    value=extracted_value,
+                    reason=f"Parameter value extracted from user input/execution plan/task description: {extracted_value}"
+                )
+    
     # Determine if parameter is file type
     is_file_type = False
     if param_type:
@@ -732,7 +1151,7 @@ def _infer_single_parameter(
             'airr', 'excel', 'xlsx', 'txt', 'dir', 'directory'
         ])
     
-    # If not file type and has example value, prefer using example value as recommended value
+    # Priority 3: If not file type and has example value, use example value as recommended value
     if not is_file_type and param_deme:
         # If example value is not empty, directly use as determined parameter value
         return ParameterInferenceResult(
@@ -742,24 +1161,7 @@ def _infer_single_parameter(
             reason=f"Using recommended value from tools parameters table: {param_deme}"
         )
     
-    # First check if parameter can be obtained from dependency task results
-    if task.dependencies:
-        for dep_task_id in task.dependencies:
-            dep_task = next((t for t in all_tasks if t.task_id == dep_task_id), None)
-            if dep_task:
-                dep_result = dep_task.result if isinstance(dep_task.result, dict) else {}
-                dep_outputs = dep_result.get("outputs", [])
-                # Check if parameter name matches dependency task's output
-                if param_name in dep_outputs or any(param_name.lower() in str(output).lower() for output in dep_outputs):
-                    return ParameterInferenceResult(
-                        param_name=param_name,
-                        source_type=ParameterSourceType.FROM_TASK,
-                        source_task_id=dep_task_id,
-                        source_output_key=param_name,
-                        reason=f"Parameter value will be obtained from task {dep_task_id}'s execution result"
-                    )
-    
-    # If no LLM, mark as user required
+    # Priority 4: Use LLM to infer parameter values (if no LLM, mark as user required)
     if not llm:
         return ParameterInferenceResult(
             param_name=param_name,
@@ -813,6 +1215,7 @@ def _infer_single_parameter(
             elif "optional" in type_lower:
                 type_guidance = "\nHint: This is an optional parameter, if not explicitly specified in the task description, you can provide None or a reasonable default value."
         
+        # Note: extracted_params already checked, so we don't need to check again here
         inference_prompt = f"""
 Please infer the parameter value based on the following information:
 
@@ -823,6 +1226,8 @@ Parameter type: {param_type or 'Unknown'}
 Parameter description: {param_desc or 'None'}{recommendation_hint}{options_hint}{type_guidance}
 Task input list: {inputs}
 Dependency task information: {chr(10).join(dep_tasks_info) if dep_tasks_info else 'No dependency tasks'}
+
+Note: Parameters have already been checked from user input, execution plan, and task description. If not found there, please infer based on the following principles.
 
 Please infer the value of this parameter. Return JSON format, supporting three cases:
 1. If parameter value can be determined (including inferred from task description, using recommended value, or providing common default value based on parameter type): {{"source_type": "determined", "value": <parameter_value>, "reason": "<inference_reason>"}}
@@ -1809,36 +2214,12 @@ def task_decomposition_output_mapper(
     if subgraph_output.parallel_task_groups:
         global_state.parallel_task_groups = subgraph_output.parallel_task_groups
     
-    # Store decomposition summary and parameter inference results in merged_result
+    # Store decomposition summary in merged_result
     if not global_state.merged_result:
         global_state.merged_result = {}
     
     if subgraph_output.decomposition_summary:
         global_state.merged_result["decomposition_summary"] = subgraph_output.decomposition_summary
-    
-    # Store parameter inference results (for executor use)
-    if hasattr(subgraph_output, 'parameter_inference_results') and subgraph_output.parameter_inference_results:
-        # Convert parameter inference results to dict format for storage
-        parameter_inference_dict = {}
-        for task_id, inference_result in subgraph_output.parameter_inference_results.items():
-            parameter_inference_dict[task_id] = {
-                'tool_name': inference_result.tool_name,
-                'parameters': {
-                    param_name: {
-                        'source_type': param_result.source_type.value if hasattr(param_result.source_type, 'value') else str(param_result.source_type),
-                        'value': param_result.value,
-                        'source_task_id': param_result.source_task_id,
-                        'source_output_key': param_result.source_output_key,
-                        'user_prompt': param_result.user_prompt,
-                        'reason': param_result.reason
-                    }
-                    for param_name, param_result in inference_result.parameters.items()
-                }
-            }
-        global_state.merged_result["parameter_inference_results"] = parameter_inference_dict
-    
-    if hasattr(subgraph_output, 'parameter_inference_summary') and subgraph_output.parameter_inference_summary:
-        global_state.merged_result["parameter_inference_summary"] = subgraph_output.parameter_inference_summary
     
     # Return updated global state
     return global_state
@@ -1847,12 +2228,12 @@ def task_decomposition_output_mapper(
 # ---------------------- Build Task Decomposition Agent Subgraph ----------------------
 def build_task_decomposition_subgraph():
     """
-    Build task decomposition Agent subgraph (four-stage decomposition)
+    Build task decomposition Agent subgraph (three-stage decomposition)
     
     Stage 0: Coarse decomposition (determine required tool types, no tool list passed)
     Stage 1: Fine decomposition (detailed task decomposition and tool matching based on filtered tools)
     Stage 2: Parallel task inference (infer parallel relationships based on fine decomposition results)
-    Stage 3: Parameter inference (infer task parameter values, supports three result types: determined value, from task, user input required)
+    Parameter inference is handled in executor subgraph.
     
     Returns:
         Compiled subgraph
@@ -1863,14 +2244,12 @@ def build_task_decomposition_subgraph():
     graph.add_node("coarse_decompose", coarse_decomposition_node)  # Stage 0: Coarse decomposition
     graph.add_node("fine_decompose", fine_decomposition_node)  # Stage 1: Fine decomposition
     graph.add_node("infer_parallel", parallel_inference_node)  # Stage 2: Parallel inference
-    graph.add_node("infer_parameters", infer_parameters_node)  # Stage 3: Parameter inference
     
     # Define flow rules
     graph.add_edge(START, "coarse_decompose")
     graph.add_edge("coarse_decompose", "fine_decompose")  # Enter fine decomposition after coarse decomposition
     graph.add_edge("fine_decompose", "infer_parallel")  # Enter parallel inference after fine decomposition
-    graph.add_edge("infer_parallel", "infer_parameters")  # Enter parameter inference after parallel inference
-    graph.add_edge("infer_parameters", END)  # End after parameter inference
+    graph.add_edge("infer_parallel", END)  # End after parallel inference
     
     return graph.compile()
 

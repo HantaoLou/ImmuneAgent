@@ -396,7 +396,7 @@ class TrajectoryPool:
             Compressed trajectory list
         """
         try:
-            from agent.utils.llm_factory import create_reasoning_advanced_llm
+            from utils.llm_factory import create_reasoning_advanced_llm
             llm = create_reasoning_advanced_llm()
         except ImportError:
             # If cannot import, use simple compression

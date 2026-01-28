@@ -44,10 +44,6 @@
     "description": "NetTCR TCR binding prediction service for TCR-epitope binding prediction and validation"
   },
   {
-    "service_id": "file_utils",
-    "description": "File utility service including format conversion (CSV/XLSX/FASTA), file download, data merging"
-  },
-  {
     "service_id": "airr",
     "description": "AIRR library service for BCR sequence data download, search, and statistical analysis"
   },

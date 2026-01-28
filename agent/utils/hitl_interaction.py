@@ -117,6 +117,12 @@ def console_interact_for_parameters(interrupt_data: Dict[str, Any]) -> Dict[str,
                         key = param_name
                         value = user_input
                     
+                    # 检查 value 是否为 "skip"
+                    if value.lower() == 'skip':
+                        print(f"  跳过参数 {param}")
+                        task_responses[param] = None
+                        break
+                    
                     # 验证参数名是否匹配
                     if key != param_name and key != param:
                         print(f"  警告：参数名不匹配（期望: {param_name} 或 {param}，实际: {key}）")

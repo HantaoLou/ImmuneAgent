@@ -1,7 +1,7 @@
 # graph/main_graph.py
 from typing import Dict, Optional, Callable, Any
 import json
-from agent.nodes.subagents.task_decomposition.graph import (
+from nodes.subagents.task_decomposition.graph import (
     task_decomposition_input_mapper, 
     task_decomposition_output_mapper,
     build_task_decomposition_subgraph
@@ -31,7 +31,7 @@ def immunity_node(state: GlobalState) -> GlobalState:
     Returns:
         Updated global state
     """
-    from agent.nodes.subagents.immunity.graph import (
+    from nodes.subagents.immunity.graph import (
         build_immunity_subgraph,
         immunity_input_mapper,
         immunity_output_mapper
@@ -66,14 +66,14 @@ def executor_node(state: GlobalState, hitl_callback=None, use_file_interaction=F
     Returns:
         Updated global state
     """
-    from agent.nodes.subagents.executor.graph import (
+    from nodes.subagents.executor.graph import (
         build_executor_subgraph,
         executor_input_mapper,
         executor_output_mapper,
         execute_executor_with_interrupt_support,
         resume_executor_after_interrupt
     )
-    from agent.utils.hitl_interaction import handle_hitl_interrupt
+    from utils.hitl_interaction import handle_hitl_interrupt
     
     # Build executor subgraph
     executor_subgraph = build_executor_subgraph()
@@ -147,7 +147,7 @@ def executor_node(state: GlobalState, hitl_callback=None, use_file_interaction=F
                         ]:
                             executor_state.task_status_map[task.task_id] = "failed"
                             if task.task_id not in executor_state.task_results:
-                                from agent.nodes.subagents.executor.graph import TaskExecutionResult, ExecutorTaskStatus
+                                from nodes.subagents.executor.graph import TaskExecutionResult, ExecutorTaskStatus
                                 executor_state.task_results[task.task_id] = TaskExecutionResult(
                                     task_id=task.task_id,
                                     status=ExecutorTaskStatus.FAILED,
@@ -200,6 +200,9 @@ def build_main_graph():
     # Main graph node 3: Immunology task node (placeholder)
     main_graph.add_node("immunity", immunity_node)
     
+    # Executor node (executes tasks after decomposition)
+    main_graph.add_node("executor", executor_node)
+    
     # Task decomposition node
     def run_task_decomposition_node(state: GlobalState) -> GlobalState:
         # Build task decomposition subgraph
@@ -224,20 +227,19 @@ def build_main_graph():
         
         if user_task_type == UserTaskType.IMMUNOLOGY_TASK:
             return "immunity"
-        elif user_task_type == UserTaskType.EXECUTE_PLAN:
-            return "executor"
-        elif user_task_type == UserTaskType.GENERAL_QA:
+        if user_task_type == UserTaskType.EXECUTE_PLAN:
+            return "task_decomposition"
+        if user_task_type == UserTaskType.GENERAL_QA:
             return "general_qa"
-        else:
-            # Default route to general Q&A
-            return "general_qa"
+        # Default route to general Q&A
+        return "general_qa"
     
     main_graph.add_conditional_edges(
         "supervisor", 
         post_supervisor_router, 
         {
             "immunity": "immunity",
-            "executor": "task_decomposition",
+            "task_decomposition": "task_decomposition",
             "general_qa": "general_qa"
         }
     )
@@ -245,17 +247,19 @@ def build_main_graph():
     # After task decomposition, if task list is generated, call immunity to generate experiment plan
     def post_task_decomposition_router(state: GlobalState) -> str:
         """
-        After task decomposition, if there's a task list, generate experiment plan; otherwise end
+        After task decomposition, route based on task type; otherwise end
         """
-        if state.subtasks or state.parallel_task_groups:
-            return "immunity_plan"
-        else:
+        if not (state.subtasks or state.parallel_task_groups):
             return END
+        if state.user_task_type == UserTaskType.EXECUTE_PLAN:
+            return "executor"
+        return "immunity_plan"
     
     main_graph.add_conditional_edges(
         "task_decomposition",
         post_task_decomposition_router,
         {
+            "executor": "executor",
             "immunity_plan": "immunity_plan",
             END: END
         }
@@ -268,7 +272,7 @@ def build_main_graph():
         
         Use immunity subgraph to generate executable experiment plan (don't execute tasks)
         """
-        from agent.nodes.subagents.immunity.graph import (
+        from nodes.subagents.immunity.graph import (
             build_immunity_subgraph,
             immunity_input_mapper,
             immunity_output_mapper
@@ -292,5 +296,6 @@ def build_main_graph():
     main_graph.add_edge("general_qa", END)
     main_graph.add_edge("immunity", END)
     main_graph.add_edge("immunity_plan", END)
+    main_graph.add_edge("executor", END)
 
     return main_graph.compile()

@@ -16,8 +16,8 @@ from datetime import datetime
 from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel
 
-from agent.state import GlobalState
-from agent.utils.llm_factory import (
+from state import GlobalState
+from utils.llm_factory import (
     create_reasoning_advanced_llm,
     create_reasoning_llm
 )
@@ -795,16 +795,10 @@ def immunity_input_mapper(global_state: GlobalState) -> ImmunityState:
     Returns:
         Immunity subgraph state
     """
-    # Get parameter inference results
-    parameter_inference_results = {}
-    if global_state.merged_result:
-        parameter_inference_results = global_state.merged_result.get("parameter_inference_results", {})
-    
     immunity_state = ImmunityState(
         original_question=global_state.user_input,
         subtasks=global_state.subtasks,
         parallel_task_groups=global_state.parallel_task_groups,
-        parameter_inference_results=parameter_inference_results,
         sandbox_dir=global_state.sandbox_dir,
         parent_state=global_state
     )

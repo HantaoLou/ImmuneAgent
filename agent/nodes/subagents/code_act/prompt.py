@@ -30,7 +30,7 @@ Based on the provided MCP tool information and parameters, generate Python code 
 
 Standard call pattern:
 ```python
-from agent.utils.mcp_helper import invoke_mcp_tool_sync
+from utils.mcp_helper import invoke_mcp_tool_sync
 
 # Call MCP tool
 tool_result = invoke_mcp_tool_sync(
@@ -58,7 +58,7 @@ else:
 
 You must only return executable Python code, do not include any explanations, markdown code block markers, or other text.
 Code should:
-- Import `from agent.utils.mcp_helper import invoke_mcp_tool_sync`
+- Import `from utils.mcp_helper import invoke_mcp_tool_sync`
 - Use `invoke_mcp_tool_sync` to call MCP tools
 - Process execution results
 - Set result variable (dictionary format, containing status, output, etc.)
@@ -105,7 +105,7 @@ Tool description: {tool_description}
 {params_str}
 
 # Requirements
-1. Use `from agent.utils.mcp_helper import invoke_mcp_tool_sync` to import MCP tool call function
+1. Use `from utils.mcp_helper import invoke_mcp_tool_sync` to import MCP tool call function
 2. Use `invoke_mcp_tool_sync(tool_name="{tool_name}", parameters=<parameter_dict>)` to call the tool
 3. Process execution result (check `tool_result["status"]`)
 4. Set result variable in the following format:
@@ -117,7 +117,7 @@ Tool description: {tool_description}
 
 # Example Code Structure
 ```python
-from agent.utils.mcp_helper import invoke_mcp_tool_sync
+from utils.mcp_helper import invoke_mcp_tool_sync
 
 tool_result = invoke_mcp_tool_sync(
     tool_name="{tool_name}",

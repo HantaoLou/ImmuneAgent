@@ -22,9 +22,9 @@ agent_dir = Path(__file__).parent.parent.parent.parent
 if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
-from agent.state import SubTask, GlobalState
-from agent.utils.llm_factory import create_code_llm
-from agent.nodes.subagents.code_act.prompt import (
+from state import SubTask, GlobalState
+from utils.llm_factory import create_code_llm
+from nodes.subagents.code_act.prompt import (
     MCP_TOOL_CODE_SYSTEM_PROMPT,
     get_mcp_tool_code_user_prompt,
     CODEACT_SYSTEM_PROMPT,
@@ -34,12 +34,12 @@ from agent.nodes.subagents.code_act.prompt import (
     FIX_PARAMETER_SYSTEM_PROMPT,
     get_fix_parameter_user_prompt
 )
-from agent.nodes.subagents.code_act.trajectory import (
+from nodes.subagents.code_act.trajectory import (
     CodeTrajectory,
     TrajectoryPool,
     TrajectoryStatus
 )
-from agent.nodes.subagents.code_act.revision import (
+from nodes.subagents.code_act.revision import (
     RevisionPlan,
     RevisionStrategy,
     create_revision_plan,
@@ -286,6 +286,29 @@ def _check_sandbox_available(state: CodeActState) -> tuple[bool, str]:
         return False, sandbox_dir or ""
 
 
+def _build_subprocess_kwargs() -> Dict[str, Any]:
+    """Build subprocess kwargs with resource limits when supported."""
+    kwargs: Dict[str, Any] = {}
+    if os.name != "nt":
+        try:
+            import resource
+            max_memory_mb = int(os.getenv("CODEACT_MAX_MEMORY_MB", "0"))
+            max_cpu_seconds = int(os.getenv("CODEACT_MAX_CPU_SECONDS", "0"))
+
+            def _set_limits():
+                if max_memory_mb > 0:
+                    bytes_limit = max_memory_mb * 1024 * 1024
+                    resource.setrlimit(resource.RLIMIT_AS, (bytes_limit, bytes_limit))
+                if max_cpu_seconds > 0:
+                    resource.setrlimit(resource.RLIMIT_CPU, (max_cpu_seconds, max_cpu_seconds))
+
+            if max_memory_mb > 0 or max_cpu_seconds > 0:
+                kwargs["preexec_fn"] = _set_limits
+        except Exception:
+            pass
+    return kwargs
+
+
 def _ensure_code_executable(code: str, has_sandbox: bool, sandbox_dir: str = None) -> str:
     """
     Ensure code is executable, add necessary wrapping and error handling
@@ -298,6 +321,8 @@ def _ensure_code_executable(code: str, has_sandbox: bool, sandbox_dir: str = Non
     Returns:
         Executable code
     """
+    result_marker = "__CODEACT_RESULT__"
+
     # If code already contains result setting, return directly
     if "result" in code and ("=" in code.split("result")[0] or "result = {" in code):
         # Ensure code has complete error handling
@@ -316,7 +341,19 @@ except Exception as e:
         "error_type": type(e).__name__
     }}
 """
-            return wrapped_code.strip()
+            code = wrapped_code.strip()
+        # Ensure result marker is printed for subprocess parsing
+        if result_marker not in code:
+            code += f"""
+try:
+    import json as _json
+    print("{result_marker}" + _json.dumps(result, ensure_ascii=False))
+except Exception:
+    try:
+        print("{result_marker}" + str(result))
+    except Exception:
+        pass
+"""
         return code
     
     # If code doesn't have result setting, add it
@@ -335,7 +372,19 @@ except Exception as e:
         "error_type": type(e).__name__
     }}
 """
-        return wrapped_code.strip()
+        code = wrapped_code.strip()
+
+    if result_marker not in code:
+        code += f"""
+try:
+    import json as _json
+    print("{result_marker}" + _json.dumps(result, ensure_ascii=False))
+except Exception:
+    try:
+        print("{result_marker}" + str(result))
+    except Exception:
+        pass
+"""
     
     return code
 
@@ -652,6 +701,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
     Also records execution trajectory (SE-Agent style).
     """
     import time
+    import os
     
     code = state.generated_code
     if not code:
@@ -675,106 +725,105 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
     
     # Check sandbox environment
     has_sandbox, sandbox_dir = _check_sandbox_available(state)
+    allow_unsafe = os.getenv("ALLOW_UNSAFE_CODEACT", "false").lower() == "true"
+    if not has_sandbox and not allow_unsafe:
+        state.execution_result = {
+            "status": "failed",
+            "error": "Sandbox unavailable and unsafe execution is disabled (set ALLOW_UNSAFE_CODEACT=true to override)"
+        }
+        if state.current_trajectory:
+            _finalize_trajectory(state.current_trajectory, state.execution_result, 0.0)
+            _save_trajectory_to_pool(state, state.current_trajectory)
+            state.current_trajectory = None
+        return state
     print(f"  ℹ Sandbox environment check: available={has_sandbox}, directory={sandbox_dir}")
     
     try:
         if has_sandbox:
-            # Have sandbox environment: execute in sandbox directory
+            # Execute code in sandbox via subprocess for isolation
             import os
             from pathlib import Path
+            import json as json_module
             
-            original_cwd = os.getcwd()
-            print(f"  ℹ Switching to sandbox directory: {sandbox_dir} (original directory: {original_cwd})")
+            result_marker = "__CODEACT_RESULT__"
+            timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "120"))
+            
+            sandbox_path = Path(sandbox_dir)
+            sandbox_path.mkdir(parents=True, exist_ok=True)
+            code_file = sandbox_path / f"codeact_{state.task.task_id}.py"
+            code_file.write_text(code, encoding="utf-8")
+            
+            venv_python = _find_and_activate_venv(agent_dir)
+            python_exe = str(venv_python) if venv_python else sys.executable
+            
+            env = os.environ.copy()
+            agent_dir_str = str(agent_dir)
+            existing_pythonpath = env.get("PYTHONPATH", "")
+            if agent_dir_str not in existing_pythonpath:
+                sep = ";" if os.name == "nt" else ":"
+                env["PYTHONPATH"] = agent_dir_str + (sep + existing_pythonpath if existing_pythonpath else "")
+            # Force UTF-8 to avoid Windows GBK encoding errors in subprocess output
+            env.setdefault("PYTHONIOENCODING", "utf-8")
+            env.setdefault("PYTHONUTF8", "1")
+            
+            print(f"  🔄 Starting code execution (sandbox subprocess mode)...")
             try:
-                # Switch to sandbox directory
-                os.chdir(sandbox_dir)
-                
-                # Execute code in sandbox environment
-                # Important: Activate specified virtual environment before executing code
-                import sys
-                import site
-                
-                # 1. Find and activate virtual environment
-                venv_python = _find_and_activate_venv(agent_dir)
-                if venv_python:
-                    _activate_venv_in_sys_path(venv_python)
-                else:
-                    print(f"  ⚠ Virtual environment not found, will use current Python environment")
-                
-                # 2. Add agent directory to path (if not already)
-                agent_dir_str = str(agent_dir)
-                if agent_dir_str not in sys.path:
-                    sys.path.insert(0, agent_dir_str)
-                
-                # 3. Ensure all necessary paths are in sys.path
-                try:
-                    # If virtual environment found, ensure its site-packages is in path
-                    if venv_python:
-                        venv_dir = venv_python.parent.parent
-                        if os.name == 'nt':
-                            venv_site_packages = venv_dir / "Lib" / "site-packages"
-                        else:
-                            import sysconfig
-                            venv_site_packages = Path(sysconfig.get_path('purelib', vars={'base': str(venv_dir)}))
-                        
-                        if venv_site_packages.exists() and str(venv_site_packages) not in sys.path:
-                            sys.path.insert(0, str(venv_site_packages))
-                    
-                    # Also add system site-packages (as backup)
-                    system_site_packages = site.getsitepackages()
-                    for sp in system_site_packages:
-                        if sp not in sys.path:
-                            sys.path.append(sp)  # Add to end, prioritize virtual environment packages
-                except Exception as e:
-                    print(f"  ⚠ Error configuring site-packages: {e}")
-                
-                # 4. Verify virtual environment is properly activated
-                try:
-                    import langchain_mcp_adapters
-                    print(f"  ✓ Virtual environment activated, can import langchain-mcp-adapters")
-                except ImportError:
-                    print(f"  ⚠ Warning: Cannot import langchain-mcp-adapters, virtual environment may not be properly activated")
-                
-                # Pre-import mcp_helper so generated code can use it
-                # This validates at import time if langchain-mcp-adapters is available
-                try:
-                    from agent.utils.mcp_helper import invoke_mcp_tool_sync
-                    local_namespace = {
-                        "__sandbox_dir__": sandbox_dir,
-                        "__original_cwd__": original_cwd,
-                        "invoke_mcp_tool_sync": invoke_mcp_tool_sync,
-                        "__builtins__": __builtins__
-                    }
-                except ImportError as e:
-                    import traceback
-                    print(f"  ⚠ Cannot import mcp_helper: {e}")
-                    print(f"     Error details: {traceback.format_exc()}")
-                    print(f"     Python path: {sys.path[:5]}...")
-                    local_namespace = {
-                        "__sandbox_dir__": sandbox_dir,
-                        "__original_cwd__": original_cwd,
-                        "__builtins__": __builtins__
-                    }
-                
-                print(f"  🔄 Starting code execution (sandbox mode)...")
-                exec(code, {"__builtins__": __builtins__}, local_namespace)
-                print(f"  ✓ Code execution completed")
-                
-                # Extract execution result
-                result = local_namespace.get("result", "Execution successful, no return result")
-                output = str(local_namespace.get("output", result))
-                
+                completed = subprocess.run(
+                    [python_exe, str(code_file)],
+                    cwd=str(sandbox_path),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=env,
+                    timeout=timeout_seconds,
+                    **_build_subprocess_kwargs()
+                )
+            except subprocess.TimeoutExpired as e:
                 state.execution_result = {
-                    "status": "success",
-                    "output": output,
-                    "result": result,
+                    "status": "failed",
+                    "error": f"Execution timed out after {timeout_seconds}s",
+                    "stderr": (e.stderr or "")[-1000:] if hasattr(e, "stderr") else "",
+                    "returncode": None,
                     "sandbox_dir": sandbox_dir
                 }
-                print(f"  ✓ Execution successful, result: {output[:100]}...")
-            finally:
-                # Restore original working directory
-                os.chdir(original_cwd)
-                print(f"  ℹ Restored working directory: {original_cwd}")
+                print(f"  ✗ Execution timed out after {timeout_seconds}s")
+                return state
+            
+            stdout = completed.stdout or ""
+            stderr = completed.stderr or ""
+            parsed_result = None
+            for line in stdout.splitlines():
+                if result_marker in line:
+                    payload = line.split(result_marker, 1)[1]
+                    try:
+                        parsed_result = json_module.loads(payload)
+                    except Exception:
+                        parsed_result = payload
+            
+            error = None
+            error_type = None
+            if isinstance(parsed_result, dict):
+                status = parsed_result.get("status", "success")
+                output = parsed_result.get("output")
+                error = parsed_result.get("error")
+                error_type = parsed_result.get("error_type")
+            else:
+                status = "failed" if completed.returncode != 0 else "success"
+                output = parsed_result or (stdout[-1000:] if stdout else stderr[-1000:])
+                if completed.returncode != 0:
+                    error = (stderr[-2000:] if stderr else stdout[-2000:]) or "Execution failed"
+            
+            state.execution_result = {
+                "status": status,
+                "output": output,
+                "error": error,
+                "error_type": error_type,
+                "stderr": stderr[-1000:] if stderr else "",
+                "returncode": completed.returncode,
+                "sandbox_dir": sandbox_dir
+            }
+            print(f"  ✓ Execution completed, status={status}, returncode={completed.returncode}")
         else:
             # No sandbox environment: fallback, execute directly
             print(f"  ⚠ Using fallback execution (no sandbox environment)")
@@ -795,6 +844,17 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             agent_dir_str = str(agent_dir)
             if agent_dir_str not in sys.path:
                 sys.path.insert(0, agent_dir_str)
+            
+            # Ensure UTF-8 output in fallback mode (avoid Windows GBK issues)
+            os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+            os.environ.setdefault("PYTHONUTF8", "1")
+            try:
+                if hasattr(sys.stdout, "reconfigure"):
+                    sys.stdout.reconfigure(encoding="utf-8")
+                if hasattr(sys.stderr, "reconfigure"):
+                    sys.stderr.reconfigure(encoding="utf-8")
+            except Exception:
+                pass
             
             # 3. Ensure all necessary paths are in sys.path
             try:
@@ -827,7 +887,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             
             # Pre-import mcp_helper so generated code can use it
             try:
-                from agent.utils.mcp_helper import invoke_mcp_tool_sync
+                from utils.mcp_helper import invoke_mcp_tool_sync
                 local_namespace = {
                     "invoke_mcp_tool_sync": invoke_mcp_tool_sync,
                     "__builtins__": __builtins__

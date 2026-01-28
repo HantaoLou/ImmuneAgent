@@ -70,19 +70,19 @@ def user_description_classify_node(state: SupervisorState) -> SupervisorState:
     state.user_task_type = task_type
     
     # 2. Check and process uploaded files
-    # if state.uploaded_files:
-    #     # Ensure sandbox directory exists
-    #     sandbox_path = Path(state.sandbox_dir)
-    #     sandbox_path.mkdir(parents=True, exist_ok=True)
+    if state.uploaded_files:
+        # Ensure sandbox directory exists
+        sandbox_path = Path(state.sandbox_dir)
+        sandbox_path.mkdir(parents=True, exist_ok=True)
         
-    #     # Download/copy files to sandbox directory
-    #     for uploaded_file_path in state.uploaded_files:
-    #         sandbox_file_path = _download_file_to_sandbox(
-    #             uploaded_file_path, 
-    #             sandbox_path
-    #         )
-    #         if sandbox_file_path:
-    #             state.sandbox_file_paths[uploaded_file_path] = sandbox_file_path
+        # Download/copy files to sandbox directory
+        for uploaded_file_path in state.uploaded_files:
+            sandbox_file_path = _download_file_to_sandbox(
+                uploaded_file_path, 
+                sandbox_path
+            )
+            if sandbox_file_path:
+                state.sandbox_file_paths[uploaded_file_path] = sandbox_file_path
     
     return state
 
@@ -164,11 +164,17 @@ def _classify_user_task_type(user_input: str) -> UserTaskType:
     user_input_lower = user_input.lower()
     
     # Check execution plan related keywords
-    if any(keyword in user_input_lower for keyword in ["execute", "plan", "step", "follow", "according to", "instruction"]):
+    if any(keyword in user_input_lower for keyword in [
+        "execute", "plan", "step", "follow", "according to", "instruction",
+        "执行", "计划", "步骤", "按照", "依据", "流程"
+    ]):
         return UserTaskType.EXECUTE_PLAN
     
     # Check immunology related keywords
-    if any(keyword in user_input_lower for keyword in ["immun", "antigen", "antibody", "vaccine", "immune system", "immune cell", "t cell", "b cell", "immune response"]):
+    if any(keyword in user_input_lower for keyword in [
+        "immun", "antigen", "antibody", "vaccine", "immune system", "immune cell", "t cell", "b cell", "immune response",
+        "免疫", "抗原", "抗体", "疫苗", "免疫系统", "免疫细胞", "t细胞", "b细胞", "免疫反应"
+    ]):
         return UserTaskType.IMMUNOLOGY_TASK
     
     # Default to general Q&A
@@ -235,13 +241,14 @@ def supervisor_input_mapper(global_state: GlobalState) -> SupervisorState:
     Returns:
         SupervisorState: Subgraph state
     """
+    uploaded_files = list(global_state.file_paths.keys()) if global_state.file_paths else []
     return SupervisorState(
         user_input=global_state.user_input,
         user_task_type=None,  # Will be determined in subgraph
-        uploaded_files=[],  # TODO: Get uploaded file information from global_state
-        sandbox_file_paths={},
+        uploaded_files=uploaded_files,
+        sandbox_file_paths=dict(global_state.file_paths) if global_state.file_paths else {},
         sandbox_dir=global_state.sandbox_dir,
-        execution_plan=None  # TODO: Extract execution plan from global_state (if any)
+        execution_plan=global_state.execution_plan
     )
 
 

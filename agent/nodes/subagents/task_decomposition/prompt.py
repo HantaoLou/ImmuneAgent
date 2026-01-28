@@ -133,7 +133,13 @@ Decompose the user's execution plan into a structured, serialized task list. Eac
    - Don't miss critical links
    - Consider edge cases and exception handling
 
-4. **Dependencies**:
+4. **File Format Check**:
+   - **IMPORTANT**: Before creating file format conversion tasks, check if the user input already provides files in the required format
+   - If a tool requires a specific file format (e.g., FASTA), and the user input already contains a file with that format (e.g., "flu.fasta"), DO NOT create a conversion task
+   - Only create format conversion tasks when the input file format does NOT match the required format
+   - Example: If user provides "flu.fasta" and tool requires FASTA format, use the existing file directly, do NOT create convert_csv_to_fasta or convert_xlsx_to_fasta tasks
+
+5. **Dependencies**:
    - Clearly identify dependencies between tasks
    - Ensure dependencies accurately reflect data flow and execution order
 
@@ -298,10 +304,13 @@ Please perform Stage 1 task decomposition based on the above experimental plan a
 1. Decompose the experimental plan into detailed, specific steps by experimental stage
 2. For each step, match the most suitable tool from the tool registry
 3. Extract executable tools (from the tool's "tool" field or "name" field)
-4. Build structured tasks, including complete task information (tools, inputs, outputs, parameters, etc.)
-5. **Identify and accurately set dependencies between tasks** (dependencies field)
+4. **Check file formats**: Before creating file conversion tasks, verify if the user input already provides files in the required format. Only create conversion tasks when the input format does NOT match the required format.
+5. Build structured tasks, including complete task information (tools, inputs, outputs, parameters, etc.)
+6. **Identify and accurately set dependencies between tasks** (dependencies field)
 
-**Important:** This stage only needs to return serialized task list and dependencies, without considering parallel execution.
+**Important:** 
+- This stage only needs to return serialized task list and dependencies, without considering parallel execution.
+- **DO NOT create unnecessary file format conversion tasks if the user already provides files in the required format.**
 
 Please strictly follow the output format specification in the system prompt and return the task decomposition results in JSON format."""
 

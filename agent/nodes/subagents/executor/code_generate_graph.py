@@ -1,7 +1,10 @@
+from typing import Dict, Any
+import os
 from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel, Field
 import json
 from utils.code_cache_manager import CodeCacheManager
+from nodes.subagents.executor.state import StandardTask
 
 # CodeAct subgraph state model
 class CodeActState(BaseModel):
@@ -62,6 +65,10 @@ def execute_code_node(state: CodeActState) -> CodeActState:
     """Execute generated code, get execution result"""
     code = state.execution_result.get("generated_code", "")
     try:
+        if os.getenv("ALLOW_UNSAFE_CODEACT", "false").lower() != "true":
+            state.execution_result["status"] = "failed"
+            state.execution_result["error"] = "Unsafe exec is disabled (set ALLOW_UNSAFE_CODEACT=true to override)"
+            return state
         # Safely execute code (actual scenario needs sandbox environment, such as execjs, pyodide)
         local_namespace = {}
         exec(code, globals(), local_namespace)

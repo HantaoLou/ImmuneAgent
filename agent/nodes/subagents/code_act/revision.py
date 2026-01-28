@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field
 from enum import Enum
 import json
 
-from agent.nodes.subagents.code_act.trajectory import CodeTrajectory, TrajectoryStatus
-from agent.utils.llm_factory import create_reasoning_advanced_llm, create_code_llm
+from nodes.subagents.code_act.trajectory import CodeTrajectory, TrajectoryStatus
+from utils.llm_factory import create_reasoning_advanced_llm, create_code_llm
 
 
 class RevisionStrategy(str, Enum):
@@ -205,8 +205,7 @@ class RevisionExecutor:
     """
     
     def __init__(self):
-        self.llm = create_code_llm()
-        from agent.utils.llm_factory import create_code_llm
+        from utils.llm_factory import create_code_llm
         self.llm = create_code_llm()
     
     def generate_revision_code(
@@ -252,7 +251,7 @@ class RevisionExecutor:
     ) -> str:
         """Use LLM to generate fix code"""
         from langchain_core.messages import SystemMessage, HumanMessage
-        from agent.nodes.subagents.code_act.prompt import FIX_CODE_SYSTEM_PROMPT
+        from nodes.subagents.code_act.prompt import FIX_CODE_SYSTEM_PROMPT
         
         # Select different prompts based on strategy
         if revision_plan.strategy == RevisionStrategy.ARCHITECTURE_CHANGE:

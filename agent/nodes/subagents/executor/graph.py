@@ -17,6 +17,7 @@ Fully utilize LangGraph 1.0+ features:
 """
 
 from typing import Dict, List, Any, Optional, Literal, Union
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from langgraph.graph import StateGraph, START, END
 try:
@@ -67,13 +68,11 @@ except ImportError:
     # If MemorySaver doesn't exist, use simple memory storage
     MemorySaver = None
 import sys
+import os
 import json
 from pathlib import Path
 from enum import Enum
 
-# Module-level variable to store current parent_state
-# This allows nodes to access it (because parent_state is excluded during serialization)
-_current_parent_state = None
 import time
 
 # Import main graph state and task models
@@ -81,14 +80,14 @@ agent_dir = Path(__file__).parent.parent.parent.parent
 if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
-from agent.state import SubTask, TaskStatus, UserTaskType, GlobalState, ParallelTaskGroup
+from state import SubTask, TaskStatus, UserTaskType, GlobalState, ParallelTaskGroup
 
-# Module-level variable to store current parent_state
-# This allows nodes to access it (because parent_state is excluded during serialization)
-_current_parent_state = None
+# Module-level storage for parent_state (keyed by thread_id)
+# This avoids cross-thread contamination when running multiple executors.
+_parent_state_by_thread: Dict[str, GlobalState] = {}
 
 # Import CodeAct subgraph
-from agent.nodes.subagents.code_act.graph import (
+from nodes.subagents.code_act.graph import (
     build_codeact_subgraph,
     codeact_input_mapper,
     codeact_output_mapper,
@@ -97,7 +96,7 @@ from agent.nodes.subagents.code_act.graph import (
 )
 
 # Import LLM factory
-from agent.utils.llm_factory import create_reasoning_advanced_llm, create_reasoning_llm
+from utils.llm_factory import create_reasoning_advanced_llm, create_reasoning_llm
 
 # ===================== Executor Subgraph State Model =====================
 
@@ -139,6 +138,7 @@ class TaskExecutionResult(BaseModel):
     suggestions: Optional[List[str]] = Field(default_factory=list, description="Improvement suggestions")
     result_satisfied: Optional[bool] = Field(default=None, description="Whether result meets requirements")
     user_continue: Optional[bool] = Field(default=None, description="Whether user chose to continue execution")
+    result_summary: Optional[Dict[str, Any]] = Field(default=None, description="Per-task execution summary")
 
 
 class ExecutorState(BaseModel):
@@ -181,6 +181,7 @@ class ExecutorState(BaseModel):
     # Note: exclude=True to avoid LangGraph serialization validation failure, but keep in model for node use
     # Use Union type to allow accepting GlobalState instance or None during validation
     parent_state: Optional[GlobalState] = Field(default=None, exclude=True, description="Main graph state reference")
+    thread_id: Optional[str] = Field(default=None, description="Thread ID for parent_state lookup")
     
     @field_validator('parent_state', mode='before')
     @classmethod
@@ -227,10 +228,169 @@ def _load_tools_params_table() -> Dict[str, Dict[str, Any]]:
         return {}
 
 
+def _get_task_tool_names(task: SubTask) -> List[str]:
+    """Extract tool names from task.result."""
+    if not task.result or not isinstance(task.result, dict):
+        return []
+    tools = task.result.get("tools", [])
+    tool_names = []
+    if isinstance(tools, list):
+        for tool_item in tools:
+            if isinstance(tool_item, dict):
+                tool_name = tool_item.get("tool_name") or tool_item.get("name", "")
+            elif isinstance(tool_item, str):
+                tool_name = tool_item
+            else:
+                tool_name = ""
+            if tool_name:
+                tool_names.append(tool_name)
+    return tool_names
+
+
+def _load_tool_limits() -> Dict[str, int]:
+    """Load per-tool concurrency limits from env EXECUTOR_TOOL_LIMITS (json)."""
+    raw = os.getenv("EXECUTOR_TOOL_LIMITS", "")
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return {str(k): int(v) for k, v in data.items() if int(v) > 0}
+    except Exception:
+        return {}
+    return {}
+
+
+def _load_tool_priorities() -> Dict[str, int]:
+    """Load per-tool priority from env EXECUTOR_TOOL_PRIORITIES (json)."""
+    raw = os.getenv("EXECUTOR_TOOL_PRIORITIES", "")
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return {str(k): int(v) for k, v in data.items()}
+    except Exception:
+        return {}
+    return {}
+
+
+def _restore_parent_state(state: ExecutorState) -> Optional[GlobalState]:
+    """Restore parent_state from thread-scoped storage if missing."""
+    if state.parent_state is not None:
+        return state.parent_state
+    if state.thread_id and state.thread_id in _parent_state_by_thread:
+        object.__setattr__(state, "parent_state", _parent_state_by_thread[state.thread_id])
+    return state.parent_state
+
+
+def _is_file_type(param_name: str, param_type: Optional[str]) -> bool:
+    """Check if a parameter is likely a file/path type"""
+    param_name_lower = (param_name or "").lower()
+    param_type_lower = (param_type or "").lower()
+    keywords = [
+        "file", "path", "pdb", "csv", "tsv", "json", "fasta", "fastq",
+        "airr", "excel", "xlsx", "txt", "dir", "directory", "output", "input"
+    ]
+    return any(k in param_name_lower for k in keywords) or any(k in param_type_lower for k in keywords)
+
+
+def _summarize_output_brief(output: Any, max_len: int = 200) -> str:
+    """Create a brief summary of task output for logging/summary"""
+    try:
+        if isinstance(output, dict):
+            keys = list(output.keys())
+            return f"dict(keys={keys[:10]})"
+        if isinstance(output, list):
+            return f"list(len={len(output)})"
+        if isinstance(output, str):
+            return output[:max_len]
+        return str(output)[:max_len]
+    except Exception:
+        return "<unavailable>"
+
+
+def _extract_dependency_value(dep_output: Any, param_name: str, is_file_param: bool) -> Optional[Any]:
+    """Try to extract a parameter value from dependency output"""
+    if dep_output is None:
+        return None
+    param_lower = (param_name or "").lower()
+    if isinstance(dep_output, dict):
+        # Direct key match
+        if param_name in dep_output:
+            return dep_output[param_name]
+        # Case-insensitive match
+        for key, value in dep_output.items():
+            if isinstance(key, str) and (param_lower == key.lower() or param_lower in key.lower()):
+                return value
+        # File-like fallback
+        if is_file_param:
+            for value in dep_output.values():
+                if isinstance(value, str) and ("/" in value or "\\" in value or "." in value):
+                    return value
+        return None
+    if isinstance(dep_output, list):
+        # Prefer list of dicts
+        for item in dep_output:
+            if isinstance(item, dict):
+                value = _extract_dependency_value(item, param_name, is_file_param)
+                if value is not None:
+                    return value
+        # Fallback to first string for file params
+        if is_file_param:
+            for item in dep_output:
+                if isinstance(item, str):
+                    return item
+        return None
+    # String output
+    if isinstance(dep_output, str):
+        if is_file_param:
+            return dep_output
+    return dep_output
+
+
+def _resolve_param_from_dependencies(task: SubTask, param_name: str, param_type: Optional[str], state: "ExecutorState") -> Optional[Any]:
+    """Resolve parameter value from completed dependency task outputs"""
+    if not task.dependencies:
+        return None
+    is_file_param = _is_file_type(param_name, param_type)
+    for dep_task_id in task.dependencies:
+        dep_result = state.task_results.get(dep_task_id)
+        if not dep_result or dep_result.status != ExecutorTaskStatus.COMPLETED:
+            continue
+        value = _extract_dependency_value(dep_result.output, param_name, is_file_param)
+        if value is not None:
+            return value
+    return None
+
+
+def _build_task_result_summary(task: SubTask, result: TaskExecutionResult) -> Dict[str, Any]:
+    """Build a per-task execution summary"""
+    return {
+        "task_id": task.task_id,
+        "status": result.status.value if hasattr(result.status, "value") else str(result.status),
+        "execution_mode": result.execution_mode,
+        "parameters": result.parameters,
+        "missing_parameters": result.missing_parameters,
+        "output_brief": _summarize_output_brief(result.output),
+        "error": result.error,
+        "error_category": result.error_category.value if result.error_category else None,
+        "confidence_score": result.confidence_score,
+        "result_satisfied": result.result_satisfied,
+        "failure_analysis": result.failure_analysis
+    }
+
+
 def classify_error(error: str, error_type: str) -> ErrorCategory:
     """Classify error type"""
-    error_lower = error.lower()
-    error_type_lower = error_type.lower()
+    # Handle None or empty error
+    if error is None:
+        error = ""
+    if error_type is None:
+        error_type = "UnknownError"
+    
+    error_lower = error.lower() if error else ""
+    error_type_lower = error_type.lower() if error_type else ""
     
     # Network errors (prioritize identification, need special handling)
     network_keywords = [
@@ -282,6 +442,12 @@ def _analyze_failure(error: str, error_type: str, error_category: ErrorCategory)
     Returns:
         Failure reason analysis
     """
+    # Handle None values
+    if error is None:
+        error = "Unknown error"
+    if error_type is None:
+        error_type = "UnknownError"
+    
     error_category_str = error_category.value if (error_category and hasattr(error_category, 'value')) else str(error_category) if error_category else "Unknown"
     analysis = f"Error type: {error_category_str}\n"
     analysis += f"Error category: {error_type}\n"
@@ -433,7 +599,7 @@ def initialize_tasks_node(state: ExecutorState) -> ExecutorState:
             # If subtasks is a list of dicts, need to convert to SubTask objects
             if group_subtasks and isinstance(group_subtasks[0], dict):
                 try:
-                    from agent.state import SubTask
+                    from state import SubTask
                     group_subtasks = [SubTask.model_validate(task_dict) for task_dict in group_subtasks]
                 except Exception as e:
                     print(f"  ⚠ Failed to convert tasks in parallel task group {group_id} to SubTask objects: {e}")
@@ -447,7 +613,7 @@ def initialize_tasks_node(state: ExecutorState) -> ExecutorState:
                 # Ensure task is a SubTask object
                 if isinstance(task, dict):
                     try:
-                        from agent.state import SubTask
+                        from state import SubTask
                         task = SubTask.model_validate(task)
                     except Exception as e:
                         print(f"  ⚠ Failed to convert task {task.get('task_id', 'unknown')} to SubTask object: {e}")
@@ -483,20 +649,16 @@ def initialize_tasks_node(state: ExecutorState) -> ExecutorState:
 
 def infer_parameters_node(state: ExecutorState) -> ExecutorState:
     """
-    Parameter inference node (optimized version)
+    Parameter inference node
     
-    Prioritize using parameter inference results from task_decomposition.
-    For already inferred parameters:
-    - source_type is DETERMINED: directly use inferred value
-    - source_type is FROM_TASK: wait for dependent task completion to get value
-    - source_type is USER_REQUIRED: mark as missing parameter, trigger HITL
-    For parameters without inference results, use LLM to re-infer (with caching mechanism).
-    
-    Optimizations:
-    1. Batch process parameter inference to reduce LLM calls
-    2. Cache inference results to avoid duplicate inference
-    3. Prioritize using results from completed dependent tasks
+    Infer parameters per ready subtask using:
+    1. Dependency task outputs (completed results)
+    2. User input and execution plan context
+    3. Recommended values from tools parameters table
+    4. LLM inference (fallback)
     """
+    _restore_parent_state(state)
+    
     ready_tasks = [
         task for task in state.subtasks
         if state.task_status_map.get(task.task_id) == ExecutorTaskStatus.READY
@@ -506,16 +668,11 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
     if not ready_tasks:
         return state
     
-    # Get parameter inference results from global_state
-    parameter_inference_results = {}
-    if state.parent_state and state.parent_state.merged_result:
-        parameter_inference_results = state.parent_state.merged_result.get("parameter_inference_results", {})
-    
-    # Parameter inference cache (avoid duplicate inference for same parameters)
-    inference_cache = {}
-    
+    user_input = state.parent_state.user_input if state.parent_state else ""
+    execution_plan = state.parent_state.execution_plan if state.parent_state else None
+
     llm = create_reasoning_llm()
-    tools_params_map = _load_tools_params_table()
+    tools_params_map = _load_tools_params_table() or {}
     
     for task in ready_tasks:
         # Initialize task result
@@ -541,67 +698,6 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
         all_params = {}
         missing_params = []
         
-        # First use parameter inference results from task_decomposition
-        task_inference = parameter_inference_results.get(task.task_id)
-        if task_inference:
-            inference_params = task_inference.get("parameters", {})
-            for param_name, param_info in inference_params.items():
-                source_type = param_info.get("source_type", "")
-                
-                if source_type == "determined":
-                    # Directly use inferred value
-                    param_value = param_info.get("value")
-                    if param_value is not None:
-                        all_params[param_name] = param_value
-                        print(f"  ✓ Task {task.task_id} parameter {param_name} using inferred value: {param_value}")
-                    else:
-                        # Inferred value is empty, mark as missing
-                        tool_name = task_inference.get("tool_name", "").split(",")[0].strip() if task_inference.get("tool_name") else ""
-                        missing_params.append(f"{tool_name}.{param_name}" if tool_name else param_name)
-                
-                elif source_type == "from_task":
-                    # Parameter value comes from dependent task, need to wait for dependent task completion
-                    source_task_id = param_info.get("source_task_id")
-                    source_output_key = param_info.get("source_output_key", param_name)
-                    
-                    # Check if dependent task is completed
-                    if source_task_id in state.task_results:
-                        dep_result = state.task_results[source_task_id]
-                        if dep_result.status == ExecutorTaskStatus.COMPLETED:
-                            # Get parameter value from dependent task result
-                            if isinstance(dep_result.output, dict):
-                                param_value = dep_result.output.get(source_output_key)
-                            elif isinstance(dep_result.output, str):
-                                # Try to parse string output
-                                try:
-                                    import json as json_module
-                                    output_dict = json_module.loads(dep_result.output)
-                                    param_value = output_dict.get(source_output_key)
-                                except:
-                                    param_value = dep_result.output
-                            else:
-                                param_value = dep_result.output
-                            
-                            if param_value is not None:
-                                all_params[param_name] = param_value
-                                print(f"  ✓ Task {task.task_id} parameter {param_name} obtained from task {source_task_id}: {param_value}")
-                            else:
-                                tool_name = task_inference.get("tool_name", "").split(",")[0].strip() if task_inference.get("tool_name") else ""
-                                missing_params.append(f"{tool_name}.{param_name}" if tool_name else param_name)
-                        else:
-                            # Dependent task not completed, mark as missing (but this is normal, waiting for dependency)
-                            print(f"  ⏳ Task {task.task_id} parameter {param_name} waiting for dependent task {source_task_id} to complete")
-                            # Don't add to missing_params, as this is a dependency relationship, not truly missing
-                    else:
-                        # Dependent task doesn't exist or hasn't been executed, mark as missing
-                        tool_name = task_inference.get("tool_name", "").split(",")[0].strip() if task_inference.get("tool_name") else ""
-                        missing_params.append(f"{tool_name}.{param_name}" if tool_name else param_name)
-                
-                elif source_type == "user_required":
-                    # Requires user input, mark as missing parameter
-                    tool_name = task_inference.get("tool_name", "").split(",")[0].strip() if task_inference.get("tool_name") else ""
-                    missing_params.append(f"{tool_name}.{param_name}" if tool_name else param_name)
-        
         for tool_item in tools:
             tool_name = None
             if isinstance(tool_item, str):
@@ -612,15 +708,36 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
             if not tool_name:
                 continue
             
-            # Find tool parameter definition
+            # Find tool parameter definition (with fuzzy matching)
             tool_params = tools_params_map.get(tool_name)
+            if not tool_params:
+                for key in tools_params_map.keys():
+                    if "_" in key:
+                        parts = key.split("_", 1)
+                        if len(parts) > 1 and (parts[1] == tool_name or parts[0] == tool_name):
+                            tool_params = tools_params_map.get(key)
+                            break
+                    if key == tool_name:
+                        tool_params = tools_params_map.get(key)
+                        break
+            if not tool_params:
+                tool_name_lower = tool_name.lower()
+                for key in tools_params_map.keys():
+                    key_lower = key.lower()
+                    if tool_name_lower in key_lower or key_lower in tool_name_lower:
+                        tool_params = tools_params_map.get(key)
+                        break
             
             # If tool is not in parameter table, use inputs field to infer parameters
             if not tool_params:
                 # Infer parameters from inputs field
                 for input_param in inputs:
                     if input_param not in all_params:
-                        # Try to infer from task description
+                        dep_value = _resolve_param_from_dependencies(task, input_param, None, state)
+                        if dep_value is not None:
+                            all_params[input_param] = dep_value
+                            continue
+                        # Try to infer from context + LLM
                         if llm:
                             try:
                                 from langchain_core.messages import SystemMessage, HumanMessage
@@ -628,9 +745,12 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
 Please infer parameter value based on the following information:
 
 Task description: {task.content}
+User input: {user_input}
+Execution plan: {execution_plan or 'None'}
 Tool name: {tool_name}
 Parameter name: {input_param}
 Task input list: {inputs}
+Dependency outputs: {[state.task_results.get(dep_id).output for dep_id in task.dependencies if dep_id in state.task_results]}
 
 Please infer the value of this parameter. If it cannot be inferred from the task description, or requires user input (such as file paths, user selections, etc.), return null.
 
@@ -676,16 +796,41 @@ Return JSON format:
                 param_name = param.get("name", "")
                 param_type = param.get("type", "")
                 param_desc = param.get("description", "")
+                param_deme = param.get("deme") or param.get("demo", "")
                 is_optional = "optional" in param_type.lower() or param_type.startswith("Optional")
                 
                 if not param_name:
                     continue
                 
-                # If parameter is already in inference results, skip (already processed)
-                if param_name in all_params or any(p.endswith(f".{param_name}") or p == param_name for p in missing_params):
+                # Check if parameter is already in all_params (from parameter inference results)
+                # Also check if it's in missing_params with tool prefix
+                param_already_handled = (
+                    param_name in all_params or 
+                    any(p.endswith(f".{param_name}") or p == param_name for p in missing_params) or
+                    f"{tool_name}.{param_name}" in missing_params
+                )
+                
+                if param_already_handled:
+                    if param_name in all_params:
+                        print(f"  [DEBUG] Parameter {param_name} already in all_params with value: {all_params[param_name]}")
+                    else:
+                        print(f"  [DEBUG] Parameter {param_name} already handled (in missing_params), skipping")
                     continue
                 
-                # Use LLM to infer parameter value (only for parameters without inference results)
+                print(f"  [DEBUG] Processing parameter {param_name} for tool {tool_name}")
+                
+                # Try to resolve from dependency outputs first
+                dep_value = _resolve_param_from_dependencies(task, param_name, param_type, state)
+                if dep_value is not None:
+                    all_params[param_name] = dep_value
+                    continue
+                
+                # If non-file type and has recommended value, use it
+                if param_deme and not _is_file_type(param_name, param_type):
+                    all_params[param_name] = param_deme
+                    continue
+                
+                # Use LLM to infer parameter value
                 if llm and param_name not in all_params:
                     try:
                         from langchain_core.messages import SystemMessage, HumanMessage
@@ -694,11 +839,14 @@ Return JSON format:
 Please infer parameter value based on the following information:
 
 Task description: {task.content}
+User input: {user_input}
+Execution plan: {execution_plan or 'None'}
 Tool name: {tool_name}
 Parameter name: {param_name}
 Parameter type: {param_type}
 Parameter description: {param_desc}
 Task input list: {inputs}
+Dependency outputs: {[state.task_results.get(dep_id).output for dep_id in task.dependencies if dep_id in state.task_results]}
 
 Please infer the value of this parameter. If it cannot be inferred from the task description, or requires user input (such as file paths, user selections, etc.), return null.
 
@@ -738,6 +886,8 @@ Return JSON format:
                         print(f"  ⚠ Failed to infer parameter {param_name}: {e}")
                         if not is_optional:
                             missing_params.append(f"{tool_name}.{param_name}")
+                elif not is_optional and param_name not in all_params:
+                    missing_params.append(f"{tool_name}.{param_name}")
         
         # Update task result
         result.parameters = all_params
@@ -757,6 +907,13 @@ Return JSON format:
             state.task_status_map[task.task_id] = ExecutorTaskStatus.WAITING_HITL_PARAMS
             print(f"  ⚠ Task {task.task_id} requires user-provided parameters: {', '.join(missing_params)}")
             print(f"  → Task status set to WAITING_HITL_PARAMS")
+        else:
+            # All parameters are ready, mark task as READY for execution
+            if task.task_id in state.hitl_requests:
+                # Remove HITL request if all parameters are now available
+                del state.hitl_requests[task.task_id]
+            state.task_status_map[task.task_id] = ExecutorTaskStatus.READY
+            print(f"  ✓ Task {task.task_id} has all required parameters ({len(all_params)} parameters), marked as READY for execution")
     
     return state
 
@@ -788,14 +945,17 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
     1. First execution: Check if there are unresponded HITL requests, if so trigger interrupt
     2. Resume execution: Get user response from interrupt's resume value, update parameters, continue execution
     """
-    global _current_parent_state
-    
     print(f"  🔍 [hitl_params_node] Node called")
     
     # If parent_state doesn't exist, try to get from module variable
-    if state.parent_state is None and _current_parent_state is not None:
-        print(f"  ✓ [hitl_params_node] Restored parent_state from module variable")
-        object.__setattr__(state, 'parent_state', _current_parent_state)
+    _restore_parent_state(state)
+    
+    # Also update parent_state.hitl_status from thread-scoped storage if available
+    if state.parent_state and state.thread_id and state.thread_id in _parent_state_by_thread:
+        parent_state = _parent_state_by_thread[state.thread_id]
+        if parent_state.hitl_status and (not state.parent_state.hitl_status or state.parent_state.hitl_status != parent_state.hitl_status):
+            print(f"  [DEBUG] Updating parent_state.hitl_status from thread-scoped storage")
+            state.parent_state.hitl_status = parent_state.hitl_status
     
     # Try to get resume value (if resuming execution)
     # Note: When resuming execution, interrupt() returns the value from Command(resume=...)
@@ -817,14 +977,22 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
     
     # If there's a resume value, this is resuming from interrupt, process user response
     if resume_value is not None:
+        print(f"  [DEBUG] Resume value received: {resume_value}, type: {type(resume_value)}")
         # resume_value may be Command object or dict
         # If Command object, need to extract resume field
         if hasattr(resume_value, 'resume'):
             resume_data = resume_value.resume
+            print(f"  [DEBUG] Extracted resume_data from Command.resume: {resume_data}")
         elif isinstance(resume_value, dict) and 'resume' in resume_value:
             resume_data = resume_value['resume']
+            print(f"  [DEBUG] Extracted resume_data from dict['resume']: {resume_data}")
         else:
             resume_data = resume_value
+            print(f"  [DEBUG] Using resume_value directly as resume_data: {resume_data}")
+        
+        print(f"  [DEBUG] Final resume_data: {resume_data}, type: {type(resume_data)}")
+        if isinstance(resume_data, dict):
+            print(f"  [DEBUG] resume_data keys: {resume_data.keys()}, type field: {resume_data.get('type')}")
         
         if isinstance(resume_data, dict) and resume_data.get("type") == "response_parameters":
             responses = resume_data.get("responses", {})
@@ -846,10 +1014,21 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                             
                             # Process parameter mapping
                             mapped_parameters = {}
-                            skipped_params = set()  # Track skipped parameters (value is None)
+                            skipped_params = set()  # Track skipped parameters (value is None, empty dict, empty string, or "skip" string)
                             for user_param_name, param_value in response_data["parameters"].items():
-                                # If parameter value is None, it means user skipped it
-                                if param_value is None:
+                                # If parameter value is None, empty dict, empty string, or "skip" string, it means user skipped it
+                                is_skipped = (
+                                    param_value is None or 
+                                    param_value == {} or 
+                                    (isinstance(param_value, str) and (
+                                        param_value.strip() == "" or 
+                                        param_value.strip().lower() == "skip"
+                                    )) or
+                                    (isinstance(param_value, dict) and len(param_value) == 0)
+                                )
+                                
+                                if is_skipped:
+                                    print(f"  [DEBUG] Parameter {user_param_name} was skipped by user (value: {param_value})")
                                     skipped_params.add(user_param_name)
                                     # Also add parameter name without tool prefix if applicable
                                     if '.' in user_param_name:
@@ -885,12 +1064,34 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                             
                             # Also remove skipped parameters from missing_parameters
                             # (User explicitly skipped them, so remove from missing list)
+                            print(f"  [DEBUG] Skipped parameters: {skipped_params}")
+                            print(f"  [DEBUG] Missing parameters before removal: {result.missing_parameters}")
+                            
                             for skipped_param in skipped_params:
                                 provided_params.add(skipped_param)
                                 # Also add with tool prefix if applicable
+                                # Extract parameter name from skipped_param (may have tool prefix)
+                                skipped_param_name = skipped_param.split('.', 1)[1] if '.' in skipped_param else skipped_param
+                                
                                 for missing_param in list(result.missing_parameters):
-                                    if missing_param == skipped_param or missing_param.endswith(f".{skipped_param}"):
+                                    # Extract parameter name from missing_param (may have tool prefix)
+                                    missing_param_name = missing_param.split('.', 1)[1] if '.' in missing_param else missing_param
+                                    
+                                    # Check multiple matching patterns
+                                    param_matched = (
+                                        missing_param == skipped_param or 
+                                        missing_param.endswith(f".{skipped_param}") or
+                                        ('.' in missing_param and missing_param.split('.', 1)[1] == skipped_param) or
+                                        ('.' in skipped_param and missing_param == skipped_param.split('.', 1)[1]) or
+                                        # Match by parameter name only (ignoring tool prefix)
+                                        missing_param_name == skipped_param_name or
+                                        missing_param.endswith(f".{skipped_param_name}") or
+                                        ('.' in skipped_param and missing_param == skipped_param_name)
+                                    )
+                                    
+                                    if param_matched:
                                         provided_params.add(missing_param)
+                                        print(f"  [DEBUG] Matched skipped parameter '{skipped_param}' with missing parameter '{missing_param}'")
                             
                             result.missing_parameters = [
                                 p for p in result.missing_parameters
@@ -901,6 +1102,8 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                                     p.endswith(f".{param_name}") or
                                     # Prefix match (e.g., "input_file_path" matches "tool.input_file_path")
                                     ('.' in p and p.split('.', 1)[1] == param_name) or
+                                    # Reverse match (e.g., "input_file_path" matches "tool.input_file_path")
+                                    ('.' in param_name and p == param_name.split('.', 1)[1]) or
                                     # Parameter name mapping match (e.g., "input_file" matches "input_file_path")
                                     (param_name in param_mapping and (
                                         p == param_mapping[param_name] or
@@ -909,21 +1112,38 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                                     for param_name in provided_params
                                 )
                             ]
-                        # If all required parameters are provided, mark as ready
+                            
+                            print(f"  [DEBUG] Missing parameters after removal: {result.missing_parameters}")
+                            
+                        # If all required parameters are provided (or skipped), mark as ready
                         if not result.missing_parameters:
                             state.task_status_map[task_id] = ExecutorTaskStatus.READY
-                            print(f"  ✓ Task {task_id} has all required parameters, marked as ready")
+                            # Mark as responded (even if all parameters were skipped)
+                            if task_id not in state.hitl_responses:
+                                state.hitl_responses[task_id] = response_data
+                            # Remove from hitl_requests since all parameters are now handled (provided or skipped)
+                            if task_id in state.hitl_requests:
+                                del state.hitl_requests[task_id]
+                                print(f"  ✓ Task {task_id} removed from hitl_requests (all parameters handled)")
+                            print(f"  ✓ Task {task_id} has all required parameters (or skipped optional ones), marked as READY for execution")
+                        else:
+                            print(f"  [DEBUG] Task {task_id} still has missing parameters: {result.missing_parameters}")
     
-    # First check if there are HITL responses (get from parent_state as fallback)
-    if state.parent_state and state.parent_state.hitl_status:
+    # Also check parent_state.hitl_status as fallback (in case resume_value wasn't passed correctly)
+    # This is important because resume_executor_after_interrupt may not correctly pass resume_value through interrupt()
+    print(f"  [DEBUG] Checking parent_state.hitl_status: {state.parent_state.hitl_status if (state.parent_state and hasattr(state.parent_state, 'hitl_status')) else 'No parent_state or hitl_status'}")
+    if state.parent_state and hasattr(state.parent_state, 'hitl_status') and state.parent_state.hitl_status:
         try:
             # Ensure using global json module
             import json as json_module
             hitl_data = json_module.loads(state.parent_state.hitl_status)
+            print(f"  [DEBUG] Parsed hitl_data from parent_state.hitl_status: type={hitl_data.get('type')}, responses={list(hitl_data.get('responses', {}).keys())}")
             if hitl_data.get("type") == "response_parameters":
                 # Process user response (fallback: passed through parent_state)
                 responses = hitl_data.get("responses", {})
+                print(f"  [DEBUG] Processing {len(responses)} responses from parent_state.hitl_status")
                 for task_id, response_data in responses.items():
+                    print(f"  [DEBUG] Processing response for task {task_id}: {task_id in state.hitl_requests}, already responded: {task_id in state.hitl_responses}")
                     if task_id in state.hitl_requests and task_id not in state.hitl_responses:
                         state.hitl_responses[task_id] = response_data
                         # Update parameters
@@ -939,10 +1159,21 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                                 }
                                 
                                 mapped_parameters = {}
-                                skipped_params = set()  # Track skipped parameters (value is None)
+                                skipped_params = set()  # Track skipped parameters (value is None, empty dict, or empty string)
                                 for user_param_name, param_value in response_data["parameters"].items():
-                                    # If parameter value is None, it means user skipped it
-                                    if param_value is None:
+                                    # If parameter value is None, empty dict, empty string, or "skip" string, it means user skipped it
+                                    is_skipped = (
+                                        param_value is None or 
+                                        param_value == {} or 
+                                        (isinstance(param_value, str) and (
+                                            param_value.strip() == "" or 
+                                            param_value.strip().lower() == "skip"
+                                        )) or
+                                        (isinstance(param_value, dict) and len(param_value) == 0)
+                                    )
+                                    
+                                    if is_skipped:
+                                        print(f"  [DEBUG] Parameter {user_param_name} was skipped by user (value: {param_value})")
                                         skipped_params.add(user_param_name)
                                         # Also add parameter name without tool prefix if applicable
                                         if '.' in user_param_name:
@@ -966,12 +1197,25 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                                 provided_params.update(response_data["parameters"].keys())
                                 
                                 # Also remove skipped parameters from missing_parameters
+                                print(f"  [DEBUG] Skipped parameters: {skipped_params}")
+                                print(f"  [DEBUG] Missing parameters before removal: {result.missing_parameters}")
+                                
                                 for skipped_param in skipped_params:
                                     provided_params.add(skipped_param)
                                     # Also add with tool prefix if applicable
+                                    # Try multiple matching patterns to ensure we catch all variations
                                     for missing_param in list(result.missing_parameters):
-                                        if missing_param == skipped_param or missing_param.endswith(f".{skipped_param}"):
+                                        # Check multiple matching patterns
+                                        param_matched = (
+                                            missing_param == skipped_param or 
+                                            missing_param.endswith(f".{skipped_param}") or
+                                            ('.' in missing_param and missing_param.split('.', 1)[1] == skipped_param) or
+                                            ('.' in skipped_param and missing_param == skipped_param.split('.', 1)[1]) or
+                                            ('.' in skipped_param and missing_param.endswith(f".{skipped_param.split('.', 1)[1]}"))
+                                        )
+                                        if param_matched:
                                             provided_params.add(missing_param)
+                                            print(f"  [DEBUG] Matched skipped parameter '{skipped_param}' with missing parameter '{missing_param}'")
                                 
                                 result.missing_parameters = [
                                     p for p in result.missing_parameters
@@ -986,9 +1230,21 @@ def hitl_params_node(state: ExecutorState) -> ExecutorState:
                                         for param_name in provided_params
                                     )
                                 ]
+                                
+                                print(f"  [DEBUG] Missing parameters after removal: {result.missing_parameters}")
+                                
                             if not result.missing_parameters:
                                 state.task_status_map[task_id] = ExecutorTaskStatus.READY
-                                print(f"  ✓ Task {task_id} has all required parameters, marked as ready")
+                                # Mark as responded (even if all parameters were skipped)
+                                if task_id not in state.hitl_responses:
+                                    state.hitl_responses[task_id] = response_data
+                                # Remove from hitl_requests since all parameters are now handled (provided or skipped)
+                                if task_id in state.hitl_requests:
+                                    del state.hitl_requests[task_id]
+                                    print(f"  ✓ Task {task_id} removed from hitl_requests (all parameters handled)")
+                                print(f"  ✓ Task {task_id} has all required parameters (or skipped optional ones), marked as READY for execution")
+                            else:
+                                print(f"  [WARN] Task {task_id} still has missing parameters after skip: {result.missing_parameters}")
         except Exception as e:
             print(f"  ⚠ Failed to parse HITL response: {e}")
     
@@ -1112,18 +1368,133 @@ def execute_tasks_node(state: ExecutorState) -> ExecutorState:
     if not ready_tasks:
         return state
     
-    # Filter out tasks missing parameters (these tasks should wait for HITL response)
-    # Note: Task status may be READY, but if parameters are missing, should not execute
+    # Filter out tasks missing REQUIRED parameters (these tasks should wait for HITL response)
+    # Note: Optional parameters that are skipped should not prevent execution
     tasks_with_params = []
+    llm = create_reasoning_llm()
+    tools_params_map = _load_tools_params_table()
+    
     for task in ready_tasks:
         task_result = state.task_results.get(task.task_id)
+        task_id = task.task_id
+        
+        # IMPORTANT: If user has responded to HITL and skipped parameters, check if missing parameters were skipped
+        if task_result and task_result.missing_parameters and task_id in state.hitl_responses:
+            hitl_response = state.hitl_responses[task_id]
+            if "parameters" in hitl_response:
+                # Check if any missing parameters were skipped by user
+                skipped_missing = []
+                for missing_param in task_result.missing_parameters:
+                    # Extract parameter name (may have tool prefix)
+                    param_name = missing_param.split('.', 1)[1] if '.' in missing_param else missing_param
+                    # Check if this parameter was in the response (even if value is empty/skipped)
+                    for user_param_name, param_value in hitl_response["parameters"].items():
+                        user_param_name_only = user_param_name.split('.', 1)[1] if '.' in user_param_name else user_param_name
+                        # Check if parameter was skipped (None, empty dict, empty string, or "skip" string)
+                        is_skipped = (
+                            param_value is None or 
+                            param_value == {} or 
+                            (isinstance(param_value, str) and (
+                                param_value.strip() == "" or 
+                                param_value.strip().lower() == "skip"
+                            )) or
+                            (isinstance(param_value, dict) and len(param_value) == 0)
+                        )
+                        # Match parameter names (with or without tool prefix)
+                        if (param_name == user_param_name_only or 
+                            missing_param == user_param_name or
+                            missing_param.endswith(f".{user_param_name_only}") or
+                            user_param_name.endswith(f".{param_name}")):
+                            if is_skipped:
+                                skipped_missing.append(missing_param)
+                                print(f"  [DEBUG] Parameter {missing_param} was skipped by user in HITL response, removing from missing list")
+                
+                # Remove skipped parameters from missing_parameters
+                if skipped_missing:
+                    task_result.missing_parameters = [
+                        p for p in task_result.missing_parameters 
+                        if p not in skipped_missing
+                    ]
+                    print(f"  [DEBUG] After removing skipped parameters, remaining missing: {task_result.missing_parameters}")
+                    
+                    # If all missing parameters were skipped, mark as ready
+                    if not task_result.missing_parameters:
+                        state.task_status_map[task_id] = ExecutorTaskStatus.READY
+                        # Mark as responded (even if all parameters were skipped)
+                        if task_id not in state.hitl_responses:
+                            # Create a minimal response to mark as responded
+                            state.hitl_responses[task_id] = {"parameters": {}}
+                        # Remove from hitl_requests since all parameters were skipped
+                        if task_id in state.hitl_requests:
+                            del state.hitl_requests[task_id]
+                            print(f"  ✓ Task {task_id} removed from hitl_requests (all parameters skipped)")
+                        print(f"  ✓ Task {task_id} all missing parameters were skipped by user, marked as READY for execution")
+        
         if task_result and task_result.missing_parameters:
-            # Task missing parameters, should not execute, should wait for HITL response
-            print(f"  ⏸ Task {task.task_id} missing parameters, skipping execution: {task_result.missing_parameters}")
-            # Ensure status is WAITING_HITL_PARAMS
-            if state.task_status_map.get(task.task_id) != ExecutorTaskStatus.WAITING_HITL_PARAMS:
-                state.task_status_map[task.task_id] = ExecutorTaskStatus.WAITING_HITL_PARAMS
-            continue
+            # Check if missing parameters are optional
+            # Get task tools to check parameter definitions
+            task_tools = []
+            if task.result and isinstance(task.result, dict):
+                tools = task.result.get("tools", [])
+                if isinstance(tools, list):
+                    for tool_item in tools:
+                        if isinstance(tool_item, dict):
+                            tool_name = tool_item.get("tool_name") or tool_item.get("name", "")
+                        elif isinstance(tool_item, str):
+                            tool_name = tool_item
+                        else:
+                            tool_name = None
+                        if tool_name:
+                            task_tools.append(tool_name)
+            
+            # Check each missing parameter to see if it's optional
+            required_missing_params = []
+            for missing_param in task_result.missing_parameters:
+                # Extract tool name and parameter name
+                if '.' in missing_param:
+                    tool_name, param_name = missing_param.split('.', 1)
+                else:
+                    # Try to find tool name from task tools
+                    tool_name = task_tools[0] if task_tools else None
+                    param_name = missing_param
+                
+                is_optional = False
+                if tool_name and tool_name in tools_params_map:
+                    tool_params = tools_params_map[tool_name]
+                    input_params = tool_params.get("input_params", [])
+                    for param in input_params:
+                        if param.get("name") == param_name:
+                            param_type = param.get("type", "")
+                            is_optional = "optional" in param_type.lower() or param_type.startswith("Optional")
+                            break
+                
+                if not is_optional:
+                    required_missing_params.append(missing_param)
+            
+            if required_missing_params:
+                # Task missing required parameters, should not execute, should wait for HITL response
+                print(f"  ⏸ Task {task.task_id} missing required parameters, skipping execution: {required_missing_params}")
+                # Ensure status is WAITING_HITL_PARAMS
+                if state.task_status_map.get(task.task_id) != ExecutorTaskStatus.WAITING_HITL_PARAMS:
+                    state.task_status_map[task.task_id] = ExecutorTaskStatus.WAITING_HITL_PARAMS
+                continue
+            else:
+                # All missing parameters are optional, allow execution
+                print(f"  ✓ Task {task.task_id} missing only optional parameters, allowing execution: {task_result.missing_parameters}")
+                # Remove optional missing parameters from the list
+                task_result.missing_parameters = []
+                # Remove from hitl_requests since all parameters are handled
+                if task.task_id in state.hitl_requests:
+                    del state.hitl_requests[task.task_id]
+                    print(f"  ✓ Task {task.task_id} removed from hitl_requests (all parameters handled)")
+        
+        # Also check: if task is READY and has no missing parameters, remove from hitl_requests
+        if task.task_id in state.hitl_requests:
+            task_result = state.task_results.get(task.task_id)
+            if task_result and not task_result.missing_parameters:
+                del state.hitl_requests[task.task_id]
+                print(f"  ✓ Task {task.task_id} removed from hitl_requests (no missing parameters)")
+        
         tasks_with_params.append(task)
     
     if not tasks_with_params:
@@ -1135,33 +1506,64 @@ def execute_tasks_node(state: ExecutorState) -> ExecutorState:
     available_slots = state.max_parallel_tasks - len(state.running_tasks)
     if available_slots <= 0:
         return state
-    
-    tasks_to_execute = tasks_with_params[:available_slots]
+
+    # Apply per-tool concurrency limits and priority
+    tool_limits = _load_tool_limits()
+    tool_priorities = _load_tool_priorities()
+    running_tool_counts: Dict[str, int] = {}
+    for running_id in state.running_tasks:
+        running_task = next((t for t in state.subtasks if t.task_id == running_id), None)
+        if not running_task:
+            continue
+        running_tools = _get_task_tool_names(running_task)
+        tool_key = running_tools[0] if running_tools else ""
+        running_tool_counts[tool_key] = running_tool_counts.get(tool_key, 0) + 1
+
+    def task_priority(task: SubTask) -> int:
+        tool_names = _get_task_tool_names(task)
+        tool_key = tool_names[0] if tool_names else ""
+        return tool_priorities.get(tool_key, 0)
+
+    tasks_to_execute = []
+    for task in sorted(tasks_with_params, key=task_priority, reverse=True):
+        if len(tasks_to_execute) >= available_slots:
+            break
+        tool_names = _get_task_tool_names(task)
+        tool_key = tool_names[0] if tool_names else ""
+        if tool_key in tool_limits:
+            if running_tool_counts.get(tool_key, 0) >= tool_limits[tool_key]:
+                continue
+        tasks_to_execute.append(task)
+        if tool_key in tool_limits:
+            running_tool_counts[tool_key] = running_tool_counts.get(tool_key, 0) + 1
+
     print(f"🔄 Starting execution of {len(tasks_to_execute)} tasks (currently running: {len(state.running_tasks)}, max parallel: {state.max_parallel_tasks})")
     
-    # Execute tasks
+    if not tasks_to_execute:
+        return state
+
+    # Execute tasks in parallel with per-task timeout
     for task in tasks_to_execute:
-        # Mark as running
         state.task_status_map[task.task_id] = ExecutorTaskStatus.RUNNING
         state.running_tasks.append(task.task_id)
-        
-        # Execute task
-        result = _execute_single_task(task, state)
-        
-        # Update task result and status
+
+    task_timeout_seconds = int(os.getenv("EXECUTOR_TASK_TIMEOUT_SECONDS", "600"))
+    future_map = {}
+    start_times = {}
+    finalized_task_ids = set()
+
+    def handle_result(task: SubTask, result: TaskExecutionResult):
         state.task_results[result.task_id] = result
-        state.running_tasks.remove(task.task_id)
-        
+        if task.task_id in state.running_tasks:
+            state.running_tasks.remove(task.task_id)
+
         if result.status == ExecutorTaskStatus.COMPLETED:
             state.completed_count += 1
             state.task_status_map[result.task_id] = ExecutorTaskStatus.COMPLETED
             print(f"  ✓ Task {result.task_id} executed successfully (took {result.execution_time:.2f}s)")
         else:
-            # Handle failed tasks: decide whether to re-add to task pool based on error type and retry count
             should_retry = False
-            
             if result.error_category and result.error_category == ErrorCategory.NETWORK_ERROR:
-                # Network error: always re-add to task pool (until max retries reached)
                 if result.retry_count < state.max_retries:
                     should_retry = True
                     result.retry_count += 1
@@ -1171,9 +1573,7 @@ def execute_tasks_node(state: ExecutorState) -> ExecutorState:
                     state.failed_count += 1
                     state.task_status_map[result.task_id] = ExecutorTaskStatus.FAILED
                     print(f"  ✗ Task {result.task_id} network error, max retries reached, marked as failed")
-            
             elif result.error_category and result.error_category == ErrorCategory.RETRYABLE:
-                # Other retryable errors: if max retries not reached, re-add to task pool
                 if result.retry_count < state.max_retries:
                     should_retry = True
                     result.retry_count += 1
@@ -1183,23 +1583,70 @@ def execute_tasks_node(state: ExecutorState) -> ExecutorState:
                     state.failed_count += 1
                     state.task_status_map[result.task_id] = ExecutorTaskStatus.FAILED
                     print(f"  ✗ Task {result.task_id} retryable error, max retries reached, marked as failed")
-            
             else:
-                # Non-retryable errors: directly mark as failed
                 state.failed_count += 1
                 state.task_status_map[result.task_id] = ExecutorTaskStatus.FAILED
                 error_category_str = result.error_category.value if (result.error_category and hasattr(result.error_category, 'value')) else str(result.error_category) if result.error_category else "Unknown"
                 print(f"  ✗ Task {result.task_id} execution failed ({error_category_str}): {result.error}")
-            
-            # If task needs retry, record error info but keep ready status
+
             if should_retry:
-                # Save error info for later analysis
                 error_category_str = result.error_category.value if (result.error_category and hasattr(result.error_category, 'value')) else str(result.error_category) if result.error_category else "Unknown"
                 result.failure_analysis = f"Error type: {error_category_str}, Error message: {result.error[:200] if result.error else 'No error message'}"
                 result.suggestions = [
                     "Task will automatically retry",
                     f"Current retry count: {result.retry_count}/{state.max_retries}"
                 ]
+
+            if result.result_summary is None:
+                result.result_summary = _build_task_result_summary(task, result)
+
+    with ThreadPoolExecutor(max_workers=len(tasks_to_execute)) as executor:
+        for task in tasks_to_execute:
+            future = executor.submit(_execute_single_task, task, state)
+            future_map[future] = task
+            start_times[future] = time.time()
+
+        futures = set(future_map.keys())
+        while futures:
+            done, not_done = wait(futures, timeout=0.2, return_when=FIRST_COMPLETED)
+            now = time.time()
+
+            for future in list(done):
+                task = future_map[future]
+                if task.task_id in finalized_task_ids:
+                    futures.remove(future)
+                    continue
+                try:
+                    result = future.result()
+                except Exception as e:
+                    result = TaskExecutionResult(
+                        task_id=task.task_id,
+                        status=ExecutorTaskStatus.FAILED,
+                        execution_mode="",
+                        error=str(e),
+                        error_category=ErrorCategory.SYSTEM_ERROR
+                    )
+                handle_result(task, result)
+                finalized_task_ids.add(task.task_id)
+                futures.remove(future)
+
+            for future in list(not_done):
+                task = future_map[future]
+                if task.task_id in finalized_task_ids:
+                    futures.remove(future)
+                    continue
+                if now - start_times.get(future, now) > task_timeout_seconds:
+                    future.cancel()
+                    timeout_result = TaskExecutionResult(
+                        task_id=task.task_id,
+                        status=ExecutorTaskStatus.FAILED,
+                        execution_mode="",
+                        error=f"Task timeout after {task_timeout_seconds}s",
+                        error_category=ErrorCategory.SYSTEM_ERROR
+                    )
+                    handle_result(task, timeout_result)
+                    finalized_task_ids.add(task.task_id)
+                    futures.remove(future)
     
     return state
 
@@ -1518,11 +1965,22 @@ def _receive_sse_messages(sse_url: str, task_id: str, service_id: str, timeout: 
                         if isinstance(data_field, dict):
                             status = status or data_field.get("status")
                         
-                        if message_type == "task_completed" or status == "completed":
-                            task_completed = True
+                        # Handle different message types
+                        if message_type == "result":
+                            # type: result 消息是工具的执行结果，包含output_file等关键信息
+                            # 这是最重要的消息，保存为final_result
                             final_result = message_data
-                            print(f"  ✓ [streaming_task] Task completed")
-                            break
+                            print(f"  ✓ [streaming_task] Received result message (tool execution result)")
+                            # 不要break，继续等待end消息
+                        elif message_type == "task_completed" or (message_type == "progress" and status == "completed"):
+                            # task_completed 或 progress消息中status为completed，只是表示任务完成
+                            # 但可能还有result消息在后面，不要立即break
+                            task_completed = True
+                            # 如果没有result消息，使用这个作为final_result
+                            if final_result is None:
+                                final_result = message_data
+                            print(f"  ✓ [streaming_task] Task completed (waiting for end message)")
+                            # 不要break，继续等待end消息
                         elif message_type == "task_failed" or status == "failed":
                             task_failed = True
                             final_result = message_data
@@ -1530,7 +1988,40 @@ def _receive_sse_messages(sse_url: str, task_id: str, service_id: str, timeout: 
                             if isinstance(data_field, dict) and not error_msg:
                                 error_msg = data_field.get("error", data_field.get("message", "Task failed"))
                             print(f"  ✗ [streaming_task] Task failed: {error_msg}")
-                            break
+                            # 不要break，继续等待end消息
+                        elif message_type == "error":
+                            # Handle error message type
+                            task_failed = True
+                            # 如果没有result消息，使用error作为final_result
+                            if final_result is None:
+                                final_result = message_data
+                            error_msg = message_data.get("error", message_data.get("message", "Task failed"))
+                            if isinstance(data_field, dict) and not error_msg:
+                                error_msg = data_field.get("error", data_field.get("message", "Task failed"))
+                            if not error_msg:
+                                error_msg = message_content or "Task failed with error"
+                            print(f"  ✗ [streaming_task] Task failed with error: {error_msg}")
+                            # 不要break，继续等待end消息
+                        elif message_type == "end":
+                            # type: end 消息标志着工具推送SSE消息完毕
+                            # 只有收到end消息才应该结束
+                            print(f"  ✓ [streaming_task] Received end message, SSE stream finished")
+                            # 根据之前的状态确定最终状态
+                            if task_failed:
+                                break
+                            elif task_completed or final_result is not None:
+                                # 如果收到了result消息或completed消息，标记为完成
+                                task_completed = True
+                                break
+                            else:
+                                # End without error or completion, check if we have enough info
+                                # If we have messages, assume completed (some servers may not send explicit completion)
+                                if len(all_messages) > 0:
+                                    task_completed = True
+                                    if final_result is None:
+                                        final_result = message_data
+                                    print(f"  ✓ [streaming_task] Task ended, assuming completed")
+                                    break
                         elif message_type == "progress" or message_type == "status":
                             # Update progress information (check both top level and data field)
                             progress = None
@@ -1715,7 +2206,22 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
         
         # Call CodeAct subgraph
         codeact_graph = build_codeact_subgraph()
-        codeact_output = codeact_graph.invoke(codeact_input)
+        try:
+            codeact_output = codeact_graph.invoke(codeact_input)
+        except Exception as codeact_error:
+            # Wrap CodeAct invocation error with more context
+            import traceback
+            error_traceback = traceback.format_exc()
+            print(f"\n{'='*80}")
+            print(f"【CodeAct 子图调用错误 - Task {task.task_id}】")
+            print(f"{'='*80}")
+            print(f"错误类型: {type(codeact_error).__name__}")
+            print(f"错误信息: {codeact_error}")
+            print(f"\n完整错误堆栈:")
+            print(error_traceback)
+            print(f"{'='*80}\n")
+            # Re-raise to be caught by outer exception handler
+            raise RuntimeError(f"CodeAct subgraph invocation failed for task {task.task_id}: {codeact_error}") from codeact_error
         
         # Convert dict output to CodeActState object (LangGraph returns dict)
         if isinstance(codeact_output, dict):
@@ -1791,13 +2297,18 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
             result.code = exec_result.get("code")
         else:
             result.status = ExecutorTaskStatus.FAILED
-            result.error = exec_result.get("error", "Execution failed")
-            error_type = exec_result.get("error_type", "UnknownError")
-            result.error_category = classify_error(result.error, error_type)
+            # Always record code, even if execution failed (code may have been generated)
+            result.code = exec_result.get("code")
+            result.error = exec_result.get("error") or "Execution failed"
+            error_type = exec_result.get("error_type") or "UnknownError"
+            # Ensure error is not None before classification
+            error_for_classification = result.error if result.error else "Execution failed"
+            result.error_category = classify_error(error_for_classification, error_type)
             
-            # Generate error analysis and suggestions
-            result.failure_analysis = _analyze_failure(result.error, error_type, result.error_category)
-            result.suggestions = _generate_suggestions(result.error_category, result.error, result.retry_count, state.max_retries)
+            # Generate error analysis and suggestions (ensure error is not None)
+            error_for_analysis = result.error if result.error else "Execution failed"
+            result.failure_analysis = _analyze_failure(error_for_analysis, error_type, result.error_category)
+            result.suggestions = _generate_suggestions(result.error_category, error_for_analysis, result.retry_count, state.max_retries)
     
     except Exception as e:
         result.status = ExecutorTaskStatus.FAILED
@@ -1807,9 +2318,32 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
         # Record detailed error info for debugging
         import traceback
         error_traceback = traceback.format_exc()
-        if len(error_traceback) > 1000:
-            error_traceback = error_traceback[:1000] + "..."
-        result.error = f"{error_msg}\n{error_traceback}"
+        
+        # Print full error traceback to console (no truncation for console output)
+        print(f"\n{'='*80}")
+        print(f"【Task {task.task_id} 执行错误】")
+        print(f"{'='*80}")
+        print(f"错误类型: {error_type}")
+        print(f"错误信息: {error_msg}")
+        print(f"\n完整错误堆栈:")
+        print(error_traceback)
+        print(f"{'='*80}\n")
+        
+        # Store full error traceback in result (increase limit to 10000 chars for detailed debugging)
+        error_traceback_stored = error_traceback
+        if len(error_traceback_stored) > 10000:
+            error_traceback_stored = error_traceback_stored[:10000] + f"\n... (truncated, total length: {len(error_traceback)} chars)"
+        result.error = f"{error_msg}\n\n完整错误堆栈:\n{error_traceback_stored}"
+        
+        # Try to extract code from CodeAct state if available (even if execution failed)
+        # This ensures we log code even when there's an exception
+        try:
+            if 'codeact_state' in locals() and hasattr(codeact_state, 'generated_code'):
+                result.code = codeact_state.generated_code
+            elif 'codeact_state' in locals() and isinstance(codeact_state, dict):
+                result.code = codeact_state.get('generated_code')
+        except:
+            pass  # If code extraction fails, continue without code
         
         # Generate error analysis and suggestions
         result.failure_analysis = _analyze_failure(error_msg, error_type, result.error_category)
@@ -1895,6 +2429,10 @@ Please return JSON format:
                 print(f"  ⚠ Failed to analyze result: {e}")
                 result.result_satisfied = True  # Default to satisfied
     
+        # Build per-task summary after execution analysis
+        if result.result_summary is None:
+            result.result_summary = _build_task_result_summary(task, result)
+    
     return state
 
 
@@ -1962,12 +2500,22 @@ def hitl_confirm_node(state: ExecutorState) -> ExecutorState:
     if not pending_requests:
         return state
     
-    # First check if there are HITL responses (get from parent_state as fallback)
-    if state.parent_state and state.parent_state.hitl_status:
+    # Also check parent_state.hitl_status as fallback (in case resume_value wasn't passed correctly)
+    # This is important because resume_executor_after_interrupt may not correctly pass resume_value through interrupt()
+    # First, try to update parent_state.hitl_status from thread-scoped storage if available
+    if state.parent_state and state.thread_id and state.thread_id in _parent_state_by_thread:
+        parent_state = _parent_state_by_thread[state.thread_id]
+        if parent_state.hitl_status and (not hasattr(state.parent_state, 'hitl_status') or not state.parent_state.hitl_status or state.parent_state.hitl_status != parent_state.hitl_status):
+            print(f"  [DEBUG] Updating parent_state.hitl_status from thread-scoped storage for hitl_confirm")
+            state.parent_state.hitl_status = parent_state.hitl_status
+    
+    print(f"  [DEBUG] Checking parent_state.hitl_status: {state.parent_state.hitl_status if (state.parent_state and hasattr(state.parent_state, 'hitl_status')) else 'No parent_state or hitl_status'}")
+    if state.parent_state and hasattr(state.parent_state, 'hitl_status') and state.parent_state.hitl_status:
         try:
             # Ensure using global json module
             import json as json_module
             hitl_data = json_module.loads(state.parent_state.hitl_status)
+            print(f"  [DEBUG] Parsed hitl_data from parent_state.hitl_status: type={hitl_data.get('type')}, responses={list(hitl_data.get('responses', {}).keys())}")
             if hitl_data.get("type") == "response_confirmation":
                 responses = hitl_data.get("responses", {})
                 for task_id, response_data in responses.items():
@@ -2484,6 +3032,7 @@ def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalSt
                 task.result["execution_mode"] = task_result.execution_mode
                 task.result["code"] = task_result.code
                 task.result["confidence_score"] = task_result.confidence_score
+                task.result["execution_summary"] = task_result.result_summary
             
             # Mark task as completed
             global_state.completed_tasks[task.task_id] = task
@@ -2501,7 +3050,8 @@ def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalSt
                 "error_category": result.error_category.value if result.error_category else None,
                 "confidence_score": result.confidence_score,
                 "failure_analysis": result.failure_analysis,
-                "suggestions": result.suggestions
+                "suggestions": result.suggestions,
+                "summary": result.result_summary
             }
             for task_id, result in executor_state.task_results.items()
         }
@@ -2561,10 +3111,12 @@ def execute_executor_with_interrupt_support(
         # Save parent_state reference so it can be restored in nodes
         saved_parent_state = None
         if isinstance(initial_state, dict):
-            input_data = initial_state
+            input_data = dict(initial_state)
+            input_data["thread_id"] = thread_id
         else:
             # Save parent_state reference (because it will be excluded)
             saved_parent_state = getattr(initial_state, 'parent_state', None)
+            object.__setattr__(initial_state, "thread_id", thread_id)
             input_data = initial_state.model_dump(exclude={'parent_state'}, mode='json')
     
     # Use stream() to detect interrupts
@@ -2572,11 +3124,10 @@ def execute_executor_with_interrupt_support(
     interrupt_data = None
     final_result = None
     
-    # Store parent_state in module variable so nodes can access it
-    # Note: This is not thread-safe, but can be used in single-threaded tests
-    global _current_parent_state
-    _current_parent_state = saved_parent_state
-    print(f"  🔍 [execute_executor] Saved parent_state to module variable: {_current_parent_state is not None}")
+    # Store parent_state in thread-scoped storage so nodes can access it
+    if saved_parent_state is not None:
+        _parent_state_by_thread[thread_id] = saved_parent_state
+    print(f"  🔍 [execute_executor] Saved parent_state to thread storage: {saved_parent_state is not None}")
     
     try:
         # Use stream to execute step by step, can detect interrupts
@@ -2588,7 +3139,17 @@ def execute_executor_with_interrupt_support(
         print(f"  🔍 [execute_executor] Starting stream execution, config: {config}")
         print(f"  🔍 [execute_executor] saved_parent_state exists: {saved_parent_state is not None}")
         chunk_count = 0
-        for chunk in executor_graph.stream(input_data, config=config):
+        try:
+            stream_iter = executor_graph.stream(input_data, config=config)
+        except Exception as stream_init_error:
+            import traceback
+            error_traceback = traceback.format_exc()
+            print(f"  ✗ [execute_executor] Failed to initialize stream: {type(stream_init_error).__name__}: {stream_init_error}")
+            print(f"  完整错误堆栈:\n{error_traceback}")
+            # Re-raise with full context
+            raise RuntimeError(f"Failed to initialize executor stream: {stream_init_error}") from stream_init_error
+        
+        for chunk in stream_iter:
             chunk_count += 1
             print(f"  🔍 [execute_executor] Received chunk #{chunk_count}: keys={list(chunk.keys()) if isinstance(chunk, dict) else 'not dict'}")
             
@@ -2693,8 +3254,14 @@ def execute_executor_with_interrupt_support(
     except Exception as e:
         # If interrupt raises exception, this is normal behavior
         # LangGraph will handle this exception in stream
+        import traceback
+        error_traceback = traceback.format_exc()
         error_str = str(e).lower()
         error_type = type(e).__name__
+        
+        # Always log full error traceback for debugging
+        print(f"  🔍 [execute_executor] Exception caught: {error_type}: {e}")
+        print(f"  完整错误堆栈:\n{error_traceback}")
         
         if "interrupt" in error_str or "GraphInterrupt" in error_type:
             interrupted = True
@@ -2717,13 +3284,15 @@ def execute_executor_with_interrupt_support(
                     interrupted = True
                     print(f"  ✓ Interrupt detected (via exception.value: {error_type})")
                 else:
-                    # Other exception, re-raise
+                    # Other exception, re-raise with full context
                     print(f"  ✗ Unexpected exception: {error_type}: {e}")
-                    raise
+                    print(f"  完整错误堆栈:\n{error_traceback}")
+                    raise RuntimeError(f"Unexpected exception in executor stream: {e}") from e
             else:
-                # Other exception, re-raise
+                # Other exception, re-raise with full context
                 print(f"  ✗ Unexpected exception: {error_type}: {e}")
-                raise
+                print(f"  完整错误堆栈:\n{error_traceback}")
+                raise RuntimeError(f"Unexpected exception in executor stream: {e}") from e
     
     # Ensure interrupt_data is dict format (if tuple or other type, convert to dict)
     if interrupt_data is not None:
@@ -2814,6 +3383,16 @@ def resume_executor_after_interrupt(
     """
     if not INTERRUPT_AVAILABLE or Command is None:
         raise ValueError("interrupt functionality unavailable, cannot resume execution")
+    
+    # Update parent_state.hitl_status in thread-scoped storage if resume_value contains user response
+    if thread_id in _parent_state_by_thread and resume_value and isinstance(resume_value, dict):
+        import json as json_module
+        try:
+            if resume_value.get("type") in ["response_parameters", "response_confirmation"]:
+                _parent_state_by_thread[thread_id].hitl_status = json_module.dumps(resume_value, ensure_ascii=False)
+                print(f"  [DEBUG] Updated parent_state.hitl_status from resume_value (type: {resume_value.get('type')})")
+        except Exception as e:
+            print(f"  [WARN] Failed to update parent_state.hitl_status: {e}")
     
     config = {"configurable": {"thread_id": thread_id}}
     

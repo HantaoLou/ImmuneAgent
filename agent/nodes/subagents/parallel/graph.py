@@ -1,7 +1,10 @@
 # subgraphs/parallel_group_subgraph.py
+from typing import Dict, Any, Optional
 from langgraph.graph import StateGraph, START, END
 from concurrent.futures import ThreadPoolExecutor
 from pydantic import BaseModel, Field
+
+from state import SubTask, ParallelTaskGroup, TaskStatus, GlobalState
 
 # 并行子图状态
 class ParallelGroupSubgraphState(BaseModel):

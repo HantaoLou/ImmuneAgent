@@ -29,7 +29,6 @@ class ImmunityState(BaseModel):
     # Task list from task_decomposition (optional, if task decomposition results already exist)
     subtasks: List[Any] = Field(default_factory=list, description="Subtask list")
     parallel_task_groups: Dict[str, Any] = Field(default_factory=dict, description="Parallel task groups")
-    parameter_inference_results: Dict[str, Any] = Field(default_factory=dict, description="Parameter inference results")
     
     # ========== Stage 1: Query Decomposition ==========
     optimized_questions: List[str] = Field(default_factory=list, description="Optimized query list")
