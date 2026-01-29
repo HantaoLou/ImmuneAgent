@@ -18,22 +18,23 @@ Based on the provided MCP tool information and parameters, generate Python code 
 
 # Code Generation Requirements
 
-1. **Code must be directly executable**, use the provided `mcp_helper` module to call MCP tools
+1. **Code must be directly executable**, use the provided `call_tool()` interface to call MCP tools
 2. **Use the provided parameters**, ensure parameter types and formats are correct
 3. **Handle possible errors**, add appropriate error handling
 4. **Code should be concise and clear**, include necessary comments
 5. **Must set result variable at the end**, containing execution results
+6. **LLM decides WHAT, code handles HOW data transforms** (keep tool calls simple, move data handling into code)
 
 # MCP Tool Call Method
 
-**Important: Must use `mcp_helper.invoke_mcp_tool_sync` function to call MCP tools.**
+**Important: Must use `core.tool_interface.call_tool` function to call MCP tools.**
 
 Standard call pattern:
 ```python
-from utils.mcp_helper import invoke_mcp_tool_sync
+from core.tool_interface import call_tool
 
 # Call MCP tool
-tool_result = invoke_mcp_tool_sync(
+tool_result = call_tool(
     tool_name="tool_name",
     parameters={
         "param1": "value1",
@@ -58,17 +59,17 @@ else:
 
 You must only return executable Python code, do not include any explanations, markdown code block markers, or other text.
 Code should:
-- Import `from utils.mcp_helper import invoke_mcp_tool_sync`
-- Use `invoke_mcp_tool_sync` to call MCP tools
+- Import `from core.tool_interface import call_tool`
+- Use `call_tool` to call MCP tools
 - Process execution results
 - Set result variable (dictionary format, containing status, output, etc.)
 
 # Notes
 
-- **Must use `invoke_mcp_tool_sync` function, do not try to directly import `mcp_client` or other non-existent modules**
+- **Must use `call_tool` function, do not try to directly import `mcp_client` or other non-existent modules**
 - Parameter values should directly use provided parameters, do not modify
 - If parameters contain file paths, ensure proper path handling
-- `invoke_mcp_tool_sync` returns a dictionary containing `status` ("success" or "failed"), `output` (execution result), and `error` (error message, if any)
+- `call_tool` returns a dictionary containing `status`, `output`, `error`, `error_type`, `execution_time_ms`, `tool_name`, and `service_id`
 """
 
 
@@ -105,8 +106,8 @@ Tool description: {tool_description}
 {params_str}
 
 # Requirements
-1. Use `from utils.mcp_helper import invoke_mcp_tool_sync` to import MCP tool call function
-2. Use `invoke_mcp_tool_sync(tool_name="{tool_name}", parameters=<parameter_dict>)` to call the tool
+1. Use `from core.tool_interface import call_tool` to import MCP tool call function
+2. Use `call_tool(tool_name="{tool_name}", parameters=<parameter_dict>)` to call the tool
 3. Process execution result (check `tool_result["status"]`)
 4. Set result variable in the following format:
    result = {{
@@ -117,9 +118,9 @@ Tool description: {tool_description}
 
 # Example Code Structure
 ```python
-from utils.mcp_helper import invoke_mcp_tool_sync
+from core.tool_interface import call_tool
 
-tool_result = invoke_mcp_tool_sync(
+tool_result = call_tool(
     tool_name="{tool_name}",
     parameters={params_str}
 )
@@ -148,6 +149,7 @@ Based on the user's task description, generate complete, executable Python code 
 3. **Code should be clear**, include necessary comments
 4. **Prioritize Python standard library**, if third-party libraries are necessary, use common ones (such as pandas, numpy, etc.)
 5. **Must set result variable at the end**, containing execution results
+6. **LLM decides WHAT, code handles HOW data transforms** (keep logic explicit in code)
 
 # Output Format
 

@@ -37,7 +37,9 @@ from nodes.subagents.code_act.prompt import (
 from nodes.subagents.code_act.trajectory import (
     CodeTrajectory,
     TrajectoryPool,
-    TrajectoryStatus
+    TrajectoryStatus,
+    build_react_steps_from_trajectory,
+    summarize_react_steps
 )
 from nodes.subagents.code_act.revision import (
     RevisionPlan,
@@ -180,6 +182,13 @@ def _save_trajectory_to_pool(state: CodeActState, trajectory: CodeTrajectory):
     """
     # Add to trajectory history
     state.trajectory_history.append(trajectory)
+
+    # Add React trace summary for logging and storage
+    react_steps = build_react_steps_from_trajectory(trajectory)
+    if react_steps:
+        trajectory.metadata["react_steps"] = [step.model_dump() for step in react_steps]
+        trajectory.metadata["react_summary"] = summarize_react_steps(react_steps, max_steps=5)
+        print(f"  ℹ React summary: {trajectory.metadata['react_summary']}")
     
     # TODO: Integrate TrajectoryPool for persistent storage
     # Currently saved in memory, can add persistence later
@@ -389,6 +398,108 @@ except Exception:
     return code
 
 
+def validate_generated_code(
+    code: str,
+    mode: CodeActExecutionMode,
+    enforce_tool_call: Optional[bool] = None
+) -> Dict[str, Any]:
+    """
+    Lightweight validation for generated code.
+
+    Ensures MCP tool calls use the unified call_tool interface and that code is
+    free from obvious formatting artifacts.
+    """
+    issues: List[str] = []
+    if not code or not code.strip():
+        issues.append("Generated code is empty.")
+    if "```" in code:
+        issues.append("Generated code contains markdown code fences.")
+    if enforce_tool_call is None:
+        enforce_tool_call = mode == CodeActExecutionMode.MCP_TOOL
+
+    if enforce_tool_call:
+        if "call_tool" not in code:
+            issues.append("MCP tool code must call call_tool().")
+        if "invoke_mcp_tool_sync" in code:
+            issues.append("MCP tool code should not call invoke_mcp_tool_sync().")
+
+    if issues:
+        return {
+            "valid": False,
+            "error": " ".join(issues),
+            "error_type": "CodeValidationError",
+            "error_category": "code_error"
+        }
+    return {"valid": True}
+
+
+def _build_validation_error_code(error_message: str) -> str:
+    """Build a minimal executable snippet that reports validation failure."""
+    return f"""result = {{
+    "status": "failed",
+    "error": {repr(error_message)},
+    "error_type": "CodeValidationError",
+    "error_category": "code_error"
+}}"""
+
+
+def _generate_fix_code_for_state(state: "CodeActState", has_sandbox: bool, sandbox_dir: str) -> "CodeActState":
+    """Generate fix code using existing fix_code flow."""
+    previous_code = state.previous_code or ""
+    previous_error = state.previous_error or ""
+    error_category = state.error_category
+
+    if not previous_code or not previous_error:
+        state.generated_code = "# Missing necessary fix information (original code or error information)"
+        return state
+
+    if state.revision_plan:
+        print(f"  🔄 Using Revision plan for intelligent fix (strategy: {state.revision_plan.strategy.value})")
+        print(f"     Root cause: {state.revision_plan.root_cause[:100]}...")
+        print(f"     Orthogonal strategy: {'Yes' if state.revision_plan.orthogonal else 'No'}")
+
+        generated_code = execute_revision_plan(
+            revision_plan=state.revision_plan,
+            original_code=previous_code,
+            original_error=previous_error,
+            task_description=state.task_description,
+            parameters=state.parameters
+        )
+    else:
+        user_prompt = get_fix_code_user_prompt(
+            previous_code=previous_code,
+            previous_error=previous_error,
+            error_category=error_category
+        )
+
+        fallback_code = f"""
+# Fix code errors
+# Previous error: {previous_error}
+# Original code:
+{previous_code}
+
+# Fallback fix: try basic fix
+try:
+    {previous_code}
+    result = {{"status": "success", "output": "Code execution successful"}}
+except Exception as e:
+    result = {{"status": "failed", "error": str(e)}}
+"""
+
+        generated_code = _generate_code_with_llm(
+            system_prompt=FIX_CODE_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            fallback_code=fallback_code
+        )
+
+    state.generated_code = _ensure_code_executable(
+        generated_code,
+        has_sandbox=has_sandbox,
+        sandbox_dir=sandbox_dir
+    )
+    return state
+
+
 def _find_and_activate_venv(agent_dir: Path) -> Optional[Path]:
     """
     Find and activate project virtual environment
@@ -498,6 +609,8 @@ def codeact_generate_code_node(state: CodeActState) -> CodeActState:
     if not has_sandbox:
         print(f"  ⚠ Sandbox environment unavailable, will generate code executable in fallback mode (directory: {sandbox_dir})")
     
+    enforce_tool_call = mode == CodeActExecutionMode.MCP_TOOL
+
     if mode == CodeActExecutionMode.MCP_TOOL:
         # Generate code to call MCP tools
         tools = state.tools
@@ -520,9 +633,17 @@ def codeact_generate_code_node(state: CodeActState) -> CodeActState:
             fallback_code = f"""
 # Call MCP tool: {tool_name}
 # Parameters: {params_str}
-print("Calling MCP tool: {tool_name}")
-print("Parameters: {params_str}")
-result = {{"status": "success", "output": "MCP tool call result (placeholder)"}}
+from core.tool_interface import call_tool
+
+tool_result = call_tool(
+    tool_name="{tool_name}",
+    parameters={repr(parameters)}
+)
+
+if tool_result["status"] == "success":
+    result = {{"status": "success", "output": tool_result["output"]}}
+else:
+    result = {{"status": "failed", "error": tool_result["error"], "error_type": tool_result.get("error_type")}}
 """
             
             generated_code = _generate_code_with_llm(
@@ -542,62 +663,7 @@ result = {{"status": "success", "output": "MCP tool call result (placeholder)"}}
     
     elif mode == CodeActExecutionMode.FIX_CODE:
         # Fix code errors: generate fixed code based on previous error information
-        previous_code = state.previous_code or ""
-        previous_error = state.previous_error or ""
-        error_category = state.error_category
-        
-        if not previous_code or not previous_error:
-            state.generated_code = "# Missing necessary fix information (original code or error information)"
-            return state
-        
-        # If Revision plan is provided, use intelligent fix (SE-Agent style)
-        if state.revision_plan:
-            print(f"  🔄 Using Revision plan for intelligent fix (strategy: {state.revision_plan.strategy.value})")
-            print(f"     Root cause: {state.revision_plan.root_cause[:100]}...")
-            print(f"     Orthogonal strategy: {'Yes' if state.revision_plan.orthogonal else 'No'}")
-            
-            generated_code = execute_revision_plan(
-                revision_plan=state.revision_plan,
-                original_code=previous_code,
-                original_error=previous_error,
-                task_description=state.task_description,
-                parameters=state.parameters
-            )
-        else:
-            # Use traditional fix method
-            user_prompt = get_fix_code_user_prompt(
-                previous_code=previous_code,
-                previous_error=previous_error,
-                error_category=error_category
-            )
-            
-            # Fallback code
-            fallback_code = f"""
-# Fix code errors
-# Previous error: {previous_error}
-# Original code:
-{previous_code}
-
-# Fallback fix: try basic fix
-try:
-    {previous_code}
-    result = {{"status": "success", "output": "Code execution successful"}}
-except Exception as e:
-    result = {{"status": "failed", "error": str(e)}}
-"""
-            
-            generated_code = _generate_code_with_llm(
-                system_prompt=FIX_CODE_SYSTEM_PROMPT,
-                user_prompt=user_prompt,
-                fallback_code=fallback_code
-            )
-        
-        # Ensure code is executable (especially when no sandbox environment)
-        state.generated_code = _ensure_code_executable(
-            generated_code,
-            has_sandbox=has_sandbox,
-            sandbox_dir=sandbox_dir
-        )
+        state = _generate_fix_code_for_state(state, has_sandbox, sandbox_dir)
     
     elif mode == CodeActExecutionMode.FIX_PARAMETER:
         # Fix parameter errors: adjust parameters based on previous error information
@@ -679,6 +745,41 @@ result = {{"status": "success", "output": "Task execution result (placeholder)"}
             sandbox_dir=sandbox_dir
         )
     
+    # Validate generated code
+    validation = validate_generated_code(
+        state.generated_code or "",
+        state.execution_mode,
+        enforce_tool_call=enforce_tool_call
+    )
+    if not validation.get("valid", False):
+        print(f"  ⚠ Code validation failed: {validation.get('error')}")
+        state.previous_code = state.generated_code
+        state.previous_error = validation.get("error")
+        state.error_category = validation.get("error_category")
+
+        if state.execution_mode != CodeActExecutionMode.FIX_CODE:
+            state.execution_mode = CodeActExecutionMode.FIX_CODE
+            state.revision_plan = None
+            state = _generate_fix_code_for_state(state, has_sandbox, sandbox_dir)
+
+            second_validation = validate_generated_code(
+                state.generated_code or "",
+                state.execution_mode,
+                enforce_tool_call=enforce_tool_call
+            )
+            if not second_validation.get("valid", False):
+                state.generated_code = _ensure_code_executable(
+                    _build_validation_error_code(second_validation.get("error", "Code validation failed")),
+                    has_sandbox=has_sandbox,
+                    sandbox_dir=sandbox_dir
+                )
+        else:
+            state.generated_code = _ensure_code_executable(
+                _build_validation_error_code(validation.get("error", "Code validation failed")),
+                has_sandbox=has_sandbox,
+                sandbox_dir=sandbox_dir
+            )
+
     # Record code generation trajectory
     generation_time = time.time() - generation_start_time
     if state.current_trajectory:
@@ -885,11 +986,13 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             except ImportError:
                 print(f"  ⚠ Warning: Cannot import langchain-mcp-adapters, virtual environment may not be properly activated")
             
-            # Pre-import mcp_helper so generated code can use it
+            # Pre-import tool interfaces so generated code can use them
             try:
                 from utils.mcp_helper import invoke_mcp_tool_sync
+                from core.tool_interface import call_tool
                 local_namespace = {
                     "invoke_mcp_tool_sync": invoke_mcp_tool_sync,
+                    "call_tool": call_tool,
                     "__builtins__": __builtins__
                 }
             except ImportError as e:

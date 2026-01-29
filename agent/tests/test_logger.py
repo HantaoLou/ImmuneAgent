@@ -352,7 +352,7 @@ class GlobalTestLogger:
                         f.write(f"| {task_id} | {content} | {deps} |\n")
                     f.write("\n")
         
-        # 记录节点执行过程
+        # 记录节点执行过程（简化版，只记录关键变化）
         node_executions = [log for log in test_logger.logs if log["event_type"] == "node_execution"]
         if node_executions:
             f.write("### 节点执行流程\n\n")
@@ -365,31 +365,38 @@ class GlobalTestLogger:
                 f.write(f"#### 步骤 {step}: {node_name}\n\n")
                 f.write(f"**描述**: {description}\n\n")
                 
-                # 节点入参
-                input_state = data.get("input_state", {})
-                if input_state:
-                    f.write("**节点入参**:\n\n")
-                    f.write("```json\n")
-                    f.write(json.dumps(self._simplify_state(input_state), ensure_ascii=False, indent=2))
-                    f.write("\n```\n\n")
-                
-                # 节点输出
-                output_state = data.get("output_state")
-                if output_state:
-                    f.write("**节点输出**:\n\n")
-                    f.write("```json\n")
-                    f.write(json.dumps(self._simplify_state(output_state), ensure_ascii=False, indent=2))
-                    f.write("\n```\n\n")
-                
-                # 状态变化
+                # 只记录状态变化，不记录完整输入输出
                 state_changes = data.get("state_changes", {})
                 if state_changes:
-                    f.write("**状态变化**:\n\n")
+                    f.write("**关键状态变化**:\n\n")
                     for field, change in state_changes.items():
-                        f.write(f"- **{field}**:\n")
-                        f.write(f"  - 变化前: {json.dumps(change.get('before'), ensure_ascii=False)}\n")
-                        f.write(f"  - 变化后: {json.dumps(change.get('after'), ensure_ascii=False)}\n")
+                        before = change.get('before')
+                        after = change.get('after')
+                        
+                        # 简化显示
+                        if field == 'task_status_map':
+                            f.write(f"- **任务状态变化**:\n")
+                            if isinstance(after, dict):
+                                for task_id, status in after.items():
+                                    if isinstance(before, dict) and before.get(task_id) != status:
+                                        f.write(f"  - {task_id}: {before.get(task_id, 'N/A')} → {status}\n")
+                        elif field == 'task_results':
+                            f.write(f"- **任务结果更新**:\n")
+                            if isinstance(after, dict):
+                                for task_id in after.keys():
+                                    f.write(f"  - {task_id}: 结果已更新\n")
+                        elif field == 'completed_count':
+                            f.write(f"- **完成任务数**: {before} → {after}\n")
+                        elif field == 'failed_count':
+                            f.write(f"- **失败任务数**: {before} → {after}\n")
+                        else:
+                            # 其他字段，简化显示
+                            before_str = json.dumps(before, ensure_ascii=False)[:100]
+                            after_str = json.dumps(after, ensure_ascii=False)[:100]
+                            f.write(f"- **{field}**: {before_str} → {after_str}\n")
                     f.write("\n")
+                else:
+                    f.write("*无关键状态变化*\n\n")
                 
                 f.write("---\n\n")
         
@@ -482,12 +489,10 @@ class GlobalTestLogger:
             
             f.write("---\n\n")
         
-        # 记录任务执行结果
+        # 记录任务执行结果（重点记录）
         task_executions = [log for log in test_logger.logs if log["event_type"] == "task_execution"]
         if task_executions:
             f.write("### 任务执行结果\n\n")
-            f.write("| 任务ID | 状态 | 执行模式 | 结果 | 错误 |\n")
-            f.write("|--------|------|----------|------|------|\n")
             for exec_log in task_executions:
                 data = exec_log["data"]
                 task_id = data.get("task_id", "")
@@ -496,10 +501,69 @@ class GlobalTestLogger:
                 result = data.get("result", {})
                 error = data.get("error", "")
                 
-                result_str = json.dumps(result, ensure_ascii=False)[:100]  # 限制长度
-                error_str = error[:100] if error else ""
-                f.write(f"| {task_id} | {status} | {exec_mode} | {result_str} | {error_str} |\n")
-            f.write("\n")
+                f.write(f"#### 任务 {task_id}\n\n")
+                f.write(f"**状态**: {status}\n\n")
+                f.write(f"**执行模式**: {exec_mode}\n\n")
+                
+                # 提取关键结果信息
+                key_result_info = self._extract_key_task_result(result)
+                if key_result_info:
+                    f.write("**关键结果**:\n\n")
+                    
+                    # 优先显示final_result（最重要的最终结果）
+                    if "final_result" in key_result_info:
+                        f.write("**最终结果** (final_result):\n\n")
+                        f.write("```json\n")
+                        f.write(json.dumps(key_result_info["final_result"], ensure_ascii=False, indent=2))
+                        f.write("\n```\n\n")
+                        # 移除final_result，避免重复显示
+                        key_result_info_display = {k: v for k, v in key_result_info.items() if k != "final_result"}
+                    else:
+                        key_result_info_display = key_result_info
+                    
+                    # 显示其他关键信息
+                    if key_result_info_display:
+                        f.write("**其他关键信息**:\n\n")
+                        f.write("```json\n")
+                        f.write(json.dumps(key_result_info_display, ensure_ascii=False, indent=2))
+                        f.write("\n```\n\n")
+                
+                # 如果有错误，详细记录
+                if error:
+                    f.write(f"**错误信息**: {error}\n\n")
+                
+                # 显示result消息（工具执行结果）
+                if "result_messages" in result and result["result_messages"]:
+                    f.write("**工具执行结果** (type: result 消息):\n\n")
+                    f.write("```json\n")
+                    f.write(json.dumps(result["result_messages"], ensure_ascii=False, indent=2))
+                    f.write("\n```\n\n")
+                
+                # 显示完整结果（但messages中只包含result消息）
+                f.write("**完整执行结果** (已过滤progress消息，只保留result消息):\n\n")
+                f.write("```json\n")
+                f.write(json.dumps(result, ensure_ascii=False, indent=2))
+                f.write("\n```\n\n")
+
+                # 展开每次迭代的代码内容（如果有）
+                execution_summary = result.get("execution_summary", {})
+                code_iterations = []
+                if isinstance(execution_summary, dict):
+                    code_iterations = execution_summary.get("code_iterations", []) or []
+                if code_iterations:
+                    f.write("**代码迭代历史**:\n\n")
+                    for idx, entry in enumerate(code_iterations, 1):
+                        status = entry.get("status", "unknown")
+                        error_type = entry.get("error_type")
+                        exec_time = entry.get("execution_time")
+                        f.write(f"- 第 {idx} 次迭代: status={status}, error_type={error_type}, execution_time={exec_time}\n\n")
+                        code = entry.get("code")
+                        if code:
+                            f.write("```python\n")
+                            f.write(code)
+                            f.write("\n```\n\n")
+                
+                f.write("---\n\n")
         
         # 记录总结
         summaries = [log for log in test_logger.logs if log["event_type"] == "summary"]
@@ -527,9 +591,157 @@ class GlobalTestLogger:
         
         for field in key_fields:
             if field in state:
-                simplified[field] = state[field]
+                value = state[field]
+                # Handle SubTask objects and other Pydantic models
+                if isinstance(value, list):
+                    simplified[field] = [
+                        item.model_dump(mode='json') if hasattr(item, 'model_dump') else _safe_serialize_for_json(item)
+                        for item in value
+                    ]
+                elif hasattr(value, 'model_dump'):
+                    simplified[field] = value.model_dump(mode='json')
+                else:
+                    simplified[field] = _safe_serialize_for_json(value)
         
         return simplified
+    
+    def _extract_key_task_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """提取任务执行结果中的关键信息"""
+        if not isinstance(result, dict):
+            return {}
+        
+        key_info = {}
+        
+        # 提取状态（从result中）
+        if "status" in result:
+            key_info["status"] = result["status"]
+        
+        # 提取错误信息（优先从result中，其次从error字段）
+        if "error" in result and result["error"]:
+            key_info["error"] = result["error"]
+        elif "error_category" in result:
+            key_info["error_category"] = result["error_category"]
+        
+        # 提取其他关键字段
+        for field in ["confidence_score", "retry_count"]:
+            if field in result and result[field] is not None:
+                key_info[field] = result[field]
+        
+        # 提取输出文件路径和关键信息
+        output_files = []
+        if "output" in result:
+            output = result["output"]
+            
+            # 如果是字符串，尝试解析
+            if isinstance(output, str):
+                # 先尝试解析JSON
+                try:
+                    output = json.loads(output)
+                except:
+                    # 如果不是JSON，尝试从字符串中提取文件路径
+                    import re
+                    # 匹配文件路径模式
+                    file_patterns = [
+                        r'["\']([^"\']*\.(csv|fasta|json|txt|xlsx|tsv|pdb))["\']',
+                        r'([/\\][^/\\\s]+\.(csv|fasta|json|txt|xlsx|tsv|pdb))',
+                    ]
+                    for pattern in file_patterns:
+                        matches = re.findall(pattern, output)
+                        for match in matches:
+                            if isinstance(match, tuple):
+                                file_path = match[0] if match[0] else match[1] if len(match) > 1 else None
+                            else:
+                                file_path = match
+                            if file_path and file_path not in output_files:
+                                output_files.append(file_path)
+            
+            # 如果是字典，提取关键信息
+            if isinstance(output, dict):
+                # 优先提取final_result（最重要的，包含最终结果和文件路径）
+                if "final_result" in output and output["final_result"]:
+                    final_result = output["final_result"]
+                    if isinstance(final_result, dict):
+                        # 从final_result中提取文件路径
+                        for key in ["output_file", "output_file_path", "result_file", "file_path", "file", "output", "result"]:
+                            if key in final_result:
+                                value = final_result[key]
+                                if isinstance(value, str) and any(ext in value.lower() for ext in ['.csv', '.fasta', '.json', '.txt', '.xlsx', '.tsv', '.pdb']):
+                                    if value not in output_files:
+                                        output_files.append(value)
+                                elif isinstance(value, dict):
+                                    # 如果value是字典，递归查找文件路径
+                                    for sub_key in ["path", "file", "file_path"]:
+                                        if sub_key in value and isinstance(value[sub_key], str):
+                                            if any(ext in value[sub_key].lower() for ext in ['.csv', '.fasta', '.json', '.txt', '.xlsx', '.tsv', '.pdb']):
+                                                if value[sub_key] not in output_files:
+                                                    output_files.append(value[sub_key])
+                        
+                        # 保存final_result的关键信息
+                        key_info["final_result"] = final_result
+                
+                # 提取任务ID和服务ID
+                if "task_id" in output:
+                    key_info["task_id"] = output["task_id"]
+                if "service_id" in output:
+                    key_info["service_id"] = output["service_id"]
+                
+                # 检查各种可能的输出文件字段（在output的顶层）
+                for key in ["output_file", "output_file_path", "result_file", "file_path", "file", "output"]:
+                    if key in output:
+                        value = output[key]
+                        if isinstance(value, str) and any(ext in value.lower() for ext in ['.csv', '.fasta', '.json', '.txt', '.xlsx', '.tsv', '.pdb']):
+                            if value not in output_files:
+                                output_files.append(value)
+                
+                # 检查messages中的result消息（工具执行结果）
+                if "messages" in output and isinstance(output["messages"], list):
+                    # 只提取type为result的消息（工具执行结果）
+                    result_messages = []
+                    for msg in output["messages"]:
+                        if isinstance(msg, dict):
+                            msg_type = msg.get("type", "")
+                            
+                            # 只处理type为result的消息
+                            if msg_type == "result":
+                                result_messages.append(msg)
+                                
+                                # 从result消息中提取文件路径信息
+                                for field in ["output_file", "file_path", "result_file", "file", "output"]:
+                                    if field in msg:
+                                        value = msg[field]
+                                        if isinstance(value, str) and any(ext in value.lower() for ext in ['.csv', '.fasta', '.json', '.txt', '.xlsx', '.tsv', '.pdb']):
+                                            if value not in output_files:
+                                                output_files.append(value)
+                                
+                                # 检查data字段中是否有文件路径
+                                if "data" in msg and isinstance(msg["data"], dict):
+                                    for field in ["output_file", "file_path", "result_file", "file", "output"]:
+                                        if field in msg["data"]:
+                                            value = msg["data"][field]
+                                            if isinstance(value, str) and any(ext in value.lower() for ext in ['.csv', '.fasta', '.json', '.txt', '.xlsx', '.tsv', '.pdb']):
+                                                if value not in output_files:
+                                                    output_files.append(value)
+                    
+                    # 记录result消息（工具执行结果）
+                    if result_messages:
+                        key_info["result_messages"] = result_messages
+                        key_info["result_messages_count"] = len(result_messages)
+                    
+                    # 也检查result_messages字段（如果已经提取过）
+                    if "result_messages" in output:
+                        key_info["result_messages"] = output["result_messages"]
+                        key_info["result_messages_count"] = len(output["result_messages"])
+            
+            # 如果找到了输出文件，记录
+            if output_files:
+                key_info["output_files"] = list(set(output_files))  # 去重
+        
+        return key_info
+    
+    def _summarize_result(self, result: Dict[str, Any], max_length: int = None) -> Dict[str, Any]:
+        """对结果进行摘要（暂时不限制长度，用于调试）"""
+        # 暂时不进行任何截断，完整返回结果
+        return result
 
 
 # 全局日志记录器实例（在测试模块级别初始化）

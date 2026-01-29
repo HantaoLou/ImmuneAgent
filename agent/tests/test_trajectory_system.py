@@ -119,7 +119,7 @@ class TestCodeTrajectory:
             trajectory_id="test_005",
             task_id="task_005",
             execution_mode="mcp_tool",
-            generated_code="result = invoke_mcp_tool_sync('tool1', {'param': 'value'})",
+            generated_code="result = call_tool('tool1', {'param': 'value'})",
             status=TrajectoryStatus.SUCCESS,
             parameters={"param": "value"}
         )
@@ -128,7 +128,7 @@ class TestCodeTrajectory:
             trajectory_id="test_006",
             task_id="task_005",
             execution_mode="mcp_tool",
-            generated_code="result = invoke_mcp_tool_sync('tool1', {'param': 'value'})",
+            generated_code="result = call_tool('tool1', {'param': 'value'})",
             status=TrajectoryStatus.SUCCESS,
             parameters={"param": "value"}
         )
@@ -397,7 +397,7 @@ class TestTrajectoryIntegration:
         assert codeact_state.current_trajectory.status == TrajectoryStatus.PARTIAL
         
         # 2. 更新代码
-        generated_code = "result = invoke_mcp_tool_sync('test_tool', {'param': 'value'})"
+        generated_code = "result = call_tool('test_tool', {'param': 'value'})"
         _update_trajectory_code(codeact_state.current_trajectory, generated_code, 0.5)
         assert codeact_state.current_trajectory.generated_code == generated_code
         

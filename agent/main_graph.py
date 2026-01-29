@@ -9,10 +9,16 @@ from nodes.subagents.task_decomposition.graph import (
 from state import GlobalState, UserTaskType
 from langgraph.graph import StateGraph, START, END
 from nodes.subagents.supervisor.graph import build_supervisor_subgraph, supervisor_input_mapper, supervisor_output_mapper
+from nodes.subagents.supervisor.react_supervisor import (
+    build_react_supervisor_subgraph,
+    supervisor_input_mapper as react_supervisor_input_mapper,
+    supervisor_output_mapper as react_supervisor_output_mapper
+)
 from nodes.subagents.general_qa.graph import build_general_qa_subgraph, general_qa_input_mapper, general_qa_output_mapper
 
 # Initialize all subgraphs
 supervisor_subgraph = build_supervisor_subgraph()
+react_supervisor_subgraph = build_react_supervisor_subgraph()
 general_qa_subgraph = build_general_qa_subgraph()
 
 
@@ -180,11 +186,12 @@ def build_main_graph():
     
     # Main graph node 1: Call supervisor subgraph
     def run_supervisor_subgraph(state: GlobalState) -> GlobalState:
-        # Main graph → subgraph: Map state
+        if state.use_react_supervisor:
+            subgraph_input = react_supervisor_input_mapper(state)
+            subgraph_output = react_supervisor_subgraph.invoke(subgraph_input)
+            return react_supervisor_output_mapper(subgraph_output, state)
         subgraph_input = supervisor_input_mapper(state)
-        # Execute subgraph
         subgraph_output = supervisor_subgraph.invoke(subgraph_input)
-        # Subgraph → main graph: Sync results
         return supervisor_output_mapper(subgraph_output, state)
     main_graph.add_node("supervisor", run_supervisor_subgraph)
 

@@ -53,3 +53,8 @@ class GlobalState(BaseModel):
     file_paths: Dict[str, str] = Field(default_factory=dict, description="File paths")
     execution_plan: Optional[str] = Field(default=None, description="Execution plan")
     sandbox_dir: str = Field(description="Sandbox directory")
+    use_react_executor: bool = Field(default=False, description="Use React executor for single task execution")
+    react_max_steps: int = Field(default=3, description="Max React executor steps per task")
+    use_react_supervisor: bool = Field(default=False, description="Use React supervisor for task classification")
+    supervisor_decision: Optional[str] = Field(default=None, description="Supervisor decision label")
+    supervisor_reasoning: Optional[str] = Field(default=None, description="Supervisor reasoning")

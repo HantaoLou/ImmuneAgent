@@ -15,6 +15,11 @@ from agent.nodes.subagents.task_decomposition.graph import (
 from agent.state import GlobalState, UserTaskType
 from langgraph.graph import StateGraph, START, END
 from nodes.subagents.supervisor.graph import build_supervisor_subgraph, supervisor_input_mapper, supervisor_output_mapper
+from nodes.subagents.supervisor.react_supervisor import (
+    build_react_supervisor_subgraph,
+    supervisor_input_mapper as react_supervisor_input_mapper,
+    supervisor_output_mapper as react_supervisor_output_mapper
+)
 from nodes.subagents.general_qa.graph import build_general_qa_subgraph, general_qa_input_mapper, general_qa_output_mapper
 
 # Import sandbox executor
@@ -43,6 +48,7 @@ SUBGRAPH_TIMEOUTS: Dict[str, float] = {
 
 # Initialize subgraphs (for non-sandbox execution if needed)
 supervisor_subgraph = build_supervisor_subgraph()
+react_supervisor_subgraph = build_react_supervisor_subgraph()
 general_qa_subgraph = build_general_qa_subgraph()
 
 
@@ -112,6 +118,16 @@ def build_main_graph():
     # Main graph node 1: Call supervisor subgraph (with sandbox)
     def run_supervisor_subgraph(state: GlobalState) -> GlobalState:
         """Supervisor node with sandbox execution"""
+        if state.use_react_supervisor:
+            return execute_subgraph_in_sandbox(
+                subgraph_name="supervisor",
+                subgraph_builder=build_react_supervisor_subgraph,
+                input_mapper=react_supervisor_input_mapper,
+                output_mapper=react_supervisor_output_mapper,
+                main_state=state,
+                strategy=SUBGRAPH_STRATEGIES.get("supervisor", IsolationStrategy.THREAD),
+                timeout=SUBGRAPH_TIMEOUTS.get("supervisor", 120.0)
+            )
         return execute_subgraph_in_sandbox(
             subgraph_name="supervisor",
             subgraph_builder=build_supervisor_subgraph,

@@ -72,6 +72,7 @@ import os
 import json
 from pathlib import Path
 from enum import Enum
+from uuid import uuid4
 
 import time
 
@@ -139,6 +140,7 @@ class TaskExecutionResult(BaseModel):
     result_satisfied: Optional[bool] = Field(default=None, description="Whether result meets requirements")
     user_continue: Optional[bool] = Field(default=None, description="Whether user chose to continue execution")
     result_summary: Optional[Dict[str, Any]] = Field(default=None, description="Per-task execution summary")
+    error_type: Optional[str] = Field(default=None, description="Error type if failed")
 
 
 class ExecutorState(BaseModel):
@@ -163,6 +165,8 @@ class ExecutorState(BaseModel):
     max_parallel_tasks: int = Field(default=3, description="Maximum number of parallel tasks")
     max_retries: int = Field(default=5, description="Maximum retry count")
     sandbox_dir: str = Field(default="DEFAULT_SANDBOX_DIR", description="Sandbox directory")
+    use_react_executor: bool = Field(default=False, description="Use React executor for single task execution")
+    react_max_steps: int = Field(default=3, description="Max React executor steps per task")
     
     # Execution statistics
     total_tasks: int = 0
@@ -295,6 +299,812 @@ def _is_file_type(param_name: str, param_type: Optional[str]) -> bool:
     return any(k in param_name_lower for k in keywords) or any(k in param_type_lower for k in keywords)
 
 
+def _looks_like_status_message(value: str) -> bool:
+    """Detect progress/status strings that should never be treated as paths."""
+    if not isinstance(value, str):
+        return False
+    lowered = value.lower()
+    return (
+        "status:" in lowered
+        or "progress" in lowered
+        or "completed" in lowered
+        or "initializing" in lowered
+        or "processing" in lowered
+        or "loading" in lowered
+    )
+
+
+def _is_directory_param(param_name: str, param_type: Optional[str]) -> bool:
+    """Check if a parameter expects a directory."""
+    name_lower = (param_name or "").lower()
+    type_lower = (param_type or "").lower()
+    return (
+        "dir" in name_lower
+        or "directory" in name_lower
+        or "folder" in name_lower
+        or "directory" in type_lower
+    )
+
+
+def _expected_file_extensions(param_name: str, param_type: Optional[str]) -> Optional[set[str]]:
+    """Infer expected file extensions from parameter metadata."""
+    lower_name = (param_name or "").lower()
+    lower_type = (param_type or "").lower()
+    exts = set()
+    if "csv" in lower_type or "csv" in lower_name:
+        exts.add("csv")
+    if "tsv" in lower_type or "tsv" in lower_name:
+        exts.add("tsv")
+    if "json" in lower_type or "json" in lower_name:
+        exts.add("json")
+    if "rds" in lower_type or "rds" in lower_name:
+        exts.add("rds")
+    if "xlsx" in lower_type or "xlsx" in lower_name:
+        exts.add("xlsx")
+    if "xls" in lower_type or "xls" in lower_name:
+        exts.add("xls")
+    if "fasta" in lower_type or "fasta" in lower_name or "fa" in lower_name:
+        exts.update({"fasta", "fa"})
+    if "fastq" in lower_type or "fastq" in lower_name:
+        exts.add("fastq")
+    return exts or None
+
+
+def _is_output_param(param_name: str, param_type: Optional[str]) -> bool:
+    """Check if a parameter is an output path parameter."""
+    name_lower = (param_name or "").lower()
+    type_lower = (param_type or "").lower()
+    return (
+        "output" in name_lower
+        or "result" in name_lower
+        or "save" in name_lower
+        or "output" in type_lower
+        or "result" in type_lower
+    )
+
+
+def _label_indicates_output(label: str) -> bool:
+    """Check if an explicit label implies output intent."""
+    label_lower = (label or "").lower()
+    return any(
+        key in label_lower
+        for key in ["output", "result", "save", "save to", "保存", "输出", "结果"]
+    )
+
+
+def _path_matches_expected_types(value: str, expected_exts: Optional[set[str]]) -> bool:
+    """Check if path extension matches expected types (if specified)."""
+    if not expected_exts:
+        return True
+    if not isinstance(value, str):
+        return False
+    _, ext = os.path.splitext(value.strip())
+    if not ext:
+        return False
+    return ext.lower().lstrip(".") in expected_exts
+
+
+def _is_zip_file(path: str) -> bool:
+    try:
+        import zipfile
+        return zipfile.is_zipfile(path)
+    except Exception:
+        return False
+
+
+def _looks_like_excel_zip(path: str) -> bool:
+    try:
+        import zipfile
+        if not zipfile.is_zipfile(path):
+            return False
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+        return any(
+            name == "[Content_Types].xml" or name.startswith("xl/")
+            for name in names
+        )
+    except Exception:
+        return False
+
+
+def _looks_like_rds_header(path: str) -> bool:
+    try:
+        with open(path, "rb") as f:
+            header = f.read(4)
+        if header.startswith(b"RDX"):
+            return True
+        # gzip-compressed RDS
+        if header.startswith(b"\x1f\x8b"):
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _validate_file_signature(param_name: str, param_type: Optional[str], value: Any) -> Optional[str]:
+    """Validate file signature against expected type; return error string if invalid."""
+    if not isinstance(value, str):
+        return None
+    if not os.path.exists(value):
+        return None
+    if _looks_like_excel_zip(value):
+        expected_exts = _expected_file_extensions(param_name, param_type)
+        if expected_exts and expected_exts.intersection({"csv", "tsv"}):
+            # Allow Excel for CSV/TSV (convert later)
+            return None
+        if expected_exts and expected_exts.intersection({"xlsx", "xls"}):
+            return None
+        return "excel_zip_for_non_excel"
+    expected_exts = _expected_file_extensions(param_name, param_type)
+    if expected_exts and "rds" in expected_exts:
+        if not _looks_like_rds_header(value):
+            return "rds_header_mismatch"
+    return None
+
+
+def _is_path_like(value: str) -> bool:
+    """Heuristic to detect file-like paths."""
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    if not stripped:
+        return False
+    if _looks_like_status_message(stripped):
+        return False
+    if stripped.startswith(("http://", "https://")):
+        return True
+    if stripped.startswith(("\\\\", "~/", "./", "../")):
+        return True
+    if len(stripped) > 2 and stripped[1:3] == ":\\":
+        return True
+    if "/" in stripped or "\\" in stripped:
+        return True
+    known_exts = {
+        ".csv", ".tsv", ".json", ".xlsx", ".xls", ".rds",
+        ".fasta", ".fa", ".fastq", ".txt"
+    }
+    _, ext = os.path.splitext(stripped)
+    return ext.lower() in known_exts
+
+
+def _normalize_inferred_param_value(param_name: str, param_type: Optional[str], value: Any) -> Optional[Any]:
+    """Normalize inferred parameter values; reject invalid file/dir values."""
+    if value is None:
+        return None
+    if isinstance(value, str) and _looks_like_status_message(value):
+        return None
+
+    if _is_directory_param(param_name, param_type):
+        if isinstance(value, str) and _is_path_like(value):
+            base, ext = os.path.splitext(value)
+            if ext:
+                return os.path.dirname(value)
+            return value
+        return None
+
+    if _is_file_type(param_name, param_type):
+        if isinstance(value, str):
+            return value if _is_path_like(value) else None
+        return value
+
+    return value
+
+
+def _get_task_by_id(state: "ExecutorState", task_id: str) -> Optional[SubTask]:
+    for task in state.subtasks:
+        if task.task_id == task_id:
+            return task
+    return None
+
+
+def _summarize_dependency_output_for_llm(output: Any, max_len: int = 400) -> str:
+    """Summarize dependency output for LLM match checks."""
+    if output is None:
+        return "No output."
+    if isinstance(output, dict):
+        final_result = output.get("final_result")
+        if isinstance(final_result, dict):
+            message = final_result.get("message")
+            output_file = final_result.get("output_file") or final_result.get("output_path") or final_result.get("result_path")
+            parts = []
+            if message:
+                parts.append(f"final_result.message: {message}")
+            if output_file:
+                parts.append(f"final_result.output_path: {output_file}")
+            if parts:
+                return " | ".join(parts)[:max_len]
+        message = output.get("message")
+        if isinstance(message, str) and message:
+            return message[:max_len]
+        return _summarize_output_brief(output, max_len=max_len)
+    if isinstance(output, list):
+        return f"list(len={len(output)})"
+    if isinstance(output, str):
+        return output[:max_len]
+    return str(output)[:max_len]
+
+
+def _dependency_value_type_matches(param_name: str, param_type: Optional[str], value: Any) -> bool:
+    """Hard type check: mismatch => not compatible."""
+    normalized = _normalize_inferred_param_value(param_name, param_type, value)
+    if normalized is None:
+        return False
+    if isinstance(normalized, str):
+        expected_ext = _infer_expected_extension(param_type)
+        if expected_ext:
+            _, actual_ext = os.path.splitext(normalized)
+            actual_ext = actual_ext.lower().lstrip(".")
+            if actual_ext and actual_ext != expected_ext:
+                return False
+        if _is_directory_param(param_name, param_type):
+            base, ext = os.path.splitext(normalized)
+            if ext:
+                return False
+    return True
+
+
+def _value_matches_expected_types(param_name: str, param_type: Optional[str], value: Any) -> bool:
+    """Validate inferred value against parameter type expectations."""
+    normalized = _normalize_inferred_param_value(param_name, param_type, value)
+    if normalized is None:
+        return False
+    if isinstance(normalized, str):
+        if _is_directory_param(param_name, param_type):
+            base, ext = os.path.splitext(normalized)
+            if ext:
+                return False
+            return True
+        if _is_file_type(param_name, param_type):
+            expected_exts = _expected_file_extensions(param_name, param_type)
+            if expected_exts and os.path.exists(normalized) and _is_zip_file(normalized):
+                if not expected_exts.intersection({"xlsx", "xls"}):
+                    return False
+            if expected_exts and not _path_matches_expected_types(normalized, expected_exts):
+                return False
+    return True
+
+
+def _llm_match_dependency_output(
+    llm: Optional[Any],
+    param_name: str,
+    param_type: Optional[str],
+    param_desc: str,
+    task_desc: str,
+    dep_task_desc: str,
+    dep_output_summary: str,
+) -> Optional[bool]:
+    """Ask LLM if dependency output semantically matches param requirement."""
+    if not llm or not param_desc:
+        return None
+    prompt = f"""You are judging whether a dependency output is a suitable input for a tool parameter.
+
+Parameter:
+- name: {param_name}
+- type: {param_type}
+- description: {param_desc}
+
+Current task description:
+{task_desc}
+
+Dependency task description:
+{dep_task_desc}
+
+Dependency output summary:
+{dep_output_summary}
+
+Decision rules:
+1) If type or file semantics do not match, answer NO.
+2) If type matches but semantic purpose differs (e.g., experimental CSV vs required RDS), answer NO.
+3) Only answer YES when the dependency output clearly satisfies the parameter description.
+
+Return only JSON:
+{{"match": true|false, "reason": "<short reason>"}}
+"""
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        messages = [
+            SystemMessage(content="You are a careful data integration assistant."),
+            HumanMessage(content=prompt),
+        ]
+        response = llm.invoke(messages)
+        text = response.content if hasattr(response, "content") else str(response)
+        import re
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            return None
+        import json as json_module
+        data = json_module.loads(match.group())
+        if isinstance(data, dict) and "match" in data:
+            return bool(data.get("match"))
+    except Exception:
+        return None
+    return None
+
+
+def _extract_dependency_candidates(dep_output: Any, is_file_param: bool) -> List[str]:
+    """Collect file-like candidates from dependency output."""
+    candidates = []
+    if dep_output is None:
+        return candidates
+    if isinstance(dep_output, dict):
+        # Prefer final_result
+        if "final_result" in dep_output and isinstance(dep_output["final_result"], dict):
+            candidates.extend(_extract_dependency_candidates(dep_output["final_result"], is_file_param))
+        # Check known keys
+        for key, value in dep_output.items():
+            if isinstance(value, str) and _is_path_like(value):
+                candidates.append(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str) and _is_path_like(item):
+                        candidates.append(item)
+            elif isinstance(value, dict):
+                candidates.extend(_extract_dependency_candidates(value, is_file_param))
+        # Check result messages only
+        messages = dep_output.get("messages")
+        if isinstance(messages, list):
+            for message in messages:
+                if not isinstance(message, dict):
+                    continue
+                if message.get("type") != "result":
+                    continue
+                raw = message.get("raw")
+                if isinstance(raw, dict):
+                    for raw_value in raw.values():
+                        if isinstance(raw_value, str) and _is_path_like(raw_value):
+                            candidates.append(raw_value)
+                        elif isinstance(raw_value, list):
+                            for item in raw_value:
+                                if isinstance(item, str) and _is_path_like(item):
+                                    candidates.append(item)
+                        elif isinstance(raw_value, dict):
+                            candidates.extend(_extract_dependency_candidates(raw_value, is_file_param))
+    elif isinstance(dep_output, list):
+        for item in dep_output:
+            if isinstance(item, str) and _is_path_like(item):
+                candidates.append(item)
+            elif isinstance(item, dict):
+                candidates.extend(_extract_dependency_candidates(item, is_file_param))
+    elif isinstance(dep_output, str) and _is_path_like(dep_output):
+        candidates.append(dep_output)
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for item in candidates:
+        if item not in seen:
+            unique.append(item)
+            seen.add(item)
+    return unique
+
+
+_dependency_match_cache: Dict[str, bool] = {}
+
+
+def _dependency_match_with_llm(
+    *,
+    llm: Any,
+    tool_name: str,
+    param_name: str,
+    param_type: Optional[str],
+    param_desc: Optional[str],
+    task_description: str,
+    dependency_task_description: str,
+    dependency_output_summary: str,
+    candidate_value: str,
+) -> bool:
+    """Use LLM to judge if dependency output matches parameter intent."""
+    if not llm:
+        return False
+    cache_key = "|".join([
+        tool_name or "",
+        param_name or "",
+        param_type or "",
+        param_desc or "",
+        task_description or "",
+        dependency_task_description or "",
+        dependency_output_summary or "",
+        candidate_value or "",
+    ])
+    if cache_key in _dependency_match_cache:
+        return _dependency_match_cache[cache_key]
+    prompt = f"""You are validating whether a dependency output matches a tool parameter.
+
+Tool: {tool_name}
+Parameter: {param_name}
+Parameter type: {param_type or 'unknown'}
+Parameter description: {param_desc or 'none'}
+
+Current task description:
+{task_description}
+
+Dependency task description:
+{dependency_task_description}
+
+Dependency output summary:
+{dependency_output_summary}
+
+Candidate value:
+{candidate_value}
+
+Rules:
+- If types do not match, answer NO.
+- If types match, still answer NO unless the dependency output intent clearly matches the parameter description.
+- Answer only YES or NO.
+"""
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        messages = [
+            SystemMessage(content="You are a precise validator. Reply only YES or NO."),
+            HumanMessage(content=prompt),
+        ]
+        response = llm.invoke(messages)
+        text = response.content.strip().upper() if hasattr(response, "content") else str(response).strip().upper()
+        result = text.startswith("YES")
+        _dependency_match_cache[cache_key] = result
+        return result
+    except Exception:
+        return False
+
+
+def _normalize_base_dir_value(param_name: str, value: Any) -> Any:
+    """Normalize directory-like values to directory paths when a file path is provided."""
+    if not isinstance(value, str):
+        return value
+    param_lower = (param_name or "").lower()
+    if "base_dir" not in param_lower and "_dir" not in param_lower and "directory" not in param_lower:
+        return value
+    stripped = value.strip()
+    if not stripped:
+        return value
+    if stripped.endswith(("/", "\\", os.sep)):
+        return value
+    basename = os.path.basename(stripped)
+    _, ext = os.path.splitext(basename)
+    if ext:
+        return os.path.dirname(stripped)
+    return value
+
+
+def _infer_expected_extension(param_type: Optional[str]) -> Optional[str]:
+    if not param_type:
+        return None
+    lower = param_type.lower()
+    if "csv" in lower:
+        return "csv"
+    if "tsv" in lower:
+        return "tsv"
+    if "json" in lower:
+        return "json"
+    if "rds" in lower:
+        return "rds"
+    if "xlsx" in lower or "excel" in lower:
+        return "xlsx"
+    if "xls" in lower:
+        return "xls"
+    if "fasta" in lower:
+        return "fasta"
+    if "fastq" in lower:
+        return "fastq"
+    return None
+
+
+def _build_converted_path(input_path: str, target_ext: str) -> str:
+    base, _ = os.path.splitext(input_path)
+    return f"{base}.{target_ext}"
+
+
+def _convert_excel_to_delimited_via_codeact(
+    state: "ExecutorState",
+    source_path: str,
+    output_path: str,
+    target_ext: str,
+    parent_task_id: str,
+    param_name: str
+) -> None:
+    """Use CodeAct to convert Excel file to CSV/TSV."""
+    delimiter = "," if target_ext == "csv" else "\t"
+    task_id = f"preprocess_{parent_task_id}_{param_name}_{uuid4().hex[:8]}"
+    task_description = (
+        f"Convert an Excel file to {target_ext.upper()}.\n"
+        f"Input Excel file: {source_path}\n"
+        f"Output file: {output_path}\n"
+        f"Requirements:\n"
+        f"- Use pandas to read the Excel file (use the first sheet if multiple).\n"
+        f"- Save as {target_ext.upper()} with delimiter '{delimiter}'.\n"
+        f"- Use UTF-8 encoding.\n"
+        f"- Do not write index.\n"
+        f"- Ensure output directory exists.\n"
+        f"- Print JSON with key 'output_path' pointing to the saved file."
+    )
+    preprocess_task = SubTask(
+        task_id=task_id,
+        task_type=UserTaskType.EXECUTE_PLAN,
+        content=task_description,
+        result={"tools": [], "inputs": []}
+    )
+    codeact_input = codeact_input_mapper(
+        executor_state=state,
+        task=preprocess_task,
+        execution_mode=CodeActExecutionMode.CODEACT,
+        parameters={}
+    )
+    codeact_graph = build_codeact_subgraph()
+    codeact_output = codeact_graph.invoke(codeact_input)
+    codeact_state = CodeActState.model_validate(codeact_output) if isinstance(codeact_output, dict) else codeact_output
+    exec_result = codeact_output_mapper(codeact_state)
+    if exec_result.get("status") != "success":
+        error_message = exec_result.get("error") or exec_result.get("output") or "unknown error"
+        raise RuntimeError(f"CodeAct conversion failed for {source_path}: {error_message}")
+
+
+def _preprocess_parameters_with_codeact(
+    task: SubTask,
+    parameters: Dict[str, Any],
+    state: "ExecutorState"
+) -> Dict[str, Any]:
+    """Detect file type mismatches and auto-convert inputs before execution."""
+    if not parameters:
+        return parameters
+    task_result = task.result if isinstance(task.result, dict) else {}
+    tools = task_result.get("tools", [])
+    if not tools:
+        return parameters
+
+    tools_params_map = _load_tools_params_table() or {}
+    updated = dict(parameters)
+
+    for tool_item in tools:
+        tool_name = tool_item if isinstance(tool_item, str) else tool_item.get("tool_name") or tool_item.get("name", "")
+        if not tool_name:
+            continue
+        tool_params = tools_params_map.get(tool_name)
+        if not tool_params:
+            tool_name_lower = tool_name.lower()
+            for key in tools_params_map.keys():
+                key_lower = key.lower()
+                if tool_name_lower in key_lower or key_lower in tool_name_lower:
+                    tool_params = tools_params_map.get(key)
+                    break
+        if not tool_params:
+            continue
+
+        input_params = tool_params.get("input_params", [])
+        for param in input_params:
+            param_name = param.get("name", "")
+            param_type = param.get("type", "")
+            if not param_name or param_name not in updated:
+                continue
+            if "output" in param_name.lower():
+                continue
+            expected_ext = _infer_expected_extension(param_type)
+            if expected_ext not in {"csv", "tsv"}:
+                continue
+
+            param_value = updated.get(param_name)
+            if not isinstance(param_value, str):
+                continue
+            if not os.path.exists(param_value):
+                # Skip local preprocessing for remote-only paths
+                continue
+            _, actual_ext = os.path.splitext(param_value)
+            actual_ext = actual_ext.lower().lstrip(".")
+
+            if actual_ext in {"xls", "xlsx"} or _looks_like_excel_zip(param_value):
+                converted_path = _build_converted_path(param_value, expected_ext)
+                try:
+                    _convert_excel_to_delimited_via_codeact(
+                        state=state,
+                        source_path=param_value,
+                        output_path=converted_path,
+                        target_ext=expected_ext,
+                        parent_task_id=task.task_id,
+                        param_name=param_name
+                    )
+                    updated[param_name] = converted_path
+                except Exception as conversion_error:
+                    print(f"  ⚠ Excel conversion failed for {param_name}: {conversion_error}")
+
+    return updated
+
+
+def _extract_parameters_from_context(
+    user_input: str,
+    execution_plan: Optional[str],
+    task_description: str,
+    tool_name: str,
+    tool_params: List[Dict[str, Any]],
+    llm: Optional[Any]
+) -> Dict[str, Any]:
+    """Use LLM to extract parameter values from context (semantic matching)."""
+    if not tool_params:
+        return {}
+
+    explicit_params = _extract_params_from_explicit_lines(
+        user_input=user_input,
+        execution_plan=execution_plan,
+        tool_name=tool_name,
+        tool_params=tool_params
+    )
+    if explicit_params and not llm:
+        return explicit_params
+    if not llm:
+        return {}
+
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        param_info_list = []
+        for param in tool_params:
+            param_name = param.get("name", "")
+            param_type = param.get("type", "")
+            param_desc = param.get("description", "")
+            if param_name:
+                param_info = f"- {param_name}"
+                if param_type:
+                    param_info += f" (type: {param_type})"
+                if param_desc:
+                    param_info += f": {param_desc}"
+                param_info_list.append(param_info)
+
+        context_parts = []
+        if user_input:
+            context_parts.append(f"User Input: {user_input}")
+        if execution_plan:
+            context_parts.append(f"Execution Plan: {execution_plan}")
+        if task_description:
+            context_parts.append(f"Task Description: {task_description}")
+
+        context_text = "\n\n".join(context_parts)
+
+        extraction_prompt = f"""Please analyze the following context information and extract parameter values for tool "{tool_name}".
+
+Context Information:
+{context_text}
+
+Tool Parameters:
+{chr(10).join(param_info_list) if param_info_list else 'No parameter information available'}
+
+Please extract parameter values based on semantic understanding (not keyword matching). Focus on intent and meaning.
+Return JSON format with parameter names as keys and extracted values as values.
+Only include parameters that can be clearly extracted from context."""
+
+        messages = [
+            SystemMessage(content="You are a professional parameter extraction expert. Use semantic understanding to map user intent to tool parameters."),
+            HumanMessage(content=extraction_prompt)
+        ]
+
+        response = llm.invoke(messages)
+        response_text = response.content.strip()
+
+        extracted_params = {}
+        try:
+            extracted_params = json.loads(response_text.strip())
+        except json.JSONDecodeError:
+            import re
+            json_block_patterns = [
+                r'```json\s*(\{.*?\})\s*```',
+                r'```\s*(\{.*?\})\s*```',
+            ]
+            for pattern in json_block_patterns:
+                matches = re.findall(pattern, response_text, re.DOTALL | re.IGNORECASE)
+                for match in matches:
+                    try:
+                        extracted_params = json.loads(match)
+                        break
+                    except json.JSONDecodeError:
+                        continue
+                if extracted_params:
+                    break
+
+            if not extracted_params:
+                brace_count = 0
+                start_idx = -1
+                for i, char in enumerate(response_text):
+                    if char == '{':
+                        if brace_count == 0:
+                            start_idx = i
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0 and start_idx != -1:
+                            try:
+                                json_str = response_text[start_idx:i+1]
+                                extracted_params = json.loads(json_str)
+                                break
+                            except json.JSONDecodeError:
+                                pass
+                            start_idx = -1
+
+        if extracted_params and isinstance(extracted_params, dict):
+            normalized = {}
+            for key, value in extracted_params.items():
+                normalized[key] = _normalize_base_dir_value(key, value)
+            if explicit_params:
+                for key, value in explicit_params.items():
+                    normalized[key] = value
+            return normalized
+    except Exception as e:
+        print(f"  ⚠ Failed to extract parameters from context: {e}")
+        if os.getenv("DEBUG_LLM_ERRORS", "false").lower() == "true":
+            import traceback
+            traceback.print_exc()
+
+    return explicit_params or {}
+
+
+def _extract_params_from_explicit_lines(
+    user_input: str,
+    execution_plan: Optional[str],
+    tool_name: str,
+    tool_params: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Extract parameters from explicit 'param: value' lines in context."""
+    if not tool_params:
+        return {}
+    tool_lower = (tool_name or "").lower()
+    context = "\n".join([part for part in [user_input, execution_plan] if part])
+    if not context:
+        return {}
+
+    candidates: Dict[str, Any] = {}
+    for raw_line in context.splitlines():
+        line = raw_line.strip()
+        if not line or ":" not in line:
+            continue
+        label, raw_value = line.split(":", 1)
+        line_lower = line.lower()
+        label_lower = label.strip().lower()
+        for param in tool_params:
+            param_name = param.get("name", "")
+            param_type = param.get("type", "")
+            param_desc = param.get("description", "")
+            if not param_name:
+                continue
+            variants = {
+                param_name.lower(),
+                param_name.lower().replace("_", " "),
+                param_name.lower().replace("_", "-")
+            }
+            if param_type:
+                variants.add(param_type.lower())
+            if param_desc:
+                desc_lower = param_desc.lower()
+                if "fasta file" in desc_lower:
+                    variants.add("fasta file")
+                if "csv file" in desc_lower:
+                    variants.add("csv file")
+                if "rds file" in desc_lower:
+                    variants.add("rds file")
+
+            matched = any(v in line_lower for v in variants) or any(
+                v in label_lower or label_lower in v for v in variants
+            )
+            if not matched:
+                continue
+            if _is_output_param(param_name, param_type) and not _label_indicates_output(label_lower):
+                # Avoid treating user-provided input files as output paths
+                continue
+            if tool_lower and ("for " + tool_lower) in line_lower:
+                pass
+            elif tool_lower and tool_lower in line_lower:
+                pass
+            else:
+                # If tool name not mentioned, still accept explicit param lines
+                pass
+            value = raw_value.strip().strip('"').strip("'")
+            if not value:
+                continue
+            normalized = _normalize_inferred_param_value(param_name, param_type, value)
+            if normalized is not None:
+                candidates[param_name] = {
+                    "__value": _normalize_base_dir_value(param_name, normalized),
+                    "__explicit": True,
+                    "__label": label_lower
+                }
+
+    return candidates
+
+
 def _summarize_output_brief(output: Any, max_len: int = 200) -> str:
     """Create a brief summary of task output for logging/summary"""
     try:
@@ -315,19 +1125,76 @@ def _extract_dependency_value(dep_output: Any, param_name: str, is_file_param: b
     if dep_output is None:
         return None
     param_lower = (param_name or "").lower()
+    file_key_candidates = {
+        "output_file", "output_path", "result_path", "result_file",
+        "file", "file_path", "filepath", "path",
+        "csv_file", "tsv_file", "json_file", "airr_results",
+        "input_file", "input_path", "output", "outputs", "result", "results"
+    }
     if isinstance(dep_output, dict):
+        # Prefer final_result first (most reliable output payload)
+        if "final_result" in dep_output and isinstance(dep_output["final_result"], dict):
+            value = _extract_dependency_value(dep_output["final_result"], param_name, is_file_param)
+            if value is not None:
+                return value
         # Direct key match
         if param_name in dep_output:
-            return dep_output[param_name]
+            value = dep_output[param_name]
+            if is_file_param and isinstance(value, str) and not _is_path_like(value):
+                return None
+            return value
         # Case-insensitive match
         for key, value in dep_output.items():
             if isinstance(key, str) and (param_lower == key.lower() or param_lower in key.lower()):
+                if is_file_param and isinstance(value, str) and not _is_path_like(value):
+                    continue
                 return value
         # File-like fallback
         if is_file_param:
-            for value in dep_output.values():
-                if isinstance(value, str) and ("/" in value or "\\" in value or "." in value):
+            # Prefer known output keys first
+            for key, value in dep_output.items():
+                if isinstance(key, str) and key.lower() in file_key_candidates:
+                    if isinstance(value, str) and _is_path_like(value):
+                        return value
+                    if isinstance(value, list):
+                        for item in value:
+                            if isinstance(item, str) and _is_path_like(item):
+                                return item
+                    if isinstance(value, dict):
+                        nested = _extract_dependency_value(value, param_name, is_file_param)
+                        if nested is not None:
+                            return nested
+            # Inspect message lists for result payloads only
+            messages = dep_output.get("messages")
+            if isinstance(messages, list):
+                for message in messages:
+                    if not isinstance(message, dict):
+                        continue
+                    if message.get("type") != "result":
+                        continue
+                    raw = message.get("raw")
+                    if isinstance(raw, dict):
+                        for key in file_key_candidates:
+                            candidate = raw.get(key)
+                            if isinstance(candidate, str) and _is_path_like(candidate):
+                                return candidate
+                            if isinstance(candidate, list):
+                                for item in candidate:
+                                    if isinstance(item, str) and _is_path_like(item):
+                                        return item
+                        nested = _extract_dependency_value(raw, param_name, is_file_param)
+                        if nested is not None:
+                            return nested
+            # Final fallback: avoid status-like strings
+            for key, value in dep_output.items():
+                if key in {"messages", "content"}:
+                    continue
+                if isinstance(value, str) and _is_path_like(value):
                     return value
+                if isinstance(value, dict) or isinstance(value, list):
+                    nested = _extract_dependency_value(value, param_name, is_file_param)
+                    if nested is not None:
+                        return nested
         return None
     if isinstance(dep_output, list):
         # Prefer list of dicts
@@ -349,7 +1216,15 @@ def _extract_dependency_value(dep_output: Any, param_name: str, is_file_param: b
     return dep_output
 
 
-def _resolve_param_from_dependencies(task: SubTask, param_name: str, param_type: Optional[str], state: "ExecutorState") -> Optional[Any]:
+def _resolve_param_from_dependencies(
+    task: SubTask,
+    tool_name: str,
+    param_name: str,
+    param_type: Optional[str],
+    param_desc: Optional[str],
+    state: "ExecutorState",
+    llm: Optional[Any],
+) -> Optional[Any]:
     """Resolve parameter value from completed dependency task outputs"""
     if not task.dependencies:
         return None
@@ -358,10 +1233,74 @@ def _resolve_param_from_dependencies(task: SubTask, param_name: str, param_type:
         dep_result = state.task_results.get(dep_task_id)
         if not dep_result or dep_result.status != ExecutorTaskStatus.COMPLETED:
             continue
-        value = _extract_dependency_value(dep_result.output, param_name, is_file_param)
-        if value is not None:
-            return value
+        candidates = _extract_dependency_candidates(dep_result.output, is_file_param)
+        if not candidates:
+            continue
+        dep_task = next((t for t in state.subtasks if t.task_id == dep_task_id), None)
+        dep_task_desc = dep_task.content if dep_task else ""
+        dep_output_summary = _summarize_output_brief(dep_result.output, max_len=500)
+        expected_exts = _expected_file_extensions(param_name, param_type)
+        for candidate in candidates:
+            normalized = _normalize_inferred_param_value(param_name, param_type, candidate)
+            if normalized is None:
+                continue
+            if is_file_param:
+                if not _path_matches_expected_types(str(normalized), expected_exts):
+                    continue
+            # Only accept if LLM confirms match (when available)
+            if llm:
+                if not _dependency_match_with_llm(
+                    llm=llm,
+                    tool_name=tool_name,
+                    param_name=param_name,
+                    param_type=param_type,
+                    param_desc=param_desc,
+                    task_description=task.content,
+                    dependency_task_description=dep_task_desc,
+                    dependency_output_summary=dep_output_summary,
+                    candidate_value=str(normalized),
+                ):
+                    continue
+                return normalized
+            # No LLM: be conservative and require explicit extension match
+            if expected_exts and _path_matches_expected_types(str(normalized), expected_exts):
+                return normalized
     return None
+
+
+def _tool_requires_matched_fields(input_params: List[Dict[str, Any]]) -> bool:
+    """Check if tool requires matched join fields (csv_fields + rds_fields)."""
+    names = {param.get("name") for param in input_params if isinstance(param, dict)}
+    return "csv_fields" in names and "rds_fields" in names
+
+
+def _validate_matched_fields(tool_name: str, all_params: Dict[str, Any], missing_params: List[str]) -> None:
+    """Ensure csv_fields and rds_fields are both present and aligned."""
+    csv_fields = all_params.get("csv_fields")
+    rds_fields = all_params.get("rds_fields")
+    if csv_fields and not rds_fields:
+        missing_params.append(f"{tool_name}.rds_fields")
+        return
+    if rds_fields and not csv_fields:
+        missing_params.append(f"{tool_name}.csv_fields")
+        return
+    if isinstance(csv_fields, str) and isinstance(rds_fields, str):
+        csv_parts = [p.strip() for p in csv_fields.split(",") if p.strip()]
+        rds_parts = [p.strip() for p in rds_fields.split(",") if p.strip()]
+        if csv_parts and rds_parts and len(csv_parts) != len(rds_parts):
+            all_params.pop("csv_fields", None)
+            all_params.pop("rds_fields", None)
+            missing_params.append(f"{tool_name}.csv_fields")
+            missing_params.append(f"{tool_name}.rds_fields")
+
+
+def _has_pandas() -> bool:
+    """Check if pandas is available for local preprocessing."""
+    try:
+        import pandas  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 def _build_task_result_summary(task: SubTask, result: TaskExecutionResult) -> Dict[str, Any]:
@@ -391,6 +1330,16 @@ def classify_error(error: str, error_type: str) -> ErrorCategory:
     
     error_lower = error.lower() if error else ""
     error_type_lower = error_type.lower() if error_type else ""
+
+    # Hard timeouts: avoid infinite retries, treat as system errors
+    timeout_hard_keywords = [
+        "task timeout",
+        "execution timed out",
+        "timed out after",
+        "timeout after"
+    ]
+    if any(keyword in error_lower for keyword in timeout_hard_keywords):
+        return ErrorCategory.SYSTEM_ERROR
     
     # Network errors (prioritize identification, need special handling)
     network_keywords = [
@@ -697,6 +1646,7 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
         # Collect parameter requirements for all tools
         all_params = {}
         missing_params = []
+        param_sources: Dict[str, str] = {}
         
         for tool_item in tools:
             tool_name = None
@@ -733,9 +1683,18 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
                 # Infer parameters from inputs field
                 for input_param in inputs:
                     if input_param not in all_params:
-                        dep_value = _resolve_param_from_dependencies(task, input_param, None, state)
+                        dep_value = _resolve_param_from_dependencies(
+                            task=task,
+                            tool_name=tool_name,
+                            param_name=input_param,
+                            param_type=None,
+                            param_desc=None,
+                            state=state,
+                            llm=llm,
+                        )
                         if dep_value is not None:
                             all_params[input_param] = dep_value
+                            param_sources[input_param] = "dependency"
                             continue
                         # Try to infer from context + LLM
                         if llm:
@@ -778,7 +1737,12 @@ Return JSON format:
                                     can_infer = inference_data.get("can_infer", False)
                                     
                                     if param_value is not None and can_infer:
-                                        all_params[input_param] = param_value
+                                        normalized = _normalize_inferred_param_value(input_param, None, param_value)
+                                        if normalized is not None:
+                                            all_params[input_param] = _normalize_base_dir_value(input_param, normalized)
+                                            param_sources[input_param] = "llm"
+                                        else:
+                                            missing_params.append(f"{tool_name}.{input_param}")
                                     else:
                                         missing_params.append(f"{tool_name}.{input_param}")
                                 else:
@@ -792,6 +1756,14 @@ Return JSON format:
                 continue
             
             input_params = tool_params.get("input_params", [])
+            extracted_params = _extract_parameters_from_context(
+                user_input=user_input,
+                execution_plan=execution_plan,
+                task_description=task.content,
+                tool_name=tool_name,
+                tool_params=input_params,
+                llm=llm
+            )
             for param in input_params:
                 param_name = param.get("name", "")
                 param_type = param.get("type", "")
@@ -820,14 +1792,66 @@ Return JSON format:
                 print(f"  [DEBUG] Processing parameter {param_name} for tool {tool_name}")
                 
                 # Try to resolve from dependency outputs first
-                dep_value = _resolve_param_from_dependencies(task, param_name, param_type, state)
-                if dep_value is not None:
+                dep_value = _resolve_param_from_dependencies(
+                    task=task,
+                    tool_name=tool_name,
+                    param_name=param_name,
+                    param_type=param_type,
+                    param_desc=param_desc,
+                    state=state,
+                    llm=llm,
+                )
+                if dep_value is not None and _value_matches_expected_types(param_name, param_type, dep_value):
                     all_params[param_name] = dep_value
+                    param_sources[param_name] = "dependency"
+                    continue
+                
+                if param_name in extracted_params:
+                    raw_value = extracted_params[param_name]
+                    explicit_match = False
+                    explicit_label = ""
+                    if isinstance(raw_value, dict) and "__value" in raw_value:
+                        explicit_match = bool(raw_value.get("__explicit"))
+                        explicit_label = raw_value.get("__label") or ""
+                        raw_value = raw_value.get("__value")
+                    normalized = _normalize_inferred_param_value(param_name, param_type, raw_value)
+                    if normalized is not None:
+                        if _is_output_param(param_name, param_type):
+                            if explicit_match:
+                                if not _label_indicates_output(explicit_label):
+                                    if not is_optional:
+                                        missing_params.append(f"{tool_name}.{param_name}")
+                                    continue
+                            else:
+                                context_text = " ".join([user_input or "", execution_plan or ""]).lower()
+                                if isinstance(normalized, str) and normalized.lower() in context_text:
+                                    if not is_optional:
+                                        missing_params.append(f"{tool_name}.{param_name}")
+                                    continue
+                        expected_exts = _expected_file_extensions(param_name, param_type)
+                        is_excel = False
+                        if isinstance(normalized, str):
+                            _, actual_ext = os.path.splitext(normalized)
+                            actual_ext = actual_ext.lower().lstrip(".")
+                            is_excel = actual_ext in {"xls", "xlsx"}
+                        allow_excel_for_csv = (
+                            explicit_match
+                            and expected_exts is not None
+                            and expected_exts.issubset({"csv", "tsv"})
+                            and is_excel
+                        )
+                        if _value_matches_expected_types(param_name, param_type, normalized) or allow_excel_for_csv:
+                            all_params[param_name] = _normalize_base_dir_value(param_name, normalized)
+                            param_sources[param_name] = "explicit" if explicit_match else "llm_context"
+                            continue
+                    if not is_optional:
+                        missing_params.append(f"{tool_name}.{param_name}")
                     continue
                 
                 # If non-file type and has recommended value, use it
-                if param_deme and not _is_file_type(param_name, param_type):
+                if param_deme and not _is_file_type(param_name, param_type) and not param_name.endswith("_fields"):
                     all_params[param_name] = param_deme
+                    param_sources[param_name] = "demo"
                     continue
                 
                 # Use LLM to infer parameter value
@@ -876,7 +1900,12 @@ Return JSON format:
                             can_infer = inference_data.get("can_infer", False)
                             
                             if param_value is not None and can_infer:
-                                all_params[param_name] = param_value
+                                normalized = _normalize_inferred_param_value(param_name, param_type, param_value)
+                                if normalized is not None and _value_matches_expected_types(param_name, param_type, normalized):
+                                    all_params[param_name] = _normalize_base_dir_value(param_name, normalized)
+                                    param_sources[param_name] = "llm"
+                                elif not is_optional:
+                                    missing_params.append(f"{tool_name}.{param_name}")
                             elif not is_optional:
                                 missing_params.append(f"{tool_name}.{param_name}")
                         else:
@@ -888,24 +1917,78 @@ Return JSON format:
                             missing_params.append(f"{tool_name}.{param_name}")
                 elif not is_optional and param_name not in all_params:
                     missing_params.append(f"{tool_name}.{param_name}")
+
+                # Guard: if CSV/TSV is required but we only have Excel and no pandas, require HITL.
+                if param_name in all_params:
+                    expected_ext = _infer_expected_extension(param_type)
+                    if expected_ext in {"csv", "tsv"}:
+                        value = all_params.get(param_name)
+                        if isinstance(value, str):
+                            _, actual_ext = os.path.splitext(value)
+                            actual_ext = actual_ext.lower().lstrip(".")
+                            if actual_ext in {"xls", "xlsx"} and not _has_pandas() and not is_optional:
+                                all_params.pop(param_name, None)
+                                missing_params.append(f"{tool_name}.{param_name}")
+                                print(f"  ⚠ {tool_name}.{param_name} expects {expected_ext}, but only Excel provided and pandas is unavailable.")
+                if param_name in all_params:
+                    signature_issue = _validate_file_signature(param_name, param_type, all_params.get(param_name))
+                    if signature_issue:
+                        all_params.pop(param_name, None)
+                        missing_params.append(f"{tool_name}.{param_name}")
+                        print(f"  ⚠ {tool_name}.{param_name} failed file signature check: {signature_issue}")
+
+            if _tool_requires_matched_fields(input_params):
+                _validate_matched_fields(tool_name, all_params, missing_params)
+                csv_source = param_sources.get("csv_fields")
+                rds_source = param_sources.get("rds_fields")
+                if csv_source not in {"explicit", "dependency"} or rds_source not in {"explicit", "dependency"}:
+                    if "csv_fields" in all_params:
+                        all_params.pop("csv_fields", None)
+                    if "rds_fields" in all_params:
+                        all_params.pop("rds_fields", None)
+                    missing_params.append(f"{tool_name}.csv_fields")
+                    missing_params.append(f"{tool_name}.rds_fields")
         
         # Update task result
         result.parameters = all_params
-        result.missing_parameters = missing_params
+        # Log duplicate missing parameters for diagnosis
+        if missing_params:
+            dup_counts: Dict[str, int] = {}
+            for item in missing_params:
+                dup_counts[item] = dup_counts.get(item, 0) + 1
+            duplicates = {k: v for k, v in dup_counts.items() if v > 1}
+            if duplicates:
+                tool_names = []
+                for tool_item in tools:
+                    if isinstance(tool_item, str):
+                        tool_names.append(tool_item)
+                    elif isinstance(tool_item, dict):
+                        tool_names.append(tool_item.get("tool_name") or tool_item.get("name", ""))
+                print(f"  ⚠ Duplicate missing parameters detected for task {task.task_id}: {duplicates}")
+                print(f"     Tools list: {tool_names}")
+        # Deduplicate missing parameters while preserving order
+        seen_missing = set()
+        deduped_missing = []
+        for item in missing_params:
+            if item in seen_missing:
+                continue
+            seen_missing.add(item)
+            deduped_missing.append(item)
+        result.missing_parameters = deduped_missing
         
         # If there are missing parameters, trigger HITL
-        if missing_params:
+        if result.missing_parameters:
             state.hitl_requests[task.task_id] = {
                 "type": "missing_parameters",
                 "task_id": task.task_id,
                 "task_description": task.content,
-                "missing_parameters": missing_params,
-                "message": f"Task {task.task_id} requires the following parameters, please provide: {', '.join(missing_params)}"
+                "missing_parameters": result.missing_parameters,
+                "message": f"Task {task.task_id} requires the following parameters, please provide: {', '.join(result.missing_parameters)}"
             }
             # Important: Set task status to WAITING_HITL_PARAMS, not READY
             # This prevents execute_tasks_node from trying to execute these tasks
             state.task_status_map[task.task_id] = ExecutorTaskStatus.WAITING_HITL_PARAMS
-            print(f"  ⚠ Task {task.task_id} requires user-provided parameters: {', '.join(missing_params)}")
+            print(f"  ⚠ Task {task.task_id} requires user-provided parameters: {', '.join(result.missing_parameters)}")
             print(f"  → Task status set to WAITING_HITL_PARAMS")
         else:
             # All parameters are ready, mark task as READY for execution
@@ -1553,6 +2636,22 @@ def execute_tasks_node(state: ExecutorState) -> ExecutorState:
     finalized_task_ids = set()
 
     def handle_result(task: SubTask, result: TaskExecutionResult):
+        existing = state.task_results.get(result.task_id)
+        iteration_entry = {
+            "status": result.status.value if hasattr(result.status, "value") else str(result.status),
+            "error": result.error,
+            "error_type": result.error_type,
+            "execution_time": result.execution_time,
+            "code": result.code
+        }
+        history = []
+        if existing and existing.result_summary and isinstance(existing.result_summary, dict):
+            history = existing.result_summary.get("code_iterations", []) or []
+        history.append(iteration_entry)
+        if result.result_summary is None:
+            result.result_summary = _build_task_result_summary(task, result)
+        if isinstance(result.result_summary, dict):
+            result.result_summary["code_iterations"] = history
         state.task_results[result.task_id] = result
         if task.task_id in state.running_tasks:
             state.running_tasks.remove(task.task_id)
@@ -2194,43 +3293,93 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
         result.execution_mode = execution_mode.value
         
         # Get parsed parameters
-        parameters = result.parameters
-        
-        # Build CodeAct subgraph input
-        codeact_input = codeact_input_mapper(
-            executor_state=state,
-            task=task,
-            execution_mode=execution_mode,
-            parameters=parameters
-        )
-        
-        # Call CodeAct subgraph
-        codeact_graph = build_codeact_subgraph()
         try:
-            codeact_output = codeact_graph.invoke(codeact_input)
-        except Exception as codeact_error:
-            # Wrap CodeAct invocation error with more context
-            import traceback
-            error_traceback = traceback.format_exc()
-            print(f"\n{'='*80}")
-            print(f"【CodeAct 子图调用错误 - Task {task.task_id}】")
-            print(f"{'='*80}")
-            print(f"错误类型: {type(codeact_error).__name__}")
-            print(f"错误信息: {codeact_error}")
-            print(f"\n完整错误堆栈:")
-            print(error_traceback)
-            print(f"{'='*80}\n")
-            # Re-raise to be caught by outer exception handler
-            raise RuntimeError(f"CodeAct subgraph invocation failed for task {task.task_id}: {codeact_error}") from codeact_error
+            parameters = _preprocess_parameters_with_codeact(task, result.parameters, state)
+        except Exception as preprocess_error:
+            result.status = ExecutorTaskStatus.FAILED
+            result.error = f"Parameter preprocessing failed: {preprocess_error}"
+            return result
+        result.parameters = parameters
         
-        # Convert dict output to CodeActState object (LangGraph returns dict)
-        if isinstance(codeact_output, dict):
-            codeact_state = CodeActState.model_validate(codeact_output)
-        else:
-            codeact_state = codeact_output
-        
-        # Process execution result
-        exec_result = codeact_output_mapper(codeact_state)
+        def _run_codeact(
+            execution_mode: CodeActExecutionMode,
+            params: Dict[str, Any],
+            previous_code: Optional[str] = None,
+            previous_error: Optional[str] = None,
+            error_category: Optional[str] = None
+        ):
+            # Build CodeAct subgraph input
+            codeact_input = codeact_input_mapper(
+                executor_state=state,
+                task=task,
+                execution_mode=execution_mode,
+                parameters=params,
+                previous_code=previous_code,
+                previous_error=previous_error,
+                error_category=error_category
+            )
+
+            # Call CodeAct subgraph
+            codeact_graph = build_codeact_subgraph()
+            try:
+                codeact_output = codeact_graph.invoke(codeact_input)
+            except Exception as codeact_error:
+                # Wrap CodeAct invocation error with more context
+                import traceback
+                error_traceback = traceback.format_exc()
+                print(f"\n{'='*80}")
+                print(f"【CodeAct 子图调用错误 - Task {task.task_id}】")
+                print(f"{'='*80}")
+                print(f"错误类型: {type(codeact_error).__name__}")
+                print(f"错误信息: {codeact_error}")
+                print(f"\n完整错误堆栈:")
+                print(error_traceback)
+                print(f"{'='*80}\n")
+                # Re-raise to be caught by outer exception handler
+                raise RuntimeError(f"CodeAct subgraph invocation failed for task {task.task_id}: {codeact_error}") from codeact_error
+
+            # Convert dict output to CodeActState object (LangGraph returns dict)
+            if isinstance(codeact_output, dict):
+                codeact_state = CodeActState.model_validate(codeact_output)
+            else:
+                codeact_state = codeact_output
+
+            # Process execution result
+            exec_result = codeact_output_mapper(codeact_state)
+            return exec_result, codeact_state
+
+        if state.use_react_executor:
+            from nodes.subagents.executor.react_executor import execute_with_react
+            return execute_with_react(
+                task=task,
+                state=state,
+                result=result,
+                base_execution_mode=execution_mode,
+                parameters=parameters,
+                run_codeact=_run_codeact,
+                handle_streaming=_check_and_handle_streaming_task,
+                classify_error=classify_error,
+                analyze_failure=_analyze_failure,
+                generate_suggestions=_generate_suggestions,
+                status_enum=ExecutorTaskStatus,
+                error_category_enum=ErrorCategory,
+                fix_code_mode=CodeActExecutionMode.FIX_CODE,
+                fix_parameter_mode=CodeActExecutionMode.FIX_PARAMETER,
+                max_steps=state.react_max_steps
+            )
+
+        exec_result, codeact_state = _run_codeact(execution_mode, parameters)
+        def _get_next_action(error_category: Optional[ErrorCategory]) -> str:
+            if error_category == ErrorCategory.PARAMETER_ERROR:
+                return "parameter_fix"
+            if error_category == ErrorCategory.CODE_ERROR:
+                return "code_fix"
+            if error_category in [ErrorCategory.RETRYABLE, ErrorCategory.NETWORK_ERROR]:
+                return "retry"
+            if error_category == ErrorCategory.SYSTEM_ERROR:
+                return "manual_check"
+            return "retry"
+
         if exec_result.get("status") == "success":
             output = exec_result.get("output")
             
@@ -2295,12 +3444,18 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
                 result.output = output
             
             result.code = exec_result.get("code")
+            result.result_summary = {
+                "status": "success",
+                "execution_time_ms": int((time.time() - start_time) * 1000),
+                "next_action": "none"
+            }
         else:
             result.status = ExecutorTaskStatus.FAILED
             # Always record code, even if execution failed (code may have been generated)
             result.code = exec_result.get("code")
             result.error = exec_result.get("error") or "Execution failed"
             error_type = exec_result.get("error_type") or "UnknownError"
+            result.error_type = error_type
             # Ensure error is not None before classification
             error_for_classification = result.error if result.error else "Execution failed"
             result.error_category = classify_error(error_for_classification, error_type)
@@ -2309,11 +3464,19 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
             error_for_analysis = result.error if result.error else "Execution failed"
             result.failure_analysis = _analyze_failure(error_for_analysis, error_type, result.error_category)
             result.suggestions = _generate_suggestions(result.error_category, error_for_analysis, result.retry_count, state.max_retries)
+            result.result_summary = {
+                "status": "failed",
+                "execution_time_ms": int((time.time() - start_time) * 1000),
+                "error_type": error_type,
+                "error_category": result.error_category.value if result.error_category else None,
+                "next_action": _get_next_action(result.error_category)
+            }
     
     except Exception as e:
         result.status = ExecutorTaskStatus.FAILED
         error_msg = str(e)
         error_type = type(e).__name__
+        result.error_type = error_type
         result.error_category = classify_error(error_msg, error_type)
         # Record detailed error info for debugging
         import traceback
@@ -2348,6 +3511,13 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
         # Generate error analysis and suggestions
         result.failure_analysis = _analyze_failure(error_msg, error_type, result.error_category)
         result.suggestions = _generate_suggestions(result.error_category, error_msg, result.retry_count, state.max_retries)
+        result.result_summary = {
+            "status": "failed",
+            "execution_time_ms": int((time.time() - start_time) * 1000),
+            "error_type": error_type,
+            "error_category": result.error_category.value if result.error_category else None,
+            "next_action": "manual_check" if result.error_category == ErrorCategory.SYSTEM_ERROR else "retry"
+        }
         
         print(f"  ✗ Task {task.task_id} execution exception: {error_msg}")
     
@@ -2993,6 +4163,8 @@ def executor_input_mapper(global_state: GlobalState) -> ExecutorState:
         subtasks=global_state.subtasks,
         parallel_task_groups=global_state.parallel_task_groups,
         sandbox_dir=global_state.sandbox_dir,
+        use_react_executor=global_state.use_react_executor,
+        react_max_steps=global_state.react_max_steps,
         parent_state=global_state
     )
     
@@ -3047,7 +4219,9 @@ def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalSt
                 "status": result.status.value,
                 "execution_mode": result.execution_mode,
                 "error": result.error,
+                "error_type": result.error_type,
                 "error_category": result.error_category.value if result.error_category else None,
+                "execution_time_ms": int(result.execution_time * 1000) if result.execution_time else None,
                 "confidence_score": result.confidence_score,
                 "failure_analysis": result.failure_analysis,
                 "suggestions": result.suggestions,

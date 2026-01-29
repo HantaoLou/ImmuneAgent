@@ -12,6 +12,7 @@ import json
 import gzip
 from pathlib import Path
 import hashlib
+from core.react_state import ReactStep, ReactStepType
 
 
 class TrajectoryStatus(str, Enum):
@@ -605,4 +606,71 @@ Please generate merged trajectory summary (JSON format)."""
                 for mode in self._mode_index.keys()
             }
         }
+
+
+def _truncate_text(value: Any, max_len: int = 200) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        text = json.dumps(value, ensure_ascii=False)
+    else:
+        text = str(value)
+    return text if len(text) <= max_len else text[:max_len] + "..."
+
+
+def build_react_steps_from_trajectory(trajectory: CodeTrajectory) -> List[ReactStep]:
+    """
+    Map a CodeTrajectory into React-style steps (OBS/THINK/ACT/RESULT).
+    """
+    steps: List[ReactStep] = []
+
+    obs_parts = [
+        f"task_id={trajectory.task_id}",
+        f"mode={trajectory.execution_mode}"
+    ]
+    if trajectory.inputs:
+        obs_parts.append(f"inputs={trajectory.inputs}")
+    elif trajectory.parameters:
+        obs_parts.append(f"parameters={list(trajectory.parameters.keys())}")
+    steps.append(ReactStep(step_type=ReactStepType.OBS, content="; ".join(obs_parts)))
+
+    think_content = (
+        f"Generated code length={trajectory.code_length}, "
+        f"gen_time={trajectory.code_generation_time:.2f}s"
+    )
+    steps.append(ReactStep(step_type=ReactStepType.THINK, content=think_content))
+
+    tool_name = None
+    if trajectory.tools:
+        tool = trajectory.tools[0]
+        tool_name = tool.get("tool_name") or tool.get("name")
+    if tool_name:
+        param_keys = list(trajectory.parameters.keys()) if trajectory.parameters else []
+        act_content = f"Call tool={tool_name}, params={param_keys}"
+    else:
+        act_content = "Execute generated code"
+    steps.append(ReactStep(step_type=ReactStepType.ACT, content=act_content))
+
+    if trajectory.execution_result:
+        status = trajectory.execution_result.get("status", "unknown")
+        if status == "success":
+            result_payload = trajectory.execution_result.get("output")
+        else:
+            result_payload = trajectory.execution_result.get("error")
+        result_content = f"status={status}; payload={_truncate_text(result_payload)}"
+    else:
+        result_content = "status=unknown; payload="
+    steps.append(ReactStep(step_type=ReactStepType.RESULT, content=result_content))
+
+    return steps
+
+
+def summarize_react_steps(steps: List[ReactStep], max_steps: int = 5) -> str:
+    """
+    Build a compact React summary for logging (last N steps).
+    """
+    tail = steps[-max_steps:] if steps else []
+    return " | ".join(
+        f"{step.step_type.value}:{_truncate_text(step.content, 120)}" for step in tail
+    )
 

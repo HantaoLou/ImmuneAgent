@@ -34,7 +34,7 @@
         "name": "antigen_name",
         "description": "The name of the antigen for which the antibody-antigen binding affinity will be predicted. Must be one of the following: flu, sars, rsv, hiv.",
         "type": "enum",
-        "demo": "sars",
+        "demo": "flu",
         "options": [
           "flu",
           "sars",
@@ -45,8 +45,8 @@
       {
         "name": "output_file_path",
         "description": "The file path where the output of the binding affinity predictions will be saved.",
-        "type": "file",
-        "demo": "/path/to/output/file.txt",
+        "type": "Optional[file]",
+        "demo": "/path/to/sandbox",
         "options": []
       }
     ]
@@ -1034,9 +1034,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "Path to the input file containing single-cell B cell antigen binding predictions. The file should be in a supported format, such as CSV or TSV, and include necessary columns for analysis.",
-        "type": "str",
-        "demo": "path/to/antigen_binding_predictions.csv",
+        "description": "Path to the input RDS file containing single-cell B cell antigen binding predictions. The file should be an .rds file with the required columns for analysis.",
+        "type": "rds file",
+        "demo": "path/to/antigen_binding_predictions.rds",
         "options": []
       },
       {
@@ -1061,9 +1061,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "Path to the input file containing single-cell B cell data, typically in a format such as CSV or TSV.",
-        "type": "str",
-        "demo": "path/to/bcell_data.csv",
+        "description": "Path to the input RDS file containing single-cell B cell data. The file should be an .rds file.",
+        "type": "rds file",
+        "demo": "path/to/bcell_data.rds",
         "options": []
       },
       {
@@ -1081,9 +1081,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "Path to the input file containing antigen binding prediction values. The file should be in a format readable by the analysis tool, typically a CSV or TSV with numerical data.",
-        "type": "str",
-        "demo": "binding_predictions.csv",
+        "description": "Path to the input RDS file containing antigen binding prediction values. The file should be an .rds file.",
+        "type": "rds file",
+        "demo": "binding_predictions.rds",
         "options": []
       },
       {
@@ -1122,9 +1122,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "The file path to the input data, which should be a tabular format containing single-cell B cell expression data.",
-        "type": "str",
-        "demo": "path/to/single_cell_b_cell_data.csv",
+        "description": "The file path to the input RDS data containing single-cell B cell expression data.",
+        "type": "rds file",
+        "demo": "path/to/single_cell_b_cell_data.rds",
         "options": []
       },
       {
@@ -1142,9 +1142,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "Path to the input file containing gene expression data for B cell subtypes, typically in a tabular format such as CSV or TSV.",
-        "type": "str",
-        "demo": "path/to/bcell_expression_data.csv",
+        "description": "Path to the input RDS file containing gene expression data for B cell subtypes.",
+        "type": "rds file",
+        "demo": "path/to/bcell_expression_data.rds",
         "options": []
       },
       {
@@ -1176,9 +1176,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "Path to the input file containing single-cell antigen binding/neutralization data, typically in a CSV or TSV format.",
-        "type": "str",
-        "demo": "path/to/antigen_binding_data.csv",
+        "description": "Path to the input RDS file containing single-cell antigen binding/neutralization data.",
+        "type": "rds file",
+        "demo": "path/to/antigen_binding_data.rds",
         "options": []
       },
       {
@@ -1225,9 +1225,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "Path to the input file containing single-cell B cell subtype data, typically in a tabular format such as CSV or TSV.",
-        "type": "str",
-        "demo": "path/to/bcell_subtypes_data.csv",
+        "description": "Path to the input RDS file containing single-cell B cell subtype data.",
+        "type": "rds file",
+        "demo": "path/to/bcell_subtypes_data.rds",
         "options": []
       },
       {
@@ -1252,9 +1252,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "Path to the input file containing B cell subtype marker gene expression data.",
-        "type": "str",
-        "demo": "path/to/bcell_expression_data.csv",
+        "description": "Path to the input RDS file containing B cell subtype marker gene expression data.",
+        "type": "rds file",
+        "demo": "path/to/bcell_expression_data.rds",
         "options": []
       },
       {
@@ -1341,9 +1341,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "The file path to the input data, which should be a tab-separated values (TSV) file containing gene expression levels for different samples.",
-        "type": "str",
-        "demo": "path/to/gene_expression_data.tsv",
+        "description": "The file path to the input RDS data containing gene expression levels for different samples.",
+        "type": "rds file",
+        "demo": "path/to/gene_expression_data.rds",
         "options": []
       },
       {
@@ -1396,9 +1396,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "Path to the input file containing prediction values for UMAP density visualization. The file should be in a format compatible with the tool, typically a tabular or CSV file with relevant data columns.",
-        "type": "str",
-        "demo": "path/to/prediction_values.csv",
+        "description": "Path to the input RDS file containing prediction values for UMAP density visualization.",
+        "type": "rds file",
+        "demo": "path/to/prediction_values.rds",
         "options": []
       },
       {
@@ -1430,9 +1430,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "The path to the input file containing B cell data for pseudotime trajectory analysis. This should be a CSV or TSV file with gene expression data.",
-        "type": "str",
-        "demo": "b_cell_data.csv",
+        "description": "The path to the input RDS file containing B cell data for pseudotime trajectory analysis.",
+        "type": "rds file",
+        "demo": "b_cell_data.rds",
         "options": []
       },
       {
@@ -1478,9 +1478,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "Path to the input file containing pseudotime and cell type data for analysis.",
-        "type": "str",
-        "demo": "path/to/pseudotime_celltype_data.csv",
+        "description": "Path to the input RDS file containing pseudotime and cell type data for analysis.",
+        "type": "rds file",
+        "demo": "path/to/pseudotime_celltype_data.rds",
         "options": []
       },
       {
@@ -1505,9 +1505,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "The file path to the input data, which should contain the necessary information for trajectory and gene module analysis.",
-        "type": "str",
-        "demo": "path/to/trajectory_data.csv",
+        "description": "The file path to the input RDS data containing the information for trajectory and gene module analysis.",
+        "type": "rds file",
+        "demo": "path/to/trajectory_data.rds",
         "options": []
       },
       {
@@ -1525,9 +1525,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "The file path to the input data for trajectory and transcript marker analysis, typically in a supported format such as CSV or TSV.",
-        "type": "str",
-        "demo": "trajectory_data.csv",
+        "description": "The file path to the input RDS data for trajectory and transcript marker analysis.",
+        "type": "rds file",
+        "demo": "trajectory_data.rds",
         "options": []
       },
       {
@@ -1545,9 +1545,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "The path to the input file containing BCR sequence data for isotype distribution and SHM rate analysis.",
-        "type": "str",
-        "demo": "path/to/bcr_sequences.fasta",
+        "description": "The path to the input RDS file containing BCR sequence data for isotype distribution and SHM rate analysis.",
+        "type": "rds file",
+        "demo": "path/to/bcr_sequences.rds",
         "options": []
       },
       {
@@ -1572,9 +1572,9 @@
     "input_params": [
       {
         "name": "input_file",
-        "description": "Path to the input file containing data on neutralizing and non-neutralizing antibodies, including SHM rates.",
-        "type": "str",
-        "demo": "path/to/antibody_data.csv",
+        "description": "Path to the input RDS file containing data on neutralizing and non-neutralizing antibodies, including SHM rates.",
+        "type": "rds file",
+        "demo": "path/to/antibody_data.rds",
         "options": []
       },
       {
@@ -5424,7 +5424,7 @@
     ]
   },
   "generate_cds": {
-    "service": "gemoRNA",
+    "service": "gemorna",
     "description": "Generate optimized CDS sequences from protein sequences",
     "input_params": [
       {
@@ -5583,36 +5583,36 @@
     "input_params": [
       {
         "name": "feature_data_path",
-        "description": "The file path to the feature data that will be integrated with the experimental data. This should point to a valid file containing the feature information.",
-        "type": "Optional[str]",
+        "description": "The file path to the feature data CSV that will be integrated with the experimental data. Use a .csv file (convert from Excel if needed).",
+        "type": "Optional[csv file]",
         "demo": "/path/to/feature_data.csv",
         "options": []
       },
       {
         "name": "bind_predict_dir",
         "description": "The directory path where the machine learning prediction results are stored. This parameter is optional and should point to a valid directory containing the prediction files.",
-        "type": "Optional[str]",
+        "type": "Optional[directory]",
         "demo": "/path/to/prediction_results",
         "options": []
       },
       {
         "name": "neu_predict_dir",
         "description": "The directory path where the neural network prediction results are stored. This parameter is optional and should point to a valid directory containing the prediction data.",
-        "type": "Optional[str]",
+        "type": "Optional[directory]",
         "demo": "/path/to/neural_network_predictions",
         "options": []
       },
       {
         "name": "clone_results_path",
-        "description": "The file path to the clone results from machine learning predictions. This is an optional parameter, and if provided, it should point to a valid file containing the prediction data.",
-        "type": "Optional[str]",
+        "description": "The file path to the clone results CSV from machine learning predictions. This is an optional parameter, and if provided, it should point to a valid .csv file.",
+        "type": "Optional[csv file]",
         "demo": "/path/to/clone_results.csv",
         "options": []
       },
       {
         "name": "output_path",
-        "description": "The file path where the integrated dataset will be saved. If not provided, the default output location is used.",
-        "type": "Optional[str]",
+        "description": "The file path where the integrated dataset CSV will be saved. If not provided, the default output location is used.",
+        "type": "Optional[csv file]",
         "demo": "/path/to/output/dataset.csv",
         "options": []
       }
@@ -5912,15 +5912,15 @@
       {
         "name": "csv_fields",
         "description": "A string specifying the fields in the CSV file to be used for integration, separated by commas. If not provided, all fields will be used.",
-        "type": "Optional[str]",
-        "demo": "sample_id,sequence,quality",
+        "type": "str",
+        "demo": "main_name",
         "options": []
       },
       {
         "name": "rds_fields",
         "description": "A string specifying the fields from the RDS (Relational Database Service) to be used in the integration process. This can include specific column names or field identifiers relevant for the BCR data integration.",
-        "type": "Optional[str]",
-        "demo": "patient_id,diagnosis_date,treatment_start",
+        "type": "str",
+        "demo": "main_name",
         "options": []
       },
       {
@@ -6169,7 +6169,7 @@
     ]
   },
   "generate_cds_from_file": {
-    "service": "gemoRNA",
+    "service": "gemorna",
     "description": "Generate optimized CDS sequences from protein sequence files",
     "input_params": [
       {
@@ -6196,7 +6196,7 @@
     ]
   },
   "generate_5utr": {
-    "service": "gemoRNA",
+    "service": "gemorna",
     "description": "Output optimal 5' UTR based on length range",
     "input_params": [
       {
@@ -6223,7 +6223,7 @@
     ]
   },
   "generate_3utr": {
-    "service": "gemoRNA",
+    "service": "gemorna",
     "description": "Output optimal 3' UTR based on length range",
     "input_params": [
       {
@@ -6250,7 +6250,7 @@
     ]
   },
   "generate_full_mrna": {
-    "service": "gemoRNA",
+    "service": "gemorna",
     "description": "Generate highly expressed and stable mRNA from amino acid sequences",
     "input_params": [
       {

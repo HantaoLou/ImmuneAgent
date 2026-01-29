@@ -158,12 +158,21 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
         mcp servers only consider the following:
         - igblast
         - metabcr
+        - lineage_analysis
+        - r_data_integration
+        - bioinformatics
         parameters:
-        - fasta file for analyze_vdj_batch: /data_new/workspace/flu-simple.fasta
-        - antibody file for metabcr: /data_new/workspace/flu-simple.csv
-        - antigen file for metabcr: /data_new/workspace/Copy of flu_bind_variant_seq.xlsx
+        - fasta file: /data_new/workspace/flu-simple.fasta
+        - antibody file: /data_new/workspace/flu-simple.csv
+        - antigen file: /data_new/workspace/Copy of flu_bind_variant_seq.xlsx
+        - RDS file: /data_new/workspace/antibody_gen/flu/input/rds/20240923_flu_B_annotation.rds
+        - first experiment data: /data_new/workspace/antibody_gen/flu/input/raw_doc/first-time_Inf/flu_simple(origin_flu-binding_neutralizations).xlsx
+        - second experiment data: /data_new/workspace/antibody_gen/flu/input/raw_doc/second-time_Inf/flu_second_simple.xlsx
     '''
     execution_plan = None  # 可以在这里提供执行计划
+    use_react_supervisor = False
+    use_react_executor = False
+    react_max_steps = 3
     
     print(f"\n{'='*80}")
     print(f"【完整工作流详细测试】")
@@ -179,14 +188,20 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
         logger.log_initial_state({
             "user_input": user_input,
             "execution_plan": execution_plan,
-            "sandbox_dir": str(test_dir)
+            "sandbox_dir": str(test_dir),
+            "use_react_supervisor": use_react_supervisor,
+            "use_react_executor": use_react_executor,
+            "react_max_steps": react_max_steps
         }, "用户原始输入和执行计划")
     
     # 创建初始全局状态
     global_state = GlobalState(
         user_input=user_input,
         execution_plan=execution_plan,
-        sandbox_dir=str(test_dir)
+        sandbox_dir=str(test_dir),
+        use_react_supervisor=use_react_supervisor,
+        use_react_executor=use_react_executor,
+        react_max_steps=react_max_steps
     )
     
     if logger:
@@ -214,7 +229,11 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
                                  "Supervisor 输出映射")
     
     print(f"✓ 任务分类结果: {global_state.user_task_type}")
-    print(f"  分类原因: {supervisor_output.classification_reason if hasattr(supervisor_output, 'classification_reason') else 'N/A'}")
+    if global_state.supervisor_decision or global_state.supervisor_reasoning:
+        print(f"  决策: {global_state.supervisor_decision}")
+        print(f"  分类原因: {global_state.supervisor_reasoning}")
+    else:
+        print(f"  分类原因: {supervisor_output.classification_reason if hasattr(supervisor_output, 'classification_reason') else 'N/A'}")
     
     # ==================== 步骤 3: Task Decomposition ====================
     print(f"\n{'='*60}")
@@ -338,6 +357,11 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
                 "user_input": user_input,
                 "execution_plan": execution_plan,
                 "task_classification": global_state.user_task_type.value if hasattr(global_state.user_task_type, 'value') else str(global_state.user_task_type),
+                "supervisor_decision": global_state.supervisor_decision,
+                "supervisor_reasoning": global_state.supervisor_reasoning,
+                "use_react_supervisor": use_react_supervisor,
+                "use_react_executor": use_react_executor,
+                "react_max_steps": react_max_steps,
                 "total_tasks": 0,
                 "completed": 0,
                 "failed": 0,
@@ -523,7 +547,8 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
             # 准备result字典，包含完整的关键信息
             result_dict = {
                 "confidence_score": task_result.confidence_score,
-                "retry_count": task_result.retry_count
+                "retry_count": task_result.retry_count,
+                "execution_time_ms": int(task_result.execution_time * 1000) if task_result.execution_time else None
             }
             
             # 处理output：提取type为result的消息（工具执行结果），过滤掉progress消息
@@ -588,6 +613,8 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
             if task_result.error:
                 result_dict["error"] = task_result.error  # 包含完整错误堆栈
                 result_dict["error_full"] = task_result.error  # 确保完整错误信息被记录
+            if task_result.error_type:
+                result_dict["error_type"] = task_result.error_type
             if task_result.error_category:
                 result_dict["error_category"] = task_result.error_category.value if (hasattr(task_result.error_category, 'value')) else str(task_result.error_category)
             
@@ -680,6 +707,8 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
             "user_input": user_input,
             "execution_plan": execution_plan,
             "task_classification": global_state.user_task_type.value if hasattr(global_state.user_task_type, 'value') else str(global_state.user_task_type),
+                "supervisor_decision": global_state.supervisor_decision,
+                "supervisor_reasoning": global_state.supervisor_reasoning,
             "total_tasks": final_state.total_tasks,
             "completed": final_state.completed_count,
             "failed": final_state.failed_count,
@@ -687,7 +716,10 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
             "hitl_responses_count": len(final_state.hitl_responses),
             "interrupt_iterations": iteration_count,
             "tasks_count": len(all_tasks),
-            "parallel_groups_count": len(global_state.parallel_task_groups)
+                "parallel_groups_count": len(global_state.parallel_task_groups),
+                "use_react_supervisor": use_react_supervisor,
+                "use_react_executor": use_react_executor,
+                "react_max_steps": react_max_steps
         })
     
     print(f"{'='*80}\n")

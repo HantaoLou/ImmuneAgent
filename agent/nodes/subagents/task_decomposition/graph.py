@@ -1018,6 +1018,22 @@ def _infer_single_parameter(
     Returns:
         Parameter inference result
     """
+    def _normalize_base_dir_value(param_name: str, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if "base_dir" not in param_name.lower():
+            return value
+        stripped = value.strip()
+        if not stripped:
+            return value
+        # If it already looks like a directory (ends with separator), keep it
+        if stripped.endswith(("/", "\\", os.sep)):
+            return value
+        basename = os.path.basename(stripped)
+        _, ext = os.path.splitext(basename)
+        if ext:
+            return os.path.dirname(stripped)
+        return value
     # Priority 1: Check dependency task outputs FIRST (before context extraction)
     # This ensures that if a parameter can be obtained from a dependency task's output,
     # it takes precedence over context-extracted values
@@ -1112,6 +1128,7 @@ def _infer_single_parameter(
     if extracted_params and param_name in extracted_params:
         extracted_value = extracted_params[param_name]
         if extracted_value is not None:
+            extracted_value = _normalize_base_dir_value(param_name, extracted_value)
             # Validation: Check if this is an output file parameter being set to an input file path
             # Output file parameters should not be set to user-provided input file paths
             is_output_param = any(keyword in param_name.lower() for keyword in ['output', 'result', 'save', 'export'])
@@ -1325,10 +1342,11 @@ Common recommended value rules:
             source_type_str = inference_data.get("source_type", "user_required")
             
             if source_type_str == "determined":
+                inferred_value = _normalize_base_dir_value(param_name, inference_data.get("value"))
                 return ParameterInferenceResult(
                     param_name=param_name,
                     source_type=ParameterSourceType.DETERMINED,
-                    value=inference_data.get("value"),
+                    value=inferred_value,
                     reason=inference_data.get("reason", "Parameter value inferred from task description")
                 )
             elif source_type_str == "from_task":
