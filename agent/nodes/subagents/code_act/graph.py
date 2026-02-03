@@ -14,6 +14,7 @@ from langgraph.graph import StateGraph, START, END
 import sys
 import os
 import subprocess
+import json
 from pathlib import Path
 from enum import Enum
 
@@ -84,6 +85,10 @@ class CodeActState(BaseModel):
     # Code generation and execution results
     generated_code: Optional[str] = Field(default=None, description="Generated code")
     execution_result: Optional[Dict[str, Any]] = Field(default=None, description="Execution result")
+    
+    # Pre-execution code (e.g., CSV to FASTA conversion)
+    # This code will be prepended to generated code and executed in the SAME sandbox session
+    pre_execution_code: Optional[str] = Field(default=None, description="Code to execute before main code (e.g., file format conversion)")
     
     # Trajectory recording (SE-Agent style)
     trajectory_history: List[CodeTrajectory] = Field(default_factory=list, description="Trajectory history for current task")
@@ -252,7 +257,7 @@ def _generate_code_with_llm(
         return fallback_code or f"# LLM code generation failed: {e}"
 
 
-def _check_sandbox_available(state: CodeActState) -> tuple[bool, str]:
+def _check_sandbox_available(state: CodeActState, provider: Optional[str] = None) -> tuple[bool, str]:
     """
     Check if sandbox environment is available
     
@@ -262,6 +267,14 @@ def _check_sandbox_available(state: CodeActState) -> tuple[bool, str]:
     Returns:
         (is_available, sandbox_directory_path)
     """
+    provider = (provider or _get_sandbox_provider()).lower()
+    if provider == "opensandbox":
+        return True, "opensandbox"
+    return _check_local_sandbox_available(state)
+
+
+def _check_local_sandbox_available(state: CodeActState) -> tuple[bool, str]:
+    """Check local filesystem sandbox availability."""
     sandbox_dir = None
     
     # Try to get sandbox directory from parent_state
@@ -293,6 +306,44 @@ def _check_sandbox_available(state: CodeActState) -> tuple[bool, str]:
             return False, str(sandbox_path)
     except Exception:
         return False, sandbox_dir or ""
+
+
+def _get_sandbox_provider() -> str:
+    """Get sandbox provider selection for CodeAct."""
+    return os.getenv("CODEACT_SANDBOX_PROVIDER", "local").lower()
+
+
+def _parse_execution_output(stdout: str, stderr: str, returncode: Optional[int]) -> Dict[str, Any]:
+    """Parse CodeAct execution output from stdout/stderr."""
+    result_marker = "__CODEACT_RESULT__"
+    parsed_result = None
+    for line in (stdout or "").splitlines():
+        if result_marker in line:
+            payload = line.split(result_marker, 1)[1]
+            try:
+                parsed_result = json.loads(payload)
+            except Exception:
+                parsed_result = payload
+
+    error = None
+    error_type = None
+    if isinstance(parsed_result, dict):
+        status = parsed_result.get("status", "success")
+        output = parsed_result.get("output")
+        error = parsed_result.get("error")
+        error_type = parsed_result.get("error_type")
+    else:
+        status = "failed" if (returncode not in (0, None)) else "success"
+        output = parsed_result or ((stdout or "")[-1000:] if stdout else (stderr or "")[-1000:])
+        if returncode not in (0, None):
+            error = ((stderr or "")[-2000:] if stderr else (stdout or "")[-2000:]) or "Execution failed"
+
+    return {
+        "status": status,
+        "output": output,
+        "error": error,
+        "error_type": error_type,
+    }
 
 
 def _build_subprocess_kwargs() -> Dict[str, Any]:
@@ -605,7 +656,8 @@ def codeact_generate_code_node(state: CodeActState) -> CodeActState:
     generation_start_time = time.time()
     
     # Check sandbox environment (for generating appropriate code, but not executing in this node)
-    has_sandbox, sandbox_dir = _check_sandbox_available(state)
+    sandbox_provider = _get_sandbox_provider()
+    has_sandbox, sandbox_dir = _check_sandbox_available(state, provider=sandbox_provider)
     if not has_sandbox:
         print(f"  ⚠ Sandbox environment unavailable, will generate code executable in fallback mode (directory: {sandbox_dir})")
     
@@ -825,7 +877,17 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
     execution_start_time = time.time()
     
     # Check sandbox environment
-    has_sandbox, sandbox_dir = _check_sandbox_available(state)
+    sandbox_provider = _get_sandbox_provider()
+    print(f"  ℹ Sandbox provider from config: {sandbox_provider}")
+    print(f"  ℹ Execution mode: {state.execution_mode}")
+    
+    # Note: MCP_TOOL mode can now use OpenSandbox
+    # OpenSandbox executor will handle dependency installation and config file setup
+    if state.execution_mode == CodeActExecutionMode.MCP_TOOL or str(state.execution_mode) == "mcp_tool":
+        if sandbox_provider == "opensandbox":
+            print("  ℹ MCP tool execution mode with OpenSandbox: will install dependencies and setup config in sandbox")
+
+    has_sandbox, sandbox_dir = _check_sandbox_available(state, provider=sandbox_provider)
     allow_unsafe = os.getenv("ALLOW_UNSAFE_CODEACT", "false").lower() == "true"
     if not has_sandbox and not allow_unsafe:
         state.execution_result = {
@@ -838,16 +900,78 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             state.current_trajectory = None
         return state
     print(f"  ℹ Sandbox environment check: available={has_sandbox}, directory={sandbox_dir}")
+    print(f"  ℹ Final sandbox provider: {sandbox_provider}")
     
     try:
-        if has_sandbox:
+        if sandbox_provider == "opensandbox":
+            print("  🚀 Using OpenSandbox for code execution")
+            from utils.opensandbox_executor import run_code_in_opensandbox_sync, is_opensandbox_enabled
+
+            if not is_opensandbox_enabled():
+                state.execution_result = {
+                    "status": "failed",
+                    "error": "OpenSandbox is not enabled (set CODEACT_SANDBOX_PROVIDER=opensandbox or OPENSANDBOX_ENABLED=true)",
+                    "error_type": "SandboxNotEnabled",
+                }
+                return state
+
+            timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "120"))
+            
+            # Try to reuse existing sandbox from session to preserve files across task executions
+            existing_sandbox_id = None
+            if state.parent_state:
+                # First try merged_result (set by supervisor)
+                merged_result = getattr(state.parent_state, 'merged_result', None) or {}
+                existing_sandbox_id = merged_result.get('opensandbox_id')
+                if existing_sandbox_id:
+                    print(f"  ℹ Reusing session sandbox: {existing_sandbox_id}")
+            
+            sandbox_result = run_code_in_opensandbox_sync(
+                code=code,
+                task_id=state.task.task_id,
+                timeout_seconds=timeout_seconds,
+                existing_sandbox_id=existing_sandbox_id,
+                keep_alive=True,  # Keep sandbox alive for reuse by subsequent tasks
+            )
+            
+            # Store sandbox_id back to parent_state for future reuse
+            if sandbox_result.get("sandbox_id") and state.parent_state:
+                merged_result = getattr(state.parent_state, 'merged_result', None)
+                if merged_result is not None and not merged_result.get('opensandbox_id'):
+                    merged_result['opensandbox_id'] = sandbox_result.get("sandbox_id")
+                    print(f"  ℹ Stored sandbox_id for reuse: {sandbox_result.get('sandbox_id')}")
+
+            if sandbox_result.get("error"):
+                state.execution_result = {
+                    "status": "failed",
+                    "error": sandbox_result.get("error"),
+                    "error_type": sandbox_result.get("error_type"),
+                    "sandbox_provider": "opensandbox",
+                    "sandbox_id": sandbox_result.get("sandbox_id"),
+                }
+                return state
+
+            stdout = sandbox_result.get("stdout", "")
+            stderr = sandbox_result.get("stderr", "")
+            returncode = sandbox_result.get("returncode")
+            parsed = _parse_execution_output(stdout, stderr, returncode)
+            state.execution_result = {
+                **parsed,
+                "stderr": stderr[-1000:] if stderr else "",
+                "returncode": returncode,
+                "sandbox_dir": f"opensandbox://{sandbox_result.get('sandbox_id')}",
+                "sandbox_provider": "opensandbox",
+                "sandbox_image": sandbox_result.get("image"),
+            }
+            print(f"  ✓ OpenSandbox execution completed, status={parsed.get('status')}, returncode={returncode}")
+        elif has_sandbox:
             # Execute code in sandbox via subprocess for isolation
             import os
             from pathlib import Path
-            import json as json_module
             
-            result_marker = "__CODEACT_RESULT__"
             timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "120"))
+            print(f"  🔄 Starting code execution (local sandbox subprocess mode, timeout={timeout_seconds}s)...")
+            print(f"  ℹ Code length: {len(code)} characters")
             
             sandbox_path = Path(sandbox_dir)
             sandbox_path.mkdir(parents=True, exist_ok=True)
@@ -867,7 +991,6 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             env.setdefault("PYTHONIOENCODING", "utf-8")
             env.setdefault("PYTHONUTF8", "1")
             
-            print(f"  🔄 Starting code execution (sandbox subprocess mode)...")
             try:
                 completed = subprocess.run(
                     [python_exe, str(code_file)],
@@ -881,50 +1004,38 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
                     **_build_subprocess_kwargs()
                 )
             except subprocess.TimeoutExpired as e:
+                error_msg = f"Execution timed out after {timeout_seconds}s"
+                print(f"  ✗ {error_msg}")
+                print(f"  ⚠ This may indicate:")
+                print(f"     - Code is waiting for network/IO operations")
+                print(f"     - Infinite loop or deadlock in code")
+                print(f"     - MCP tool call is hanging")
+                print(f"  💡 Consider:")
+                print(f"     - Increasing CODEACT_TIMEOUT_SECONDS (current: {timeout_seconds}s)")
+                print(f"     - Using OpenSandbox for better isolation (if not in MCP_TOOL mode)")
+                print(f"     - Reviewing the generated code for potential issues")
+                
                 state.execution_result = {
                     "status": "failed",
-                    "error": f"Execution timed out after {timeout_seconds}s",
+                    "error": error_msg,
+                    "error_type": "TimeoutError",
                     "stderr": (e.stderr or "")[-1000:] if hasattr(e, "stderr") else "",
                     "returncode": None,
-                    "sandbox_dir": sandbox_dir
+                    "sandbox_dir": sandbox_dir,
+                    "timeout_seconds": timeout_seconds
                 }
-                print(f"  ✗ Execution timed out after {timeout_seconds}s")
                 return state
             
             stdout = completed.stdout or ""
             stderr = completed.stderr or ""
-            parsed_result = None
-            for line in stdout.splitlines():
-                if result_marker in line:
-                    payload = line.split(result_marker, 1)[1]
-                    try:
-                        parsed_result = json_module.loads(payload)
-                    except Exception:
-                        parsed_result = payload
-            
-            error = None
-            error_type = None
-            if isinstance(parsed_result, dict):
-                status = parsed_result.get("status", "success")
-                output = parsed_result.get("output")
-                error = parsed_result.get("error")
-                error_type = parsed_result.get("error_type")
-            else:
-                status = "failed" if completed.returncode != 0 else "success"
-                output = parsed_result or (stdout[-1000:] if stdout else stderr[-1000:])
-                if completed.returncode != 0:
-                    error = (stderr[-2000:] if stderr else stdout[-2000:]) or "Execution failed"
-            
+            parsed = _parse_execution_output(stdout, stderr, completed.returncode)
             state.execution_result = {
-                "status": status,
-                "output": output,
-                "error": error,
-                "error_type": error_type,
+                **parsed,
                 "stderr": stderr[-1000:] if stderr else "",
                 "returncode": completed.returncode,
                 "sandbox_dir": sandbox_dir
             }
-            print(f"  ✓ Execution completed, status={status}, returncode={completed.returncode}")
+            print(f"  ✓ Execution completed, status={parsed.get('status')}, returncode={completed.returncode}")
         else:
             # No sandbox environment: fallback, execute directly
             print(f"  ⚠ Using fallback execution (no sandbox environment)")
@@ -1102,15 +1213,30 @@ def codeact_revision_node(state: CodeActState) -> CodeActState:
     
     When code execution fails, use Revision mechanism for deep analysis and intelligent fix.
     """
+    # Always increment revision_iteration to prevent infinite loops
+    state.revision_iteration += 1
+    print(f"  ℹ Revision iteration incremented to {state.revision_iteration}")
+    
     # Check if there are failed trajectories
     if not state.trajectory_history:
         print("  ⚠ No trajectory history, cannot perform Revision analysis")
+        print("  ⚠ Will use basic fix mode instead")
+        # Set basic fix information from execution_result if available
+        if state.execution_result:
+            state.previous_code = state.generated_code
+            state.previous_error = state.execution_result.get("error", "Unknown error")
+            state.error_category = state.execution_result.get("error_category", "unknown")
         return state
     
     # Get latest failed trajectory
     failed_trajectories = [t for t in state.trajectory_history if t.status == TrajectoryStatus.FAILED]
     if not failed_trajectories:
         print("  ℹ No failed trajectories, no Revision needed")
+        # Still update fix information from execution_result if available
+        if state.execution_result:
+            state.previous_code = state.generated_code
+            state.previous_error = state.execution_result.get("error", "Unknown error")
+            state.error_category = state.execution_result.get("error_category", "unknown")
         return state
     
     latest_failed = failed_trajectories[-1]
@@ -1121,9 +1247,8 @@ def codeact_revision_node(state: CodeActState) -> CodeActState:
     # Create Revision plan
     revision_plan = create_revision_plan(latest_failed, previous_failed)
     
-    # Update state
+    # Update state (revision_iteration already incremented at the start)
     state.revision_plan = revision_plan
-    state.revision_iteration += 1
     state.previous_code = latest_failed.generated_code
     state.previous_error = latest_failed.error_message or str(latest_failed.error_type)
     state.error_category = latest_failed.error_category
@@ -1152,9 +1277,26 @@ def build_codeact_subgraph():
     def should_revise(state: CodeActState) -> str:
         """Determine if Revision is needed"""
         if state.execution_result and state.execution_result.get("status") == "failed":
-            # Check iteration limit
-            if state.revision_iteration < 3:  # Maximum 3 Revision iterations
+            error_type = state.execution_result.get("error_type", "")
+            error = state.execution_result.get("error", "")
+            
+            # Don't retry on timeout errors - they usually indicate code issues that won't be fixed by revision
+            if error_type == "TimeoutError" or "timed out" in error.lower():
+                print(f"  ⚠ Execution timed out, skipping Revision (timeout errors usually indicate code issues)")
+                return "end"
+            
+            # Check iteration limit (use current value, will be incremented in revision node)
+            current_iteration = state.revision_iteration
+            max_iterations = 3
+            
+            if current_iteration < max_iterations:
+                next_iteration = current_iteration + 1
+                print(f"  🔄 Entering Revision (iteration {next_iteration}/{max_iterations}, current: {current_iteration})")
+                print(f"  ℹ Trajectory history: {len(state.trajectory_history)} entries")
                 return "revision"
+            else:
+                print(f"  ⚠ Maximum Revision iterations ({max_iterations}) reached (current: {current_iteration}), stopping")
+                print(f"  ℹ Final trajectory history: {len(state.trajectory_history)} entries")
         return "end"
     
     graph.add_conditional_edges(

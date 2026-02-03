@@ -142,6 +142,20 @@ Decompose the user's execution plan into a structured, serialized task list. Eac
 5. **Dependencies**:
    - Clearly identify dependencies between tasks
    - Ensure dependencies accurately reflect data flow and execution order
+   - **IMPORTANT: Check tool-level dependencies** - Some tools have `depends_on` field specifying required upstream tools. If a tool depends on output from another tool (e.g., integrate_bcr_data_complete depends on analyze_vdj_batch), the task using it MUST have the dependent task in its dependencies list.
+   - Example: If tool B has `depends_on: ["tool_A"]`, any task using tool B must wait for all tasks using tool_A to complete first.
+
+6. **Data Integration Rule (BCR/Antibody Analysis)**:
+   - **CRITICAL**: For BCR/antibody analysis workflows, each analysis tool that produces CSV output (e.g., analyze_vdj_batch, metabcr) MUST be followed by an integrate_bcr_data_complete task
+   - This integration pipeline ensures all analysis results are consolidated into the RDS file for downstream bioinformatics analysis
+   - The integration flow should be: tool1 -> CSV1 + RDS = RDS1, then tool2 -> CSV2 + RDS1 = RDS2, and so on
+   - Example workflow:
+     * task_001: analyze_vdj_batch -> produces airr_results.csv
+     * task_002: integrate_bcr_data_complete (csv_file=airr_results.csv, rds_file=original.rds) -> produces integrated_1.rds
+     * task_003: metabcr -> produces binding_predictions.csv  
+     * task_004: integrate_bcr_data_complete (csv_file=binding_predictions.csv, rds_file=integrated_1.rds) -> produces integrated_2.rds
+     * task_005: bioinformatics analysis (input_file=integrated_2.rds)
+   - Bioinformatics service tools (visualization, analysis) should use the FINAL integrated RDS file as input
 
 # Tool Extraction Rules
 
@@ -273,6 +287,10 @@ def get_task_decomposition_user_prompt(
                         "tool_name": first_tool.get("tool_name", tool.get("name", "")),
                         "description": first_tool.get("description", simplified_tool["description"])[:MAX_TOOL_DESCRIPTION_LENGTH]
                     }]
+            # Include tool dependency info (important for task ordering)
+            if tool.get("depends_on"):
+                simplified_tool["depends_on"] = tool.get("depends_on")
+                simplified_tool["execution_order"] = tool.get("execution_order", "after_dependencies")
             simplified_tools.append(simplified_tool)
     
     # Format tool information (using more compact format)
@@ -307,10 +325,12 @@ Please perform Stage 1 task decomposition based on the above experimental plan a
 4. **Check file formats**: Before creating file conversion tasks, verify if the user input already provides files in the required format. Only create conversion tasks when the input format does NOT match the required format.
 5. Build structured tasks, including complete task information (tools, inputs, outputs, parameters, etc.)
 6. **Identify and accurately set dependencies between tasks** (dependencies field)
+7. **For BCR/antibody analysis**: Each tool that produces CSV output (analyze_vdj_batch, metabcr, etc.) MUST be followed by an integrate_bcr_data_complete task to merge results into the RDS file. The integration chain should accumulate: CSV1+RDS -> RDS1, then CSV2+RDS1 -> RDS2, etc.
 
 **Important:** 
 - This stage only needs to return serialized task list and dependencies, without considering parallel execution.
 - **DO NOT create unnecessary file format conversion tasks if the user already provides files in the required format.**
+- **Bioinformatics tools should use the FINAL integrated RDS file (after all integrations complete)**
 
 Please strictly follow the output format specification in the system prompt and return the task decomposition results in JSON format."""
 

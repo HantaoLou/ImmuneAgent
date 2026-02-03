@@ -67,6 +67,11 @@ def execute_with_react(
         )
 
         result.code = exec_result.get("code")
+        # Save revision_iteration from codeact_state to maintain state across invocations
+        if hasattr(codeact_state, 'revision_iteration'):
+            result.revision_iteration = codeact_state.revision_iteration
+        elif isinstance(codeact_state, dict):
+            result.revision_iteration = codeact_state.get('revision_iteration', 0)
         status = exec_result.get("status")
 
         if status == "success":

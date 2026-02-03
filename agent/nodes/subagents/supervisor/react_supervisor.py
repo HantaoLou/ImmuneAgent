@@ -116,10 +116,14 @@ def user_description_classify_node(state: ReactSupervisorState) -> ReactSupervis
     state.reasoning = classification.get("reasoning")
     state.user_task_type = _normalize_decision(state.decision)
 
-    if state.uploaded_files:
+    # Skip file processing if already done by preprocess_user_input_node
+    if state.uploaded_files and not state.sandbox_file_paths:
         sandbox_path = Path(state.sandbox_dir)
         sandbox_path.mkdir(parents=True, exist_ok=True)
         for uploaded_file_path in state.uploaded_files:
+            # Skip remote paths (they are handled by OpenSandbox)
+            if uploaded_file_path.startswith(('/data/', '/home/', '/opt/', '/mnt/')):
+                continue
             sandbox_file_path = _download_file_to_sandbox(uploaded_file_path, sandbox_path)
             if sandbox_file_path:
                 state.sandbox_file_paths[uploaded_file_path] = sandbox_file_path

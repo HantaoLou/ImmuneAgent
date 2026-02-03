@@ -6,6 +6,7 @@ MCP工具调用辅助模块
 
 import json
 import asyncio
+import os
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import sys
@@ -159,7 +160,19 @@ async def _get_single_server_client(service_id: str) -> Any:
         if service_id not in all_servers:
             raise ValueError(f"服务 {service_id} 不在配置中")
         
-        server_config = {service_id: all_servers[service_id]}
+        server_config = {service_id: all_servers[service_id].copy()}
+        
+        # Add API key to session_kwargs headers if available
+        api_key = os.getenv("OPEN_SANDBOX_API_KEY") or os.getenv("SANDBOX_API_KEY")
+        if api_key:
+            # Ensure session_kwargs exists
+            if "session_kwargs" not in server_config[service_id]:
+                server_config[service_id]["session_kwargs"] = {}
+            # Add headers with API key
+            if "headers" not in server_config[service_id]["session_kwargs"]:
+                server_config[service_id]["session_kwargs"]["headers"] = {}
+            server_config[service_id]["session_kwargs"]["headers"]["OPEN-SANDBOX-API-KEY"] = api_key
+            print(f"  ℹ Added API key header for service: {service_id}")
         
         # 创建单服务器客户端
         client = MultiServerMCPClient(connections=server_config)
@@ -206,6 +219,17 @@ async def _get_mcp_client():
         
         with open(mcp_servers_path, "r", encoding="utf-8") as f:
             mcp_servers = json.load(f)
+        
+        # Add API key to all servers' session_kwargs headers if available
+        api_key = os.getenv("OPEN_SANDBOX_API_KEY") or os.getenv("SANDBOX_API_KEY")
+        if api_key:
+            for server_id, server_config in mcp_servers.items():
+                if "session_kwargs" not in server_config:
+                    server_config["session_kwargs"] = {}
+                if "headers" not in server_config["session_kwargs"]:
+                    server_config["session_kwargs"]["headers"] = {}
+                server_config["session_kwargs"]["headers"]["OPEN-SANDBOX-API-KEY"] = api_key
+            print(f"  ℹ Added API key header to {len(mcp_servers)} MCP servers")
         
         # 创建多服务器MCP客户端
         _mcp_client_cache = MultiServerMCPClient(connections=mcp_servers)
@@ -338,14 +362,40 @@ def get_mcp_tool(tool_name: str) -> Optional[Any]:
     Returns:
         BaseTool实例，如果未找到则返回None
     """
-    # 先尝试精确匹配
+    # 1. 先尝试精确匹配
     if tool_name in _mcp_tools_cache:
         return _mcp_tools_cache[tool_name]
     
-    # 尝试部分匹配（工具名称可能包含service前缀）
+    # 2. 尝试匹配带服务前缀的格式（service_tool_name）
+    # 例如：spired_fitness_run_spired_fitness -> run_spired_fitness
+    if "_" in tool_name:
+        parts = tool_name.split("_", 1)
+        if len(parts) == 2:
+            potential_service = parts[0]
+            base_tool_name = parts[1]
+            # 先尝试 base_tool_name
+            if base_tool_name in _mcp_tools_cache:
+                return _mcp_tools_cache[base_tool_name]
+    
+    # 3. 尝试部分匹配（工具名称可能包含service前缀）
+    # 优先匹配较长的工具名称，避免误匹配
+    best_match = None
+    best_match_length = 0
     for cached_name, tool in _mcp_tools_cache.items():
-        if cached_name.endswith(tool_name) or tool_name in cached_name:
+        # 精确匹配（已处理）
+        if cached_name == tool_name:
             return tool
+        # 检查是否以工具名称结尾（例如：cached_name="run_spired_fitness", tool_name="spired_fitness"）
+        if cached_name.endswith(tool_name) and len(tool_name) > best_match_length:
+            best_match = tool
+            best_match_length = len(tool_name)
+        # 检查工具名称是否在缓存名称中（例如：cached_name="run_spired_fitness", tool_name="run_spired")
+        elif tool_name in cached_name and len(tool_name) > best_match_length:
+            best_match = tool
+            best_match_length = len(tool_name)
+    
+    if best_match:
+        return best_match
     
     return None
 
@@ -403,10 +453,19 @@ async def invoke_mcp_tool(
                         break
                 
                 if tool is None:
+                    available_tools = [t.name for t in tools]
+                    error_msg = (
+                        f"在服务 {service_id} 中未找到工具: {tool_name}。\n"
+                        f"  服务ID: {service_id}\n"
+                        f"  目标工具: {tool_name}\n"
+                        f"  该服务可用工具 ({len(available_tools)} 个): {available_tools[:20]}"
+                    )
+                    if len(available_tools) > 20:
+                        error_msg += f" ... (还有 {len(available_tools) - 20} 个工具)"
                     return {
                         "status": "failed",
                         "output": None,
-                        "error": f"在服务 {service_id} 中未找到工具: {tool_name}。可用工具: {[t.name for t in tools][:10]}..."
+                        "error": error_msg
                     }
                 
                 # 5. 调用工具
@@ -426,8 +485,23 @@ async def invoke_mcp_tool(
                     "error": None
                 }
             except Exception as server_e:
-                # 如果单服务器连接失败，降级到全服务器连接
-                print(f"  ⚠ 单服务器连接失败: {type(server_e).__name__}: {str(server_e)}")
+                # 如果单服务器连接失败，记录详细错误并降级到全服务器连接
+                error_type = type(server_e).__name__
+                error_msg = str(server_e)
+                print(f"  ⚠ 单服务器连接失败 (服务: {service_id}): {error_type}: {error_msg}")
+                
+                # 检查服务是否在配置中
+                try:
+                    mcp_servers_path = agent_dir / "config" / "mcp_servers.json"
+                    if mcp_servers_path.exists():
+                        with open(mcp_servers_path, "r", encoding="utf-8") as f:
+                            all_servers = json.load(f)
+                        if service_id not in all_servers:
+                            print(f"  ⚠ 服务 {service_id} 不在 mcp_servers.json 配置中")
+                            print(f"  ℹ 可用服务: {list(all_servers.keys())[:10]}...")
+                except Exception:
+                    pass  # 忽略配置检查错误
+                
                 print(f"  ℹ 降级到全服务器连接...")
                 # 继续到降级方案
         else:
@@ -446,10 +520,27 @@ async def invoke_mcp_tool(
             tool = get_mcp_tool(tool_name)
         
         if tool is None:
+            # 提供更详细的错误信息，包括服务ID（如果已知）
+            cached_tools = list(_mcp_tools_cache.keys())
+            service_id = _get_service_id_for_tool(tool_name)
+            
+            error_msg = f"未找到工具: {tool_name}"
+            if service_id:
+                error_msg += f"\n  预期服务ID: {service_id} (但该服务可能未连接或工具不存在)"
+            error_msg += f"\n  已缓存工具数量: {len(cached_tools)}"
+            error_msg += f"\n  已缓存工具示例: {cached_tools[:20]}"
+            if len(cached_tools) > 20:
+                error_msg += f" ... (还有 {len(cached_tools) - 20} 个工具)"
+            
+            # 尝试提供相似工具名称建议
+            similar_tools = [t for t in cached_tools if tool_name.lower() in t.lower() or t.lower() in tool_name.lower()]
+            if similar_tools:
+                error_msg += f"\n  相似工具名称: {similar_tools[:5]}"
+            
             return {
                 "status": "failed",
                 "output": None,
-                "error": f"未找到工具: {tool_name}。可用工具: {list(_mcp_tools_cache.keys())[:10]}..."
+                "error": error_msg
             }
         
         # 准备配置

@@ -731,8 +731,8 @@
     "input_params": [
       {
         "name": "sequences",
-        "description": "A FASTA file containing the nucleotide sequences to be analyzed for V(D)J recombination.",
-        "type": "fasta file",
+        "description": "Nucleotide sequences for V(D)J recombination analysis. Accepts: (1) FASTA file (.fasta/.fa) with sequences, or (2) CSV file containing sequence columns such as 'Heavy_DNA', 'heavy_dna', 'Light_DNA', 'sequence', 'Heavy', 'Light', etc. CSV files with valid sequence columns will be automatically converted to FASTA format.",
+        "type": "fasta or csv file",
         "demo": "example_sequences.fasta",
         "options": []
       },
@@ -5396,29 +5396,29 @@
       }
     ]
   },
-  "ribonn_predict": {
+  "predict_and_fix_ribonn_te": {
     "service": "ribonn",
     "description": "Predict mRNA translation efficiency using RiboNN, support human/mouse species, output result files",
     "input_params": [
       {
-        "name": "input_path",
+        "name": "input_file_path",
         "description": "The file path to the input data for RiboNN prediction. This should be a valid path to a file containing mRNA sequences in a supported format.",
         "type": "str",
-        "demo": "/path/to/input/mRNA_sequences.fasta",
+        "demo": "",
         "options": []
       },
       {
         "name": "species",
         "description": "The species for which the mRNA translation efficiency is to be predicted. Must be either 'human' or 'mouse'.",
         "type": "Literal['human', 'mouse']",
-        "demo": "human",
+        "demo": "",
         "options": []
       },
       {
-        "name": "output_dir",
+        "name": "output_directory",
         "description": "The directory path where the result files will be saved. This should be a valid path accessible to the system.",
         "type": "str",
-        "demo": "/path/to/output_directory",
+        "demo": "",
         "options": []
       }
     ]
@@ -5431,59 +5431,162 @@
         "name": "protein_seq",
         "description": "The amino acid sequence of the protein for which the CDS is to be generated. This should be a valid sequence using the standard one-letter IUPAC amino acid codes.",
         "type": "str",
-        "demo": "MKQHKAMIVALIVLKTVKPSKQSALIKY",
-        "options": []
-      },
-      {
-        "name": "count",
-        "description": "The number of optimized CDS sequences to generate for the given protein sequence.",
-        "type": "int",
-        "demo": 5,
-        "options": []
-      },
-      {
-        "name": "output_dir",
-        "description": "The directory path where the generated CDS sequences will be saved. This should be a valid path accessible to the system running the tool.",
-        "type": "str",
-        "demo": "/path/to/output_directory",
+        "demo": "",
         "options": []
       }
     ]
   },
-  "generate_utr": {
+  "generate_5utr": {
     "service": "gemorna",
-    "description": "Generate 5'/3' UTR sequences of specified length, output result file paths",
-    "input_params": []
+    "description": "Generate 5'UTR sequences of specified length, output result file paths",
+    "input_params": [
+       {
+        "name": "protein_seq",
+        "description": "Default is short, medium, long",
+        "type": "str",
+        "demo": "",
+        "options": []
+      }
+    ]
   },
-  "predict_stability": {
+  "generate_3utr": {
     "service": "gemorna",
-    "description": "Predict UTR sequence stability, support 5'/3' UTR, output result file paths",
-    "input_params": []
+    "description": "Generate 3'UTR sequences of specified length, output result file paths",
+    "input_params": [
+       {
+        "name": "protein_seq",
+        "description": "Default is short, medium, long",
+        "type": "str",
+        "demo": "",
+        "options": []
+      }
+    ]
   },
   "optimize_codon_sequences": {
-    "service": "codontransformer",
-    "description": "Batch optimize codons for protein sequences, support multiple input formats, output DNA sequences",
-    "input_params": []
+    "service_id": "codontransformer",
+    "input_params": [
+      {
+        "name": "input_file",
+        "description": "Input file path for amino acid sequences (supports CSV, TXT, and FASTA formats).",
+        "deme": "",
+        "type": "str"
+      },
+      {
+        "name": "input_format",
+        "description": "Input file format (csv, txt, fasta), optional.",
+        "deme": "",
+        "type": "str"
+      },
+      {
+        "name": "organism",
+        "description": "Target organism (default: Homo sapiens).",
+        "deme": "",
+        "type": "str"
+      },
+      {
+        "name": "attention_type",
+        "description": "Attention mechanism types (original_full, block_sparse).",
+        "deme": "",
+        "type": "str"
+      },
+      {
+        "name": "deterministic",
+        "description": "Using deterministic decoding.",
+        "deme": "",
+        "type": "bool"
+      },
+      {
+        "name": "temperature",
+        "description": "Temperature parameter, controlling randomness.",
+        "deme": "",
+        "type": "float"
+      },
+      {
+        "name": "top_p",
+        "description": "Nuclear sampling threshold",
+        "deme": "",
+        "type": "float"
+      },
+      {
+        "name": "num_sequences",
+        "description": "Number of sequences generated",
+        "deme": "",
+        "type": "int"
+      },
+      {
+        "name": "match_protein",
+        "description": "Ensure that the predicted DNA sequence translates back to the input protein sequence.",
+        "deme": "",
+        "type": "bool"
+      },
+      {
+        "name": "output_dir",
+        "description": "Result output path",
+        "deme": "",
+        "type": "str"
+      }
+    ],
+    "output": "Batch optimize codons for protein sequences, support multiple input formats, output DNA sequences"
   },
   "optimize_single_sequence": {
-    "service": "codontransformer",
-    "description": "Optimize codons for a single protein sequence, support specified species, output DNA sequences",
-    "input_params": []
-  },
-  "predict_ribosome_loading": {
-    "service": "rinalmo",
-    "description": "Predict ribosome loading rate for RNA sequences, support 5UTR/CDS/mRNA types",
-    "input_params": []
-  },
-  "predict_5utr_mrl": {
-    "service": "rinalmo",
-    "description": "Predict ribosome loading rate for 5' UTR sequences, output result file paths",
-    "input_params": []
-  },
-  "predict_mrna_mrl": {
-    "service": "rinalmo",
-    "description": "Predict ribosome loading rate for complete mRNA sequences, output result file paths",
-    "input_params": []
+    "service_id": "codontransformer",
+    "input_params": [
+      {
+        "name": "protein_seq",
+        "description": "amino acid sequence",
+        "deme": "",
+        "type": "str"
+      },
+      {
+        "name": "organism",
+        "description": "Target organism (default: Homo sapiens).",
+        "deme": "",
+        "type": "str"
+      },
+      {
+        "name": "attention_type",
+        "description": "Attention mechanism types (original_full, block_sparse).",
+        "deme": "",
+        "type": "str"
+      },
+      {
+        "name": "deterministic",
+        "description": "Using deterministic decoding.",
+        "deme": "",
+        "type": "bool"
+      },
+      {
+        "name": "temperature",
+        "description": "Temperature parameter, controlling randomness.",
+        "deme": "",
+        "type": "float"
+      },
+      {
+        "name": "top_p",
+        "description": "Nuclear sampling threshold",
+        "deme": "",
+        "type": "float"
+      },
+      {
+        "name": "num_sequences",
+        "description": "Number of sequences generated",
+        "deme": "",
+        "type": "int"
+      },
+      {
+        "name": "match_protein",
+        "description": "Ensure that the predicted DNA sequence translates back to the input protein sequence.",
+        "deme": "",
+        "type": "bool"
+      },
+      {
+        "name": "output_dir",
+        "description": "Result output path",
+        "deme": "",
+        "type": "str"
+      }
+    ],
+    "output": "Optimize codons for a single protein sequence, support specified species, output DNA sequences"
   },
   "extract_seurat_umap_metadata": {
     "service": "lineage_analysis",
@@ -5886,19 +5989,21 @@
   },
   "integrate_bcr_data_complete": {
     "service": "r_data_integration",
-    "description": "",
+    "description": "Complete BCR data integration pipeline. DEPENDENCY: This tool requires outputs from previous analysis tools and must run AFTER them. The csv_file should come from analyze_vdj_batch (AIRR format) or metabcr output. Schedule this tool only after dependent tools complete successfully.",
+    "depends_on": ["analyze_vdj_batch", "metabcr"],
+    "execution_order": "after_dependencies",
     "input_params": [
       {
         "name": "csv_file",
-        "description": "The file path to the CSV file containing BCR data to be integrated.",
-        "type": "str",
-        "demo": "path/to/bcr_data.csv",
+        "description": "The CSV file containing BCR analysis results. This should be the OUTPUT from previous tools like analyze_vdj_batch (produces AIRR format CSV) or metabcr. Do NOT request this from user if upstream analysis tools are pending.",
+        "type": "csv file",
+        "demo": "path/to/bcr_analysis_output.csv",
         "options": []
       },
       {
         "name": "rds_file",
-        "description": "The path to the RDS file containing BCR data to be integrated.",
-        "type": "str",
+        "description": "The RDS file containing Seurat/SingleCellExperiment object for BCR data integration. Can be user-provided or from previous R analysis tools.",
+        "type": "rds file",
         "demo": "/path/to/bcr_data.rds",
         "options": []
       },
@@ -5954,14 +6059,14 @@
         "name": "pdb_path",
         "description": "The file path to the PDB file that needs to be repaired. This should be a valid path to a Protein Data Bank (PDB) formatted file.",
         "type": "str",
-        "demo": "/path/to/your/protein.pdb",
+        "demo": "",
         "options": []
       },
       {
         "name": "output_dir",
         "description": "The directory path where the repaired PDB files and related output will be saved.",
         "type": "str",
-        "demo": "/path/to/output_directory",
+        "demo": "",
         "options": []
       }
     ]
@@ -5971,44 +6076,24 @@
     "description": "Quickly build mutant protein structures based on mutation information, predict Gibbs free energy and energy differences for wild-type and mutant proteins",
     "input_params": [
       {
-        "name": "run_id",
+        "name": "pdb_path",
         "description": "A unique identifier for the run, used to track and reference the specific execution of the foldx_build_model tool.",
         "type": "str",
-        "demo": "run_001",
+        "demo": "",
+        "options": []
+      },
+     {
+        "name": "mutation_list",
+        "description": "Displays a list of strings in the format KA42A;RB10G; (separated by semicolons). Format code: [Original sock][Chain ID][Quantity][New sock]",
+        "type": "str",
+        "demo": "",
         "options": []
       },
       {
         "name": "output_dir",
         "description": "The directory path where the output files, including mutant protein structures and energy predictions, will be saved.",
         "type": "Path",
-        "demo": "/path/to/output_directory",
-        "options": []
-      }
-    ]
-  },
-  "mutatex_saturation_scan": {
-    "service": "mutatex",
-    "description": "Use FoldX to predict Gibbs free energy and energy differences for proteins after saturation point mutations",
-    "input_params": [
-      {
-        "name": "pdb_path",
-        "description": "The file path to the PDB file of the protein structure to be analyzed.",
-        "type": "str",
-        "demo": "/path/to/protein_structure.pdb",
-        "options": []
-      },
-      {
-        "name": "output_dir",
-        "description": "The directory path where the output files will be saved. This should be a valid, writable directory on the system.",
-        "type": "Path",
-        "demo": "/path/to/output_directory",
-        "options": []
-      },
-      {
-        "name": "threads",
-        "description": "The number of CPU threads to use for the computation. There are no specific options; any positive integer is acceptable.",
-        "type": "int",
-        "demo": 4,
+        "demo": "",
         "options": []
       }
     ]
@@ -6021,14 +6106,14 @@
         "name": "input_path",
         "description": "The file path to the input data containing the saturation-mutated protein sequences for which fitness will be predicted.",
         "type": "str",
-        "demo": "/path/to/saturation_mutated_proteins.fasta",
+        "demo": "",
         "options": []
       },
       {
         "name": "output_dir",
         "description": "The directory path where the output files will be saved.",
         "type": "str",
-        "demo": "/path/to/output_directory",
+        "demo": "",
         "options": []
       },
       {
@@ -6041,210 +6126,111 @@
     ]
   },
   "cif_to_pdb_batch": {
-    "service": "protein_energy_design",
-    "description": "Convert CIF protein structure files to PDB format",
+    "service_id": "protein_energy_integrated_server",
     "input_params": [
       {
-        "name": "pdb_path",
+        "name": "input_dir",
         "description": "The file path where the converted PDB files will be saved. This should be a directory path if multiple CIF files are being converted.",
-        "type": "str",
-        "demo": "/path/to/output/directory",
-        "options": []
+        "deme": "",
+        "type": "str"
       },
       {
         "name": "output_dir",
         "description": "The directory path where the converted PDB files will be saved. This should be a valid path accessible to the system running the conversion.",
-        "type": "str",
-        "demo": "/path/to/output/directory",
-        "options": []
+        "deme": "",
+        "type": "str"
       }
-    ]
+    ],
+    "output": "Convert CIF protein structure files to PDB format"
   },
   "prepare_foldx_inputs": {
-    "service": "protein_energy_design",
-    "description": "",
+    "service_id": "protein_energy_integrated_server",
     "input_params": [
       {
         "name": "fitness_csv",
         "description": "A string representing the file path to a CSV file that contains fitness data for proteins, including mutation information and corresponding fitness scores.",
-        "type": "str",
-        "demo": "/path/to/fitness_data.csv",
-        "options": []
+        "deme": "",
+        "type": "str"
       },
       {
         "name": "output_dir",
         "description": "The directory path where the FoldX input files will be saved. This should be a valid, writable directory on the system.",
-        "type": "str",
-        "demo": "/path/to/output_directory",
-        "options": []
-      },
-      {
-        "name": "chains",
-        "description": "A string specifying the chains of the protein to be considered, using the PDB chain identifiers.",
-        "type": "str",
-        "demo": "AB",
-        "options": []
+        "deme": "",
+        "type": "str"
       }
-    ]
+    ],
+    "output": ""
   },
-  "collect_and_merge_data": {
-    "service": "protein_energy_design",
-    "description": "",
+  "merge_fasta_files_in_directory": {
+    "service_id": "protein_energy_integrated_server",
     "input_params": [
       {
-        "name": "fitness_csv",
-        "description": "A string representing the file path to a CSV file that contains fitness data for proteins, including energy and other design metrics.",
-        "type": "str",
-        "demo": "/path/to/fitness_data.csv",
-        "options": []
+        "name": "input_directory",
+        "description": "The path to the FASTA files to be integrated.",
+        "deme": "",
+        "type": "str"
       },
       {
-        "name": "foldx_result_dir",
-        "description": "The directory path where the FoldX results are stored. This should be a valid path to a directory containing the output files from a FoldX run.",
-        "type": "str",
-        "demo": "/path/to/foldx/results",
-        "options": []
-      },
-      {
-        "name": "output_csv",
-        "description": "The file path where the merged data will be saved as a CSV file.",
-        "type": "str",
-        "demo": "merged_protein_data.csv",
-        "options": []
+        "name": "output_filepath",
+        "description": "The target path for the integrated FASTA file.",
+        "deme": "",
+        "type": "str"
       }
-    ]
+    ],
+    "output": ""
   },
-  "filter_candidates_pipeline": {
-    "service": "protein_energy_design",
-    "description": "",
+  "run_post_analysis_pipeline": {
+    "service_id": "protein_energy_integrated_server",
     "input_params": [
       {
-        "name": "merged_csv",
+        "name": "fitness_prediction_csv",
         "description": "The file path to the merged CSV file containing candidate protein sequences and their associated data.",
-        "type": "str",
-        "demo": "path/to/merged_candidates.csv",
-        "options": []
+        "deme": "",
+        "type": "str"
       },
       {
-        "name": "output_dir",
+        "name": "foldx_results_dir",
         "description": "The directory path where the output files will be saved.",
-        "type": "str",
-        "demo": "/path/to/output_directory",
-        "options": []
+        "deme": "",
+        "type": "str"
       },
       {
-        "name": "top_k",
-        "description": "The number of top candidates to retain after filtering, based on the specified criteria.",
-        "type": "int",
-        "demo": 5,
-        "options": []
-      }
-    ]
-  },
-  "generate_mutant_fasta": {
-    "service": "protein_energy_design",
-    "description": "",
-    "input_params": [
-      {
-        "name": "wt_fasta",
+        "name": "wildtype_sequence_fasta",
         "description": "The wild-type protein sequence in FASTA format, used as the base for generating mutants.",
-        "type": "str",
-        "demo": ">sp|P12345|PROT_HUMAN Protein OS=Homo sapiens OX=9606 GN=PROT PE=1 SV=1\nMAEGEITTFTALTEKFNLPPGNYKKPKLLYCSNGGHFLRILPDGTVDGTRDRSDQHIQLQLS",
-        "options": []
+        "deme": "",
+        "type": "str"
       },
       {
-        "name": "mutation_csv",
-        "description": "A string representing the file path to a CSV file that contains the list of mutations to be applied. The CSV should have columns specifying the original residue, its position, and the new residue.",
-        "type": "str",
-        "demo": "/path/to/mutations.csv",
-        "options": []
+        "name": "pipeline_output_root",
+        "description": "The directory path where the output files will be saved.",
+        "deme": "",
+        "type": "str"
       },
       {
-        "name": "output_fasta",
-        "description": "The filename for the output FASTA file that will contain the generated mutant sequences.",
-        "type": "str",
-        "demo": "mutant_sequences.fasta",
-        "options": []
+        "name": "top_k_candidates",
+        "description": "The number of top candidates to retain after filtering, based on the specified criteria.",
+        "deme": "",
+        "type": "int"
       }
-    ]
+    ],
+    "output": ""
   },
   "generate_cds_from_file": {
     "service": "gemorna",
     "description": "Generate optimized CDS sequences from protein sequence files",
     "input_params": [
       {
-        "name": "input_file",
+        "name": "fasta_file_path",
         "description": "The file path to the protein sequence file from which CDS sequences will be generated. This should be a valid file containing protein sequences in a supported format.",
         "type": "str",
-        "demo": "protein_sequences.fasta",
+        "demo": "",
         "options": []
       },
       {
-        "name": "count",
-        "description": "The number of CDS sequences to generate from the input file.",
-        "type": "int",
-        "demo": 5,
-        "options": []
-      },
-      {
-        "name": "output_dir",
+        "name": "output_directory",
         "description": "The directory path where the generated CDS sequences will be saved. It should be a valid path accessible to the system.",
         "type": "str",
-        "demo": "/path/to/output_directory",
-        "options": []
-      }
-    ]
-  },
-  "generate_5utr": {
-    "service": "gemorna",
-    "description": "Output optimal 5' UTR based on length range",
-    "input_params": [
-      {
-        "name": "utr_length",
-        "description": "The desired length of the 5' UTR sequence. This should be a string representing a numerical value.",
-        "type": "str",
-        "demo": "100",
-        "options": []
-      },
-      {
-        "name": "count",
-        "description": "The number of 5' UTR sequences to generate. Must be a positive integer.",
-        "type": "int",
-        "demo": 3,
-        "options": []
-      },
-      {
-        "name": "output_dir",
-        "description": "The directory path where the output 5' UTR sequence files will be saved.",
-        "type": "str",
-        "demo": "/path/to/output_directory",
-        "options": []
-      }
-    ]
-  },
-  "generate_3utr": {
-    "service": "gemorna",
-    "description": "Output optimal 3' UTR based on length range",
-    "input_params": [
-      {
-        "name": "utr_length",
-        "description": "The desired length of the 3' UTR sequence. This should be a string representing a numerical value.",
-        "type": "str",
-        "demo": "150",
-        "options": []
-      },
-      {
-        "name": "count",
-        "description": "The number of optimal 3' UTR sequences to generate.",
-        "type": "int",
-        "demo": 5,
-        "options": []
-      },
-      {
-        "name": "output_dir",
-        "description": "The directory path where the generated 3' UTR output files will be saved.",
-        "type": "str",
-        "demo": "/path/to/output_directory",
+        "demo": "",
         "options": []
       }
     ]
@@ -6254,24 +6240,24 @@
     "description": "Generate highly expressed and stable mRNA from amino acid sequences",
     "input_params": [
       {
-        "name": "protein_seq",
-        "description": "The amino acid sequence of the protein to be converted into mRNA. It should be a string of single-letter amino acid codes.",
+        "name": "fasta_file_path",
+        "description": "The file path to the amino acid sequence of the protein to be converted into mRNA. It should be a string of single-letter amino acid codes.",
         "type": "str",
-        "demo": "MAEGEITTFTALTEKFNLPPGNYKKPKLLYCSNGGHFLRILPDGTVDGTRDRSDQHIQLQLS",
+        "demo": "",
         "options": []
       },
       {
         "name": "utr5_length",
-        "description": "The length of the 5' untranslated region (UTR) to be included in the mRNA sequence. This should be a positive integer value.",
+        "description": "Default is short, medium, long",
         "type": "str",
-        "demo": "100",
+        "demo": "",
         "options": []
       },
       {
         "name": "utr3_length",
-        "description": "The length of the 3' untranslated region (UTR) to be included in the mRNA sequence. This should be a positive integer value.",
+        "description":"Default is short, medium, long",
         "type": "str",
-        "demo": "100",
+        "demo": "medium",
         "options": []
       },
       {
@@ -6290,27 +6276,27 @@
       }
     ]
   },
-  "sort_ribonn_results": {
+  "sort_ribonn_prediction_results": {
     "service": "ribonn",
     "description": "",
     "input_params": [
       {
-        "name": "input_file",
+        "name": "prediction_result_file_path",
         "description": "The file path to the input file containing the results to be sorted.",
         "type": "str",
-        "demo": "path/to/results.txt",
+        "demo": "",
         "options": []
       },
       {
-        "name": "output_file",
+        "name": "ranking_metric_column_name",
         "description": "The name of the file where the sorted results will be saved. It should include the desired file extension, such as .txt or .csv.",
         "type": "str",
-        "demo": "sorted_results.csv",
+        "demo": "",
         "options": []
       }
     ]
   },
-  "rinalmo_predict": {
+  "rinalmo_mcp_server": {
     "service": "rinalmo",
     "description": "",
     "input_params": [
@@ -6323,9 +6309,9 @@
       },
       {
         "name": "sequence_type",
-        "description": "The type of biological sequence (e.g., DNA, RNA, protein) to be used for the prediction.",
+        "description": "The type of biological sequence (e.g., 5utr, mRNA, cds,3utr) to be used for the prediction.",
         "type": "str",
-        "demo": "DNA",
+        "demo": "mRNA",
         "options": []
       },
       {

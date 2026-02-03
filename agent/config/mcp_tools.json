@@ -57,12 +57,20 @@
   {
     "name": "antigen_binding_neutralization_density_visualization",
     "service": "bioinformatics",
-    "description": "UMAP density visualization for single-cell antigen binding/neutralization predictions, output density plots, statistics, and coordinates"
+    "description": "UMAP density visualization for single-cell antigen binding/neutralization predictions, output density plots, statistics, and coordinates",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "antigen_binding_prediction_visualization",
     "service": "bioinformatics",
-    "description": "Visualize single-cell B cell antigen binding predictions, output binding distribution plots, statistics, and CSV"
+    "description": "Visualize single-cell B cell antigen binding predictions, output binding distribution plots, statistics, and CSV",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "batch_design_and_score",
@@ -77,32 +85,56 @@
   {
     "name": "bcell_celltype_distribution_analysis",
     "service": "bioinformatics",
-    "description": "Single-cell B cell subtype distribution analysis, output distribution charts, cell proportions, and CSV"
+    "description": "Single-cell B cell subtype distribution analysis, output distribution charts, cell proportions, and CSV",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "bcell_celltype_umap_visualization",
     "service": "bioinformatics",
-    "description": "UMAP spatial distribution visualization for single-cell B cell subtypes, output publication-quality UMAP plots and statistics"
+    "description": "UMAP spatial distribution visualization for single-cell B cell subtypes, output publication-quality UMAP plots and statistics",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "bcell_marker_gene_dotplot_analysis",
     "service": "bioinformatics",
-    "description": "B cell subtype marker gene expression dot plot analysis, output dot plots, expression statistics, and gene lists"
+    "description": "B cell subtype marker gene expression dot plot analysis, output dot plots, expression statistics, and gene lists",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "bcell_marker_gene_expression_dotplot",
     "service": "bioinformatics",
-    "description": "Visualize B cell subtype marker gene expression, output dot plots, statistics, and PDF"
+    "description": "Visualize B cell subtype marker gene expression, output dot plots, statistics, and PDF",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "bcr_isotype_distribution_shm_analysis",
     "service": "bioinformatics",
-    "description": "BCR isotype distribution and SHM rate analysis, output combined plots, statistical test results, and data"
+    "description": "BCR isotype distribution and SHM rate analysis, output combined plots, statistical test results, and data",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "binding_prediction_interval_distribution_analysis",
     "service": "bioinformatics",
-    "description": "Antigen binding prediction value interval distribution analysis, output histograms, CDF curves, and quantile statistics"
+    "description": "Antigen binding prediction value interval distribution analysis, output histograms, CDF curves, and quantile statistics",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "calculate_network_centrality",
@@ -187,12 +219,20 @@
   {
     "name": "differential_gene_correlation_analysis",
     "service": "bioinformatics",
-    "description": "Differential gene correlation analysis, output correlation scatter plots, statistics, and CSV"
+    "description": "Differential gene correlation analysis, output correlation scatter plots, statistics, and CSV",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "differential_gene_expression_correlation_pipeline",
     "service": "bioinformatics",
-    "description": "Integrated pipeline for differential gene volcano plots and correlation analysis, output complete analysis files"
+    "description": "Integrated pipeline for differential gene volcano plots and correlation analysis, output complete analysis files",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "download_airr_sequences",
@@ -396,7 +436,12 @@
   {
     "name": "integrate_bcr_data_complete",
     "service": "r_data_integration",
-    "description": "Complete BCR data integration pipeline including format conversion, UMAP, clustering, annotation, support version control"
+    "description": "Complete BCR data integration pipeline including format conversion, UMAP, clustering, annotation, support version control. IMPORTANT: This tool requires CSV output from previous analysis tools (e.g., analyze_vdj_batch, metabcr) and an RDS file. It must be scheduled AFTER those tools complete, not in parallel.",
+    "depends_on": [
+      "analyze_vdj_batch",
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "integrate_binding_neutralization_experiments",
@@ -481,7 +526,11 @@
   {
     "name": "neutralizing_antibody_shm_comparison_analysis",
     "service": "bioinformatics",
-    "description": "Comparison analysis of SHM rates between neutralizing and non-neutralizing antibodies, output combined plots and statistics"
+    "description": "Comparison analysis of SHM rates between neutralizing and non-neutralizing antibodies, output combined plots and statistics",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "number_antibody_batch",
@@ -561,7 +610,11 @@
   {
     "name": "prediction_value_density_visualization",
     "service": "bioinformatics",
-    "description": "UMAP density visualization of prediction values, output density plots, threshold analysis, and coordinate data"
+    "description": "UMAP density visualization of prediction values, output density plots, threshold analysis, and coordinate data",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "prepare_bindcraft_config",
@@ -581,12 +634,20 @@
   {
     "name": "pseudotime_celltype_boxplot_analysis",
     "service": "bioinformatics",
-    "description": "Box plot analysis of pseudotime and cell type distribution, output statistical test results and plots"
+    "description": "Box plot analysis of pseudotime and cell type distribution, output statistical test results and plots",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "pseudotime_trajectory_analysis",
     "service": "bioinformatics",
-    "description": "Analyze B cell pseudotime trajectories using Monocle3, output trajectory plots, CDS objects, and pseudotime data"
+    "description": "Analyze B cell pseudotime trajectories using Monocle3, output trajectory plots, CDS objects, and pseudotime data",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "ribonn_predict",
@@ -761,17 +822,29 @@
   {
     "name": "trajectory_polynomial_regression_analysis",
     "service": "bioinformatics",
-    "description": "Trajectory polynomial regression analysis and gene module scoring, output trend plots and key nodes"
+    "description": "Trajectory polynomial regression analysis and gene module scoring, output trend plots and key nodes",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "trajectory_supplementary_analysis",
     "service": "bioinformatics",
-    "description": "Generate supplementary plots for trajectory analysis and transcript marker analysis, output publication-quality charts"
+    "description": "Generate supplementary plots for trajectory analysis and transcript marker analysis, output publication-quality charts",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "umap_dimensionality_reduction_visualization",
     "service": "bioinformatics",
-    "description": "Single-cell B cell UMAP dimensionality reduction and visualization, output publication-quality UMAP plots and coordinate data"
+    "description": "Single-cell B cell UMAP dimensionality reduction and visualization, output publication-quality UMAP plots and coordinate data",
+    "depends_on": [
+      "metabcr"
+    ],
+    "execution_order": "after_dependencies"
   },
   {
     "name": "validate_annotation",
@@ -793,7 +866,6 @@
     "service": "nettcr",
     "description": "Validate TCR input data format, check sequence validity and column completeness"
   },
-
   {
     "name": "foldx_repair_pdb",
     "service": "mutatex",
@@ -803,11 +875,6 @@
     "name": "foldx_build_model",
     "service": "mutatex",
     "description": "Quickly build mutant protein structures based on mutation information, predict Gibbs free energy of original and mutant proteins and their energy differences"
-  },
-  {
-    "name": "mutatex_saturation_scan",
-    "service": "mutatex",
-    "description": "Use FoldX to predict protein Gibbs free energy and energy differences after saturation point mutations"
   },
   {
     "name": "run_spired_fitness",
@@ -823,7 +890,7 @@
     "name": "run_post_analysis_pipeline",
     "service": "protein_energy_design",
     "description": "Merge fitness and FoldX results, generate mutant sequences from original FASTA based on selected best mutations"
-  },  
+  },
   {
     "name": "merge_fasta_files_in_directory",
     "service": "fasta_combine",

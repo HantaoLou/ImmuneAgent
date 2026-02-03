@@ -73,10 +73,25 @@ def console_interact_for_parameters(interrupt_data: Dict[str, Any]) -> Dict[str,
         task_id = request.get("task_id", "unknown")
         message = request.get("message", "")
         missing_params = request.get("missing_parameters", [])
+        inferred_params = request.get("inferred_parameters", {})
         
         print(f"\n任务ID: {task_id}")
         print(f"消息: {message}")
-        print(f"缺失参数: {', '.join(missing_params)}")
+        
+        # Show inferred parameters for user reference
+        if inferred_params:
+            print(f"\n已推断的参数（仅供参考）:")
+            for param_name, param_info in inferred_params.items():
+                value = param_info.get("value", "")
+                source = param_info.get("source", "unknown")
+                # Truncate long values
+                if isinstance(value, str) and len(value) > 80:
+                    display_value = value[:77] + "..."
+                else:
+                    display_value = value
+                print(f"  ✓ {param_name} = {display_value}  (来源: {source})")
+        
+        print(f"\n缺失参数（需要您提供）: {', '.join(missing_params)}")
         print(f"\n请为以下参数提供值（每行一个，格式：参数名=参数值，或参数名:参数值）：")
         print(f"（如果参数名包含点号，请使用完整格式，如 'tool_name.param_name'）")
         print(f"（输入 'skip' 跳过此任务，输入 'quit' 退出）")

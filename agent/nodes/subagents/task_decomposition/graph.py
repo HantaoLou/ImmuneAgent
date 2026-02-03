@@ -368,41 +368,56 @@ def coarse_decomposition_node(state: TaskDecompositionState) -> TaskDecompositio
     Returns:
         Updated state (required_service_ids contains list of required service_ids)
     """
+    import time
+    stage_start = time.time()
+    
     user_input = state.user_input
     execution_plan = state.execution_plan
     
+    print(f"  [粗分解] 开始阶段 0: 粗分解...")
+    
     # Load service list (for coarse decomposition prompt)
+    load_start = time.time()
     service_list = load_service_list()
+    print(f"  [粗分解] 加载服务列表完成 (耗时: {time.time() - load_start:.2f}秒, 服务数: {len(service_list)})")
     
     # Use LLM for coarse decomposition (pass service_list, not tool list)
     llm = _get_llm()
     if llm is not None:
+        print(f"  [粗分解] 调用 LLM 进行粗分解...")
+        llm_start = time.time()
         result = _coarse_decompose_with_llm(user_input, execution_plan, service_list, llm)
+        llm_elapsed = time.time() - llm_start
+        print(f"  [粗分解] LLM 调用完成 (耗时: {llm_elapsed:.2f}秒)")
+        
         if result:
             # Extract required service_ids
             service_ids = result.get("required_service_ids", [])
             state.required_service_ids = service_ids
-            print(f"✓ Coarse decomposition completed (using LLM)")
-            print(f"  Required services: {', '.join(service_ids)}")
+            print(f"  ✓ 粗分解完成 (使用 LLM)")
+            print(f"    所需服务: {', '.join(service_ids)}")
         else:
             # Fallback when LLM fails: use all services
             all_service_ids = [s.get("service_id", "") for s in service_list if s.get("service_id")]
             state.required_service_ids = all_service_ids
-            print(f"⚠ Coarse decomposition failed, using all services")
+            print(f"  ⚠ 粗分解失败，使用所有服务")
     else:
         # Fallback when LLM is unavailable
         all_service_ids = [s.get("service_id", "") for s in service_list if s.get("service_id")]
         state.required_service_ids = all_service_ids
-        print(f"⚠ LLM unavailable, using all services")
+        print(f"  ⚠ LLM 不可用，使用所有服务")
     
     # Filter tools by service_id
+    filter_start = time.time()
     if state.required_service_ids:
         state.filtered_tools = get_tools_by_service_ids(state.available_tools, state.required_service_ids)
-        print(f"  Filtered tool count: {len(state.filtered_tools)} / {len(state.available_tools)}")
+        filter_elapsed = time.time() - filter_start
+        print(f"  [粗分解] 工具过滤完成 (耗时: {filter_elapsed:.2f}秒)")
+        print(f"    过滤后工具数: {len(state.filtered_tools)} / {len(state.available_tools)}")
         
         # Fallback strategy: if no tools matched, add codeact service
         if len(state.filtered_tools) == 0:
-            print(f"⚠ No MCP tools matched, adding codeact service as fallback")
+            print(f"  ⚠ 没有匹配的 MCP 工具，添加 codeact 服务作为后备")
             if "codeact" not in state.required_service_ids:
                 state.required_service_ids.append("codeact")
             # Add codeact tool
@@ -411,6 +426,9 @@ def coarse_decomposition_node(state: TaskDecompositionState) -> TaskDecompositio
     else:
         # If no service specified, use all tools
         state.filtered_tools = state.available_tools
+    
+    stage_elapsed = time.time() - stage_start
+    print(f"  ✓ 阶段 0 完成 (总耗时: {stage_elapsed:.2f}秒)\n")
     
     return state
 
@@ -444,37 +462,58 @@ def fine_decomposition_node(state: TaskDecompositionState) -> TaskDecompositionS
             state.required_service_ids.append("codeact")
     
     # Use LLM for fine decomposition (using filtered tools)
+    import time
+    stage_start = time.time()
+    print(f"  [细分解] 开始阶段 1: 细分解...")
+    print(f"  [细分解] 可用工具数: {len(filtered_tools)}")
+    
     llm = _get_llm()
     if llm is not None:
+        print(f"  [细分解] 调用 LLM 进行细分解...")
+        llm_start = time.time()
         result = _decompose_task_with_llm(user_input, execution_plan, filtered_tools, llm)
+        llm_elapsed = time.time() - llm_start
+        print(f"  [细分解] LLM 调用完成 (耗时: {llm_elapsed:.2f}秒)")
+        
         if result:
             # Fine decomposition: store raw task list (JSON format)
             state.raw_tasks = result.get("tasks", [])
             state.decomposition_summary = result.get("decomposition_summary", "")
-            print(f"✓ Fine decomposition completed (using LLM)")
-            print(f"  Serialized tasks: {len(state.raw_tasks)}")
+            print(f"  ✓ 细分解完成 (使用 LLM)")
+            print(f"    序列化任务数: {len(state.raw_tasks)}")
             
             # Fallback strategy: check if any tasks in fine decomposition results have no matching tools
+            check_start = time.time()
             _check_and_add_codeact_to_tasks(state.raw_tasks, filtered_tools)
+            print(f"  [细分解] 工具检查完成 (耗时: {time.time() - check_start:.2f}秒)")
             
             # Match parameter descriptions for each task
+            param_start = time.time()
             _match_task_parameters(state.raw_tasks)
+            print(f"  [细分解] 参数匹配完成 (耗时: {time.time() - param_start:.2f}秒)")
         else:
             # Fallback when LLM fails
+            print(f"  ⚠ LLM 调用失败，使用后备方案")
+            fallback_start = time.time()
             fallback_result = _decompose_task_fallback(user_input, execution_plan)
             state.raw_tasks = [task.model_dump() for task in fallback_result.get("subtasks", [])]
             state.decomposition_summary = fallback_result.get("decomposition_summary", "Using fallback for task decomposition")
-            print(f"⚠ Using fallback for task decomposition")
+            print(f"  [细分解] 后备方案完成 (耗时: {time.time() - fallback_start:.2f}秒)")
             # Also match parameter descriptions for fallback tasks
             _match_task_parameters(state.raw_tasks)
     else:
         # Fallback when LLM is unavailable
+        print(f"  ⚠ LLM 不可用，使用后备方案")
+        fallback_start = time.time()
         fallback_result = _decompose_task_fallback(user_input, execution_plan)
         state.raw_tasks = [task.model_dump() for task in fallback_result.get("subtasks", [])]
         state.decomposition_summary = fallback_result.get("decomposition_summary", "Using fallback for task decomposition")
-        print(f"⚠ LLM unavailable, using fallback")
+        print(f"  [细分解] 后备方案完成 (耗时: {time.time() - fallback_start:.2f}秒)")
         # Also match parameter descriptions for fallback tasks
         _match_task_parameters(state.raw_tasks)
+    
+    stage_elapsed = time.time() - stage_start
+    print(f"  ✓ 阶段 1 完成 (总耗时: {stage_elapsed:.2f}秒)\n")
     
     return state
 
@@ -492,19 +531,33 @@ def parallel_inference_node(state: TaskDecompositionState) -> TaskDecompositionS
     Returns:
         Updated state (contains final subtasks and parallel_task_groups)
     """
+    import time
+    stage_start = time.time()
+    
     raw_tasks = state.raw_tasks
     
     if not raw_tasks:
-        print("⚠ Stage 1 generated no tasks, skipping parallel inference")
+        print("  ⚠ 阶段 1 未生成任务，跳过并行推断")
         return state
+    
+    print(f"  [并行推断] 开始阶段 2: 并行推断...")
+    print(f"  [并行推断] 输入任务数: {len(raw_tasks)}")
     
     # Use LLM for parallel inference
     llm = _get_llm()
     if llm is not None:
+        print(f"  [并行推断] 调用 LLM 进行并行推断...")
+        llm_start = time.time()
         result = _infer_parallel_tasks_with_llm(raw_tasks, llm)
+        llm_elapsed = time.time() - llm_start
+        print(f"  [并行推断] LLM 调用完成 (耗时: {llm_elapsed:.2f}秒)")
+        
         if result:
             # Convert and store final results
+            convert_start = time.time()
             final_result = _validate_and_convert_decomposition(result)
+            print(f"  [并行推断] 结果转换完成 (耗时: {time.time() - convert_start:.2f}秒)")
+            
             state.subtasks = final_result.get("subtasks", [])
             state.parallel_task_groups = final_result.get("parallel_task_groups", {})
             if result.get("parallel_inference_summary"):
@@ -512,21 +565,24 @@ def parallel_inference_node(state: TaskDecompositionState) -> TaskDecompositionS
                     state.decomposition_summary += f"\n\nParallel inference explanation: {result.get('parallel_inference_summary')}"
                 else:
                     state.decomposition_summary = f"Parallel inference explanation: {result.get('parallel_inference_summary')}"
-            print(f"✓ Stage 2 parallel inference completed (using LLM)")
-            print(f"  Serial tasks: {len(state.subtasks)}")
-            print(f"  Parallel task groups: {len(state.parallel_task_groups)}")
+            print(f"  ✓ 阶段 2 并行推断完成 (使用 LLM)")
+            print(f"    串行任务数: {len(state.subtasks)}")
+            print(f"    并行任务组数: {len(state.parallel_task_groups)}")
         else:
             # Fallback when LLM fails: all tasks execute serially
-            print("⚠ Parallel inference failed, all tasks will execute serially")
+            print("  ⚠ 并行推断失败，所有任务将串行执行")
             final_result = _validate_and_convert_decomposition({"tasks": raw_tasks, "parallel_task_groups": []})
             state.subtasks = final_result.get("subtasks", [])
             state.parallel_task_groups = {}
     else:
         # Fallback when LLM is unavailable: all tasks execute serially
-        print("⚠ LLM unavailable, all tasks will execute serially")
+        print("  ⚠ LLM 不可用，所有任务将串行执行")
         final_result = _validate_and_convert_decomposition({"tasks": raw_tasks, "parallel_task_groups": []})
         state.subtasks = final_result.get("subtasks", [])
         state.parallel_task_groups = {}
+    
+    stage_elapsed = time.time() - stage_start
+    print(f"  ✓ 阶段 2 完成 (总耗时: {stage_elapsed:.2f}秒)\n")
     
     return state
 
@@ -2156,6 +2212,11 @@ def _load_available_tools() -> List[Dict[str, Any]]:
                             "parameters": tool_params  # Retain parameter info for subsequent use
                         }]
                     }
+                    
+                    # Include tool dependency info if specified
+                    if tool.get("depends_on"):
+                        standardized_tool["depends_on"] = tool.get("depends_on")
+                        standardized_tool["execution_order"] = tool.get("execution_order", "after_dependencies")
                     
                     tools.append(standardized_tool)
                 

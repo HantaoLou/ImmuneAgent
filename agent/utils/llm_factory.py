@@ -25,6 +25,17 @@ from enum import Enum
 import os
 
 try:
+    from dotenv import load_dotenv, find_dotenv
+except ImportError:
+    load_dotenv = None
+    find_dotenv = None
+
+if load_dotenv is not None and find_dotenv is not None:
+    dotenv_path = find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path, override=False)
+
+try:
     from zai import ZhipuAiClient
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -77,6 +88,14 @@ MODEL_CONFIGS: Dict[ModelPurpose, List[Tuple[str, str, float]]] = {
 
 
 # ===================== Low-level Provider Creation Functions =====================
+def _mask_api_key(api_key: Optional[str]) -> str:
+    if not api_key:
+        return "<empty>"
+    if len(api_key) <= 8:
+        return "***"
+    return f"{api_key[:4]}...{api_key[-4:]}"
+
+
 def _create_openai_llm(
     model: str,
     temperature: float = 0.1,
@@ -93,10 +112,15 @@ def _create_openai_llm(
     if not api_key:
         return None
 
-    print(f"Creating OpenAI LLM instance: {model}, {temperature}, {base_url}, {api_key}")
-    
     # Get timeout setting (default 120 seconds)
     timeout = int(os.getenv("LLM_TIMEOUT", "120"))
+    max_retries = 2
+    masked_key = _mask_api_key(api_key)
+    print(
+        "Creating OpenAI-compatible LLM instance: "
+        f"model={model}, temperature={temperature}, base_url={base_url}, "
+        f"timeout={timeout}, max_retries={max_retries}, api_key={masked_key}"
+    )
     
     try:
         return ChatOpenAI(
@@ -105,7 +129,7 @@ def _create_openai_llm(
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,  # Add timeout setting
-            max_retries=2  # Maximum retry count
+            max_retries=max_retries  # Maximum retry count
         )
     except Exception as e:
         print(f"Error: Failed to create OpenAI LLM ({model}): {e}")
@@ -326,7 +350,7 @@ def _create_llm_by_purpose(
                     failed_attempts.append(f"{provider}:{model} (creation failed)")
             else:
                 llm = None
-                failed_attempts.append(f"{provider}:{model} (missing DASHSCOPE_API_KEY or QIANFAN_API_KEY)")
+                failed_attempts.append(f"{provider}:{model}:{dashscope_key} (missing DASHSCOPE_API_KEY or QIANFAN_API_KEY)")
         elif provider == "zhipu":
             # Zhipu uses ZHIPU_API_KEY
             zhipu_key = os.getenv("ZHIPU_API_KEY")

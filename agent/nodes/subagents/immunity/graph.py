@@ -11,6 +11,8 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 import json
 import re
+import os
+import time
 from datetime import datetime
 
 from langgraph.graph import StateGraph, START, END
@@ -19,7 +21,8 @@ from pydantic import BaseModel
 from state import GlobalState
 from utils.llm_factory import (
     create_reasoning_advanced_llm,
-    create_reasoning_llm
+    create_reasoning_llm,
+    create_bioinformatics_llm
 )
 from .state import ImmunityState
 from .prompts import ImmunityPrompts
@@ -142,7 +145,7 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
         print("⚠️ No original question, skipping query decomposition")
         return state
     
-    llm = create_reasoning_advanced_llm()
+    llm = create_bioinformatics_llm()
     if not llm:
         print("⚠️ LLM unavailable, using original question")
         state.optimized_questions = [state.original_question]
@@ -298,7 +301,7 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
     print("🔬 STAGE 3: Deep Research Analysis")
     print("=" * 60)
     
-    llm = create_reasoning_advanced_llm()
+    llm = create_bioinformatics_llm()
     if not llm:
         print("⚠️ LLM unavailable, skipping deep research")
         return state
@@ -492,7 +495,7 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
         print("⚠️ No research results, skipping hypothesis generation")
         return state
     
-    llm = create_reasoning_advanced_llm()
+    llm = create_bioinformatics_llm()
     if not llm:
         print("⚠️ LLM unavailable, skipping hypothesis generation")
         return state
@@ -523,9 +526,41 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
         
         # ZhipuAI requires at least one user message, so send prompt as user message
         messages = [HumanMessage(content=hypothesis_prompt)]
-        
+
+        llm_info = {
+            "type": type(llm).__name__,
+            "model": getattr(llm, "model", getattr(llm, "model_name", None)),
+            "temperature": getattr(llm, "temperature", None),
+            "timeout": getattr(llm, "timeout", None),
+            "max_retries": getattr(llm, "max_retries", None),
+        }
+        prompt_stats = {
+            "original_question_len": len(state.original_question or ""),
+            "research_summary_len": len(state.research_summary or ""),
+            "context_len": len(context),
+            "question_block_len": len(question),
+        }
+        message_lengths = [
+            len(msg.content) if hasattr(msg, "content") and msg.content is not None else len(str(msg))
+            for msg in messages
+        ]
+        print("  🔍 LLM invoke diagnostics:")
+        print(f"    - llm: {llm_info}")
+        print(f"    - env LLM_TIMEOUT: {os.getenv('LLM_TIMEOUT')}")
+        print(f"    - prompt stats: {prompt_stats}")
+        print(f"    - messages: count={len(messages)}, lengths={message_lengths}")
+        print(f"    - prompt length: {len(hypothesis_prompt)} characters")
+
         # Directly invoke LLM, then parse JSON
-        response = llm.invoke(messages)
+        start_time = time.perf_counter()
+        try:
+            response = llm.invoke(messages)
+            elapsed = time.perf_counter() - start_time
+            print(f"  ⏱️ LLM invoke completed in {elapsed:.2f}s")
+        except Exception as e:
+            elapsed = time.perf_counter() - start_time
+            print(f"  ⚠️ LLM invoke failed after {elapsed:.2f}s: {type(e).__name__}")
+            raise
         response_content = response.content if hasattr(response, 'content') else str(response)
         
         # Use JsonOutputParser to parse response
@@ -628,7 +663,7 @@ def planning_node(state: ImmunityState) -> ImmunityState:
     print("🔧 STAGE 5: Research-Driven Plan Generation ⭐")
     print("=" * 60)
     
-    llm = create_reasoning_advanced_llm()
+    llm = create_bioinformatics_llm()
     if not llm:
         print("⚠️ LLM unavailable, using simple plan generation")
         return _generate_simple_plan(state)
@@ -670,8 +705,45 @@ def planning_node(state: ImmunityState) -> ImmunityState:
         
         # ZhipuAI requires at least one user message, so send prompt as user message
         messages = [HumanMessage(content=planning_prompt)]
-        
-        response = llm.invoke(messages)
+
+        llm_info = {
+            "type": type(llm).__name__,
+            "model": getattr(llm, "model", getattr(llm, "model_name", None)),
+            "temperature": getattr(llm, "temperature", None),
+            "timeout": getattr(llm, "timeout", None),
+            "max_retries": getattr(llm, "max_retries", None),
+        }
+        prompt_stats = {
+            "original_question_len": len(state.original_question or ""),
+            "optimized_questions_count": len(state.optimized_questions or []),
+            "optimized_questions_len": len(optimized_questions_text),
+            "hypothesis_summary_len": len(state.hypothesis_summary or ""),
+            "research_summary_len": len(state.research_summary or ""),
+            "context_len": len(context),
+            "citations_count": len(state.citations or []),
+            "citations_json_len": len(citations_json),
+            "tools_info_len": len(tools_info),
+        }
+        message_lengths = [
+            len(msg.content) if hasattr(msg, "content") and msg.content is not None else len(str(msg))
+            for msg in messages
+        ]
+        print("  🔍 LLM invoke diagnostics:")
+        print(f"    - llm: {llm_info}")
+        print(f"    - env LLM_TIMEOUT: {os.getenv('LLM_TIMEOUT')}")
+        print(f"    - prompt stats: {prompt_stats}")
+        print(f"    - messages: count={len(messages)}, lengths={message_lengths}")
+        print(f"    - prompt length: {len(planning_prompt)} characters")
+
+        start_time = time.perf_counter()
+        try:
+            response = llm.invoke(messages)
+            elapsed = time.perf_counter() - start_time
+            print(f"  ⏱️ LLM invoke completed in {elapsed:.2f}s")
+        except Exception as e:
+            elapsed = time.perf_counter() - start_time
+            print(f"  ⚠️ LLM invoke failed after {elapsed:.2f}s: {type(e).__name__}")
+            raise
         plan_content = response.content.strip() if hasattr(response, 'content') else str(response)
         
         state.final_enhanced_plan = plan_content
@@ -745,7 +817,7 @@ Evaluation Note: This plan was directly provided by the user, automatic evaluati
         report_path = _save_report(state.final_evaluation, "evaluation", state.sandbox_dir)
         return state
     
-    llm = create_reasoning_advanced_llm()
+    llm = create_bioinformatics_llm()
     if not llm:
         print("⚠️ LLM unavailable, skipping evaluation")
         state.final_evaluation = "LLM unavailable, cannot perform evaluation"
@@ -827,11 +899,31 @@ def immunity_output_mapper(immunity_state: ImmunityState, global_state: GlobalSt
         "research_summary": immunity_state.research_summary,
         "hypothesis_summary": immunity_state.hypothesis_summary,
         "experimental_plan": immunity_state.final_enhanced_plan,
+        "final_enhanced_plan": immunity_state.final_enhanced_plan,
         "plan_steps": immunity_state.plan_steps,
         "plan_summary": immunity_state.plan_summary,
         "evaluation": immunity_state.final_evaluation,
         "executable_plan": immunity_state.executable_plan
     }
+
+    # Persist execution plan to global state for downstream logging/usage
+    execution_plan = None
+    if immunity_state.final_enhanced_plan:
+        execution_plan = immunity_state.final_enhanced_plan
+    elif immunity_state.generated_plan:
+        execution_plan = immunity_state.generated_plan
+    elif immunity_state.plan_summary:
+        execution_plan = immunity_state.plan_summary
+
+    if not execution_plan:
+        if immunity_state.skip_planning:
+            execution_plan = "PLAN_NOT_GENERATED: skip_planning is true"
+        elif not immunity_state.original_question:
+            execution_plan = "PLAN_NOT_GENERATED: original_question is empty"
+        else:
+            execution_plan = "PLAN_NOT_GENERATED: planning output is empty"
+
+    global_state.execution_plan = execution_plan
     
     print(f"✅ Immunity subgraph completed: Generated complete experimental plan")
     print(f"  - Optimized queries count: {len(immunity_state.optimized_questions)}")

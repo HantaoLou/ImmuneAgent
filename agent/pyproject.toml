@@ -32,6 +32,11 @@ qdrant = [
 tavily = [
     "tavily-python>=0.3.0",
 ]
+# OpenSandbox 远程沙盒执行支持
+opensandbox = [
+    "opensandbox>=0.1.0",
+    "opensandbox-code-interpreter>=0.1.0",
+]
 # 完整检索支持（包含所有检索方式）
 retrieval = [
     "langchain-qdrant>=0.1.0",

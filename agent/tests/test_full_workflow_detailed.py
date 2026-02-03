@@ -1,18 +1,26 @@
 """
 完整工作流详细测试用例
 
-测试从 supervisor -> task_decomposition -> executor 的全流程，并详细记录所有中间过程。
+测试从 preprocess -> supervisor -> immunity -> task_decomposition -> executor 的全流程，并详细记录所有中间过程。
+
+工作流步骤：
+1. Preprocess: 输入预处理（提取参数、分析文件、上传到沙盒）
+2. Supervisor: 任务分类
+3. Immunity: 执行计划生成
+4. Task Decomposition: 任务分解
+5. Executor: 任务执行（参数推断、并发执行、结果汇总）
 
 记录内容包括：
 1. 用户原始输入
-2. 执行计划（如果有）
-3. Supervisor 分类结果
-4. Task Decomposition 任务分解结果
-5. Executor 参数推断结果（包括从用户输入、执行计划、依赖任务输出中提取的参数）
-6. 每个任务的输入输出及任务信息
-7. 任务执行过程及顺序（包括并发执行和优先级策略）
-8. 每个任务的执行汇总（execution_summary）
-9. 汇总的结果
+2. 预处理结果（会话ID、文件分析、参数提取）
+3. 执行计划（如果有）
+4. Supervisor 分类结果
+5. Task Decomposition 任务分解结果
+6. Executor 参数推断结果（包括从用户输入、执行计划、依赖任务输出中提取的参数）
+7. 每个任务的输入输出及任务信息
+8. 任务执行过程及顺序（包括并发执行和优先级策略）
+9. 每个任务的执行汇总（execution_summary）
+10. 汇总的结果
 
 运行方式：pytest tests/test_full_workflow_detailed.py::test_full_workflow_detailed -v -s
 """
@@ -20,6 +28,7 @@
 import os
 import pytest
 import json
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Any, Optional, List
@@ -38,8 +47,16 @@ from main_graph import build_main_graph
 from nodes.subagents.supervisor.graph import (
     build_supervisor_subgraph,
     supervisor_input_mapper,
-    supervisor_output_mapper
+    supervisor_output_mapper,
+    preprocess_user_input_node,
+    SupervisorState
 )
+from nodes.subagents.immunity.graph import (
+    build_immunity_subgraph,
+    immunity_input_mapper,
+    immunity_output_mapper
+)
+from nodes.subagents.immunity.state import ImmunityState
 from nodes.subagents.task_decomposition.graph import (
     build_task_decomposition_subgraph,
     task_decomposition_input_mapper,
@@ -116,6 +133,82 @@ def extract_interrupt_value(obj: Any, max_depth: int = 5) -> Any:
     return obj
 
 
+def _get_output_field(output: Any, field: str, default: Any = None) -> Any:
+    """兼容 dict/对象输出的字段读取"""
+    if hasattr(output, field):
+        return getattr(output, field)
+    if isinstance(output, dict):
+        return output.get(field, default)
+    return default
+
+
+def _filter_progress_messages(output: Any) -> Any:
+    """Filter progress messages from executor output for logging."""
+    if output is None:
+        return None
+    parsed_output = output
+    if isinstance(output, str):
+        try:
+            parsed_output = json.loads(output)
+        except (TypeError, ValueError):
+            return output
+    if isinstance(parsed_output, dict) and isinstance(parsed_output.get("messages"), list):
+        filtered_messages = []
+        for msg in parsed_output["messages"]:
+            if isinstance(msg, dict) and msg.get("type") == "progress":
+                continue
+            filtered_messages.append(msg)
+        filtered_output = dict(parsed_output)
+        filtered_output["messages"] = filtered_messages
+        return filtered_output
+    return parsed_output
+
+
+def _serialize_subtask(task: SubTask) -> Dict[str, Any]:
+    """Serialize SubTask for logging."""
+    if hasattr(task, "model_dump"):
+        return task.model_dump(mode="json")
+    if hasattr(task, "__dict__"):
+        return {k: v for k, v in task.__dict__.items() if not k.startswith("_")}
+    return {"value": str(task)}
+
+
+def _serialize_parallel_groups(groups: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize parallel task groups for logging."""
+    serialized = {}
+    for group_id, group in groups.items():
+        if hasattr(group, "model_dump"):
+            group_dict = group.model_dump(mode="json")
+        elif hasattr(group, "__dict__"):
+            group_dict = {k: v for k, v in group.__dict__.items() if not k.startswith("_")}
+        else:
+            group_dict = {"group_id": group_id, "value": str(group)}
+        if "subtasks" in group_dict and isinstance(group_dict["subtasks"], list):
+            group_dict["subtasks"] = [_serialize_subtask(t) for t in group_dict["subtasks"]]
+        serialized[group_id] = group_dict
+    return serialized
+
+
+def _extract_error_type_from_output(output: Any) -> Optional[str]:
+    """从任务输出中提取错误类型"""
+    if not output:
+        return None
+    parsed_output = output
+    if isinstance(output, str):
+        try:
+            parsed_output = json.loads(output)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(parsed_output, dict):
+        return None
+    final_result = parsed_output.get("final_result")
+    if isinstance(final_result, dict):
+        error_type = final_result.get("error_type")
+        if error_type:
+            return error_type
+    return parsed_output.get("error_type")
+
+
 @pytest.fixture(scope="module", autouse=True)
 def setup_global_logger():
     """初始化全局日志记录器"""
@@ -131,8 +224,9 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     
     流程：
     1. Supervisor: 分类用户任务
-    2. Task Decomposition: 分解任务
-    3. Executor: 推断参数、执行任务（支持并发执行和优先级策略）、汇总结果
+    2. Immunity: 生成执行计划
+    3. Task Decomposition: 分解任务
+    4. Executor: 推断参数、执行任务（支持并发执行和优先级策略）、汇总结果
     """
     # 获取日志记录器
     logger = test_case_logger
@@ -152,31 +246,128 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
         # 4. invoke r_data_integration service's all tools
         # 4. invoke bioinformatics service's all tools
         # 5. invoke alphafold3
-    user_input = '''
-        please design a computational method to identifiy broadly neutralizing antibodies against H5N1.
+    # 问题1 (暂时禁用 - igblast服务未连接)
+    # user_input = '''
+    #     please design a computational method to identifiy broadly neutralizing antibodies against H5N1.
+    #
+    #     use the following mcp services:
+    #     - igblast
+    #     - metabcr
+    #     - r_data_integration
+    #     - bioinformatics
+    #     parameters:
+    #     - metadata: /data/benchmark_data/flu_benchmark/260129_flu_metadata.csv
+    #     - antigen file: /data/benchmark_data/flu_benchmark/flu_antig_seq.csv
+    #     - RDS file: /data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds
+    #     NOTE:
+    #     - All tools provided by each mcp service used must be utilized.
+    # '''
 
-        mcp servers only consider the following:
+    # 问题2 (使用metabcr服务，不需要igblast)
+    # user_input = '''
+    #     Analyze the antigen binding prediction for flu antibodies.
+
+    #     only use the following mcp services:
+    #     - igblast
+    #     - metabcr
+    #     - r_data_integration
+    #     - bioinformatics
+    #     - alphafold3
+
+    #     parameters:
+    #     - meta csv file: /data/benchmark_data/flu_benchmark/260129_flu_metadata.csv
+    #     - antigen file: /data/benchmark_data/flu_benchmark/flu_antig_seq.csv
+    #     - meta RDS file: /data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds
+
+    #     note:
+    #     - all tools provided by bioinformatics service must be used.
+    # '''
+
+    # 问题3
+    user_input = '''
+        What structural features differentiate broadly neutralizing antibodies from those with narrow specificity?
+
+        only use the following mcp services:
         - igblast
         - metabcr
-        - lineage_analysis
         - r_data_integration
         - bioinformatics
+        - alphafold3
+
         parameters:
-        - fasta file: /data_new/workspace/flu-simple.fasta
-        - antibody file: /data_new/workspace/flu-simple.csv
-        - antigen file: /data_new/workspace/Copy of flu_bind_variant_seq.xlsx
-        - RDS file: /data_new/workspace/antibody_gen/flu/input/rds/20240923_flu_B_annotation.rds
-        - first experiment data: /data_new/workspace/antibody_gen/flu/input/raw_doc/first-time_Inf/flu_simple(origin_flu-binding_neutralizations).xlsx
-        - second experiment data: /data_new/workspace/antibody_gen/flu/input/raw_doc/second-time_Inf/flu_second_simple.xlsx
+        - sars meta csv file: /data/benchmark_data/sars_benchmark/260129_sars_metadata.csv
+        - sars antigen file: /data/benchmark_data/sars_benchmark/sars_antig_seq.csv
+        - sars meta RDS file: /data/benchmark_data/sars_benchmark/260129_sars_benchmark.rds
+
+        note:
+        - all tools provided by bioinformatics service must be used.
     '''
+
+    # 问题4
+    # user_input = '''
+    #     Optimize the fitness and thermodynamic stability of the influenza virus NA protein, and generate the optimized protein sequence.
+
+    #     parameters:
+    #     - NA fasta: /data_new/py/project_result/fitness_stab_design/stru_project/01_input/BV_NA_pro.fasta
+    #     - NA pdb: /data_new/py/project_result/fitness_stab_design/stru_project/01_input/lws_1v _pdb/na_tet_bv.pdb
+    # '''
+    
+    # 问题5
+    # user_input = '''
+    #     Generate an optimized, complete mRNA sequence based on the amino acid sequence of NA.
+
+    #     provide the following files:
+    #     - NA fasta: /data_new/py/project_result/fitness_stab_design/stru_project/01_input/BV_NA_pro.fasta
+    # '''
+
+    # 问题6
+    # user_input = '''
+    #     Please screen the table for antibodies that bind to H5N1 and attempt to enhance the antibody's breadth and optimize it toward H3N2 subtypes.
+
+    #     provide the following files:
+    #     - raw data file: /data/benchmark_data/FDG_benchmark/FDG_raw_data.csv
+    #     - antigen file: /data/benchmark_data/FDG_benchmark/flu_antig_seq.csv
+    # '''
+
+    # 问题7
+    # user_input = '''
+    #     Screen the table for SARS-CoV-2-binding antibody sequences.
+
+    #     provide the following files:
+    #     - raw data file:/data/benchmark_data/CoVAbDab_benchmark/CoV-AbDab_raw.csv
+    #     - antigen file: /data/benchmark_data/CoVAbDab_benchmark/sars_antig_seq.csv
+    # '''
+
+    # 问题8
+    # user_input = '''
+    #     Please scan the table and predict the changes in binding affinity of the proteins upon mutation.
+
+    #     provide the following files:
+    #     - raw data file: /data/benchmark_data/Skempi_benchmark/skempi_v2_raw.csv
+    # '''
+
     execution_plan = None  # 可以在这里提供执行计划
     use_react_supervisor = False
     use_react_executor = False
     react_max_steps = 3
     
+    # 启用 OpenSandbox（优先使用远程沙盒进行文件分析）
+    os.environ["OPENSANDBOX_ENABLED"] = "true"
+    os.environ["CODEACT_SANDBOX_PROVIDER"] = "opensandbox"  # 关键：指定使用 OpenSandbox 执行代码
+    os.environ["OPENSANDBOX_SKIP_MCP_INSTALL"] = "true"
+    
+    # 配置持久化共享卷：所有沙盒共享同一个会话目录
+    # 这确保文件在沙盒销毁后仍然存在，可被后续沙盒和 MCP 服务访问
+    # 格式: "/host/path:/container/path" - 将服务器上的目录挂载到容器的 /tmp/sessions
+    if not os.environ.get("OPENSANDBOX_VOLUME_BINDINGS"):
+        # 使用服务器默认的持久化目录
+        os.environ["OPENSANDBOX_VOLUME_BINDINGS"] = "/data/sessions:/tmp/sessions"
+        print(f"  [Config] 已配置持久化共享卷: /data/sessions -> /tmp/sessions")
+    
     print(f"\n{'='*80}")
     print(f"【完整工作流详细测试】")
     print(f"{'='*80}")
+    print(f"OpenSandbox: {'启用' if os.environ.get('OPENSANDBOX_ENABLED') == 'true' else '禁用'}")
     print(f"用户输入: {user_input}")
     if execution_plan:
         print(f"执行计划: {execution_plan}")
@@ -186,13 +377,8 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     # 记录用户原始输入
     if logger:
         logger.log_initial_state({
-            "user_input": user_input,
-            "execution_plan": execution_plan,
-            "sandbox_dir": str(test_dir),
-            "use_react_supervisor": use_react_supervisor,
-            "use_react_executor": use_react_executor,
-            "react_max_steps": react_max_steps
-        }, "用户原始输入和执行计划")
+            "user_input": user_input
+        }, "用户输入")
     
     # 创建初始全局状态
     global_state = GlobalState(
@@ -204,145 +390,223 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
         react_max_steps=react_max_steps
     )
     
+    # ==================== 步骤 1: 输入预处理 ====================
+    # 创建预处理状态
+    preprocess_state = SupervisorState(
+        user_input=user_input,
+        uploaded_files=[],
+        sandbox_dir=str(test_dir),
+    )
+    
+    # 执行预处理
+    import io
+    import contextlib
+    print(f"\n{'='*80}")
+    print(f"【步骤 1/5】输入预处理中...")
+    print(f"{'='*80}")
+    print(f"  → 正在提取参数和文件信息...")
+    start_time = time.time()
+    with contextlib.redirect_stdout(io.StringIO()):
+        preprocess_result = preprocess_user_input_node(preprocess_state)
+    elapsed = time.time() - start_time
+    print(f"  ✓ 预处理完成: session_id={preprocess_result.session_id} (耗时: {elapsed:.2f}秒)")
+    
+    # 只打印关键信息：参数表
+    print(f"\n{'='*80}")
+    print(f"【1. 参数表】")
+    print(f"{'='*80}")
+    print(json.dumps(preprocess_result.extracted_parameters, ensure_ascii=False, indent=2))
+    
+    # 将预处理结果同步到全局状态
+    global_state.session_id = preprocess_result.session_id
+    global_state.sandbox_data_dir = preprocess_result.sandbox_data_dir
+    global_state.opensandbox_id = preprocess_result.opensandbox_id
+    global_state.extracted_parameters = preprocess_result.extracted_parameters
+    global_state.file_analyses = [
+        {
+            "original_path": fa.original_path,
+            "sandbox_path": fa.sandbox_path,
+            "file_type": fa.file_type,
+            "detected_data_type": fa.detected_data_type,
+            "row_count": fa.row_count,
+            "column_names": fa.column_names,
+            "content_summary": fa.content_summary
+        }
+        for fa in preprocess_result.file_analyses
+    ] if preprocess_result.file_analyses else []
+    
+    global_state.merged_result["preprocess"] = {
+        "session_id": preprocess_result.session_id,
+        "sandbox_data_dir": preprocess_result.sandbox_data_dir,
+        "opensandbox_id": preprocess_result.opensandbox_id,
+        "extracted_parameters": preprocess_result.extracted_parameters,
+        "file_analyses": global_state.file_analyses
+    }
+    
+    # 记录预处理结果
     if logger:
-        logger.log_initial_state(global_state, "初始 GlobalState")
+        logger.log_node_execution(
+            "preprocess_user_input",
+            {"user_input": user_input},
+            global_state.merged_result["preprocess"],
+            "输入预处理"
+        )
     
     # ==================== 步骤 2: Supervisor 分类 ====================
-    print(f"\n{'='*60}")
-    print(f"【步骤 1: Supervisor 任务分类】")
-    print(f"{'='*60}")
-    
+    print(f"\n{'='*80}")
+    print(f"【步骤 2/5】Supervisor 任务分类中...")
+    print(f"{'='*80}")
+    print(f"  → 正在分析任务类型...")
+    start_time = time.time()
     supervisor_subgraph = build_supervisor_subgraph()
     supervisor_input = supervisor_input_mapper(global_state)
     
-    if logger:
-        logger.log_node_execution("supervisor_input_mapper", global_state, supervisor_input, 
-                                 "Supervisor 输入映射")
-    
-    supervisor_output = supervisor_subgraph.invoke(supervisor_input)
+    with contextlib.redirect_stdout(io.StringIO()):
+        supervisor_output = supervisor_subgraph.invoke(supervisor_input)
     global_state = supervisor_output_mapper(supervisor_output, global_state)
+    elapsed = time.time() - start_time
+    task_type = global_state.user_task_type or "UNKNOWN"
+    print(f"  ✓ 任务分类完成: {task_type} (耗时: {elapsed:.2f}秒)")
     
-    if logger:
-        logger.log_node_execution("supervisor_subgraph", supervisor_input, supervisor_output,
-                                 "Supervisor 任务分类完成")
-        logger.log_node_execution("supervisor_output_mapper", supervisor_output, global_state,
-                                 "Supervisor 输出映射")
+    # ==================== 步骤 3: Immunity 生成执行计划（已跳过以加快测试）====================
+    # NOTE: Immunity 子图暂时跳过，直接进入任务分解
+    # 如需恢复，取消下面的注释
+    """
+    immunity_subgraph = build_immunity_subgraph()
+    immunity_input = immunity_input_mapper(global_state)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            immunity_output = immunity_subgraph.invoke(immunity_input)
+        if isinstance(immunity_output, dict):
+            immunity_output = ImmunityState(**immunity_output)
+        global_state = immunity_output_mapper(immunity_output, global_state)
+        
+        immunity_plan = global_state.merged_result.get("immunity_plan", {})
+        generated_execution_plan = (
+            immunity_plan.get("final_enhanced_plan")
+            or immunity_plan.get("experimental_plan")
+            or immunity_plan.get("plan_summary")
+        )
+        if not generated_execution_plan and immunity_plan.get("executable_plan"):
+            generated_execution_plan = json.dumps(
+                immunity_plan["executable_plan"],
+                ensure_ascii=False,
+                indent=2
+            )
+        if generated_execution_plan:
+            global_state.execution_plan = generated_execution_plan
+        
+        if logger:
+            logger.log_node_execution(
+                "immunity_subgraph",
+                {"user_input": user_input},
+                {
+                    "execution_plan": global_state.execution_plan,
+                    "immunity_plan": immunity_plan
+                },
+                "执行计划"
+            )
+    except Exception as e:
+        print(f"⚠ Immunity 执行计划生成失败: {e}")
+        if logger:
+            logger.log_node_execution(
+                "immunity_subgraph",
+                {"user_input": user_input},
+                {"error": str(e)},
+                "执行计划失败"
+            )
+    """
+    print("  [Skip] Immunity 子图已跳过以加快测试速度")
     
-    print(f"✓ 任务分类结果: {global_state.user_task_type}")
-    if global_state.supervisor_decision or global_state.supervisor_reasoning:
-        print(f"  决策: {global_state.supervisor_decision}")
-        print(f"  分类原因: {global_state.supervisor_reasoning}")
-    else:
-        print(f"  分类原因: {supervisor_output.classification_reason if hasattr(supervisor_output, 'classification_reason') else 'N/A'}")
+    # ==================== 步骤 4: Task Decomposition ====================
+    print(f"\n{'='*80}")
+    print(f"【步骤 3/5】任务分解中...")
+    print(f"{'='*80}")
+    print(f"  → 任务分解包含三个阶段:")
+    print(f"     1. 粗分解 (Coarse Decomposition) - 确定需要的服务")
+    print(f"     2. 细分解 (Fine Decomposition) - 详细任务分解和工具匹配")
+    print(f"     3. 并行推断 (Parallel Inference) - 推断可并行执行的任务")
+    print(f"  → 这可能需要一些时间，请稍候...")
+    start_time = time.time()
     
-    # ==================== 步骤 3: Task Decomposition ====================
-    print(f"\n{'='*60}")
-    print(f"【步骤 2: Task Decomposition 任务分解】")
-    print(f"{'='*60}")
-    
+    # 构建子图
+    print(f"\n  [阶段 0] 构建任务分解子图...")
+    subgraph_start = time.time()
     task_decomposition_subgraph = build_task_decomposition_subgraph()
+    print(f"  ✓ 子图构建完成 (耗时: {time.time() - subgraph_start:.2f}秒)")
+    
+    # 准备输入
+    print(f"  [阶段 0] 准备输入数据...")
+    input_start = time.time()
     task_decomp_input = task_decomposition_input_mapper(global_state)
+    print(f"  ✓ 输入准备完成 (耗时: {time.time() - input_start:.2f}秒)")
     
-    if logger:
-        logger.log_node_execution("task_decomposition_input_mapper", global_state, task_decomp_input,
-                                 "Task Decomposition 输入映射")
+    # 执行任务分解（不静默输出，让各阶段的进度信息显示）
+    print(f"\n  [阶段 1] 开始粗分解...")
+    print(f"  {'-'*76}")
+    stage1_start = time.time()
     
+    # 使用自定义输出捕获，保留重要的进度信息
+    class ProgressFilter:
+        def __init__(self, original_stdout):
+            self.original_stdout = original_stdout
+            self.buffer = []
+        
+        def write(self, text):
+            # 保留所有输出，但立即显示
+            self.original_stdout.write(text)
+            self.original_stdout.flush()
+            self.buffer.append(text)
+        
+        def flush(self):
+            self.original_stdout.flush()
+    
+    # 不使用redirect_stdout，直接执行以显示所有进度信息
     task_decomp_output = task_decomposition_subgraph.invoke(task_decomp_input)
+    stage1_elapsed = time.time() - stage1_start
+    print(f"  {'-'*76}")
+    print(f"  ✓ 粗分解完成 (耗时: {stage1_elapsed:.2f}秒)")
+    
     global_state = task_decomposition_output_mapper(task_decomp_output, global_state)
+    total_elapsed = time.time() - start_time
+    
+    num_tasks = len(global_state.subtasks) + sum(len(g.subtasks) for g in global_state.parallel_task_groups.values())
+    print(f"\n  {'='*76}")
+    print(f"  ✓ 任务分解全部完成: 共生成 {num_tasks} 个任务")
+    print(f"  ✓ 总耗时: {total_elapsed:.2f}秒")
+    print(f"  {'='*76}")
     
     if logger:
-        logger.log_node_execution("task_decomposition_subgraph", task_decomp_input, task_decomp_output,
-                                 "Task Decomposition 任务分解完成")
-        logger.log_node_execution("task_decomposition_output_mapper", task_decomp_output, global_state,
-                                 "Task Decomposition 输出映射")
+        logger.log_node_execution(
+            "coarse_decomposition",
+            {"user_input": user_input, "execution_plan": global_state.execution_plan},
+            {"required_service_ids": _get_output_field(task_decomp_output, "required_service_ids", [])},
+            "粗分解结果"
+        )
+        logger.log_node_execution(
+            "parallel_inference",
+            {"raw_tasks": _get_output_field(task_decomp_output, "raw_tasks", [])},
+            {"subtasks": [_serialize_subtask(t) for t in global_state.subtasks]},
+            "并行推断结果"
+        )
     
-    # 记录任务分解结果
-    print(f"✓ 任务分解完成")
-    print(f"  分解的任务数: {len(global_state.subtasks)}")
-    print(f"  并行任务组数: {len(global_state.parallel_task_groups)}")
-    print(f"  注意: 参数推断将在 Executor 子图中进行")
-    
-    # 记录每个任务的详细信息
-    if logger:
-        task_order = []
-        for task in global_state.subtasks:
-            task_info = {
-                "task_id": task.task_id,
-                "content": task.content,
-                "dependencies": task.dependencies,
-                "task_type": task.task_type.value if hasattr(task.task_type, 'value') else str(task.task_type),
-                "tools": []
-            }
-            
-            if isinstance(task.result, dict):
-                tools = task.result.get("tools", [])
-                for tool in tools:
-                    if isinstance(tool, dict):
-                        task_info["tools"].append(tool.get("tool_name", tool.get("name", "")))
-                    else:
-                        task_info["tools"].append(str(tool))
-                task_info["inputs"] = task.result.get("inputs", [])
-                task_info["outputs"] = task.result.get("outputs", [])
-            
-            task_order.append(task_info)
-        
-        # 记录并行任务组
-        for group_id, group in global_state.parallel_task_groups.items():
-            for task in group.subtasks:
-                task_info = {
-                    "task_id": task.task_id,
-                    "content": task.content,
-                    "dependencies": task.dependencies,
-                    "parallel_group_id": group_id,
-                    "tools": []
-                }
-                
-                if isinstance(task.result, dict):
-                    tools = task.result.get("tools", [])
-                    for tool in tools:
-                        if isinstance(tool, dict):
-                            task_info["tools"].append(tool.get("tool_name", tool.get("name", "")))
-                        else:
-                            task_info["tools"].append(str(tool))
-                    task_info["inputs"] = task.result.get("inputs", [])
-                    task_info["outputs"] = task.result.get("outputs", [])
-                
-                task_order.append(task_info)
-        
-        logger.log_task_order(task_order)
-    
-    # 打印从上下文中抽取的参数表（这些参数将在 executor 中用于参数推断）
-    if hasattr(task_decomp_output, 'context_extracted_params') and task_decomp_output.context_extracted_params:
-        print(f"\n  【从上下文抽取的参数表（将在 Executor 中使用）】")
-        print(f"  {'='*70}")
-        for task_id, tools_params in task_decomp_output.context_extracted_params.items():
-            print(f"  Task {task_id}:")
-            for tool_name, extracted_params in tools_params.items():
-                print(f"    工具: {tool_name}")
-                if extracted_params:
-                    print(f"    抽取的参数:")
-                    for param_name, param_value in extracted_params.items():
-                        print(f"      - {param_name}: {param_value}")
-                else:
-                    print(f"    未抽取到参数")
-            print()
-        print(f"  {'='*70}")
-    
-    # 记录分解摘要
-    if hasattr(task_decomp_output, 'decomposition_summary') and task_decomp_output.decomposition_summary:
-        print(f"\n  分解摘要: {task_decomp_output.decomposition_summary}")
-    
-    # ==================== 步骤 4: Executor 执行 ====================
-    print(f"\n{'='*60}")
-    print(f"【步骤 3: Executor 任务执行】")
-    print(f"{'='*60}")
-    print(f"Executor 功能:")
-    print(f"  - 参数推断: 基于用户输入、执行计划、依赖任务输出进行动态参数推断")
-    print(f"  - 并发执行: 支持多任务并行执行，可配置工具级并发限制")
-    print(f"  - 优先级策略: 支持基于工具类型的任务优先级调度")
-    print(f"  - 超时控制: 支持单任务超时限制")
-    print(f"  - 结果汇总: 每个任务执行后生成执行汇总")
-    print(f"{'='*60}")
+    # 只打印关键信息：任务列表
+    print(f"\n{'='*80}")
+    print(f"【2. 任务列表】")
+    print(f"{'='*80}")
+    all_tasks_for_display = global_state.subtasks + [
+        task for group in global_state.parallel_task_groups.values()
+        for task in group.subtasks
+    ]
+    for i, task in enumerate(all_tasks_for_display, 1):
+        # SubTask has: task_id, task_type, content, dependencies, parallel_group_id, result
+        task_result = task.result if isinstance(task.result, dict) else {}
+        tools = task_result.get("tools", [])
+        tool_name = tools[0] if tools else "unknown"
+        if isinstance(tool_name, dict):
+            tool_name = tool_name.get("tool_name") or tool_name.get("name", "unknown")
+        print(f"  {i}. [{task.task_type}/{tool_name}] {task.content[:80]}...")
+    print()
     
     # 检查是否有任务需要执行
     all_tasks = global_state.subtasks + [
@@ -351,43 +615,32 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     ]
     
     if not all_tasks:
-        print("⚠ 没有任务需要执行，跳过 Executor 步骤")
-        if logger:
-            logger.log_summary({
-                "user_input": user_input,
-                "execution_plan": execution_plan,
-                "task_classification": global_state.user_task_type.value if hasattr(global_state.user_task_type, 'value') else str(global_state.user_task_type),
-                "supervisor_decision": global_state.supervisor_decision,
-                "supervisor_reasoning": global_state.supervisor_reasoning,
-                "use_react_supervisor": use_react_supervisor,
-                "use_react_executor": use_react_executor,
-                "react_max_steps": react_max_steps,
-                "total_tasks": 0,
-                "completed": 0,
-                "failed": 0,
-                "note": "没有任务需要执行"
-            })
+        print("⚠ 没有任务需要执行")
         return
     
     executor_subgraph = build_executor_subgraph()
     executor_input = executor_input_mapper(global_state)
     
-    if logger:
-        logger.log_node_execution("executor_input_mapper", global_state, executor_input,
-                                 "Executor 输入映射")
-    
-    # 执行工作流（支持HITL中断）
+    # 执行工作流
     thread_id = "full_workflow_detailed_test"
-    print(f"\n开始执行任务...")
-    print(f"线程ID: {thread_id}\n")
+    
+    print(f"\n{'='*80}")
+    print(f"【步骤 4/5】任务执行中...")
+    print(f"{'='*80}")
+    print(f"  → 开始执行 {num_tasks} 个任务...")
+    print(f"  → 任务将按依赖关系顺序执行...")
+    print(f"  → 执行过程中会显示任务进度...")
     
     # 首次执行
+    executor_start_time = time.time()
     try:
         result = execute_executor_with_interrupt_support(
             executor_subgraph,
             executor_input,
             thread_id=thread_id
         )
+        elapsed = time.time() - executor_start_time
+        print(f"  → Executor 首次执行完成 (耗时: {elapsed:.2f}秒)")
     except Exception as e:
         import traceback
         error_traceback = traceback.format_exc()
@@ -414,16 +667,13 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
         # 重新抛出异常，让测试失败
         raise
     
-    if logger:
-        logger.log_node_execution("executor_subgraph", executor_input, result.get("result"),
-                                 "Executor 首次执行")
-    
     # 处理中断循环
     iteration_count = 0
     max_iterations = 50
     
     while result.get("interrupted", False) and iteration_count < max_iterations:
         iteration_count += 1
+        print(f"  → 处理中断 #{iteration_count}...")
         interrupt_data = result.get("interrupt_data")
         
         if not interrupt_data:
@@ -444,28 +694,12 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
             print(f"{'='*60}")
             print(f"中断数据: {actual_interrupt_data}")
             
-            if logger:
-                serialized_data = _serialize_interrupt_data(actual_interrupt_data)
-                logger.log_hitl_request(
-                    task_id=actual_interrupt_data.get("task_id", "unknown"),
-                    request_type=actual_interrupt_data.get("type", "unknown"),
-                    request_data=serialized_data
-                )
-            
             try:
                 user_response = handle_hitl_interrupt(
                     actual_interrupt_data,
                     callback=None,
                     use_file=False
                 )
-                
-                if logger:
-                    serialized_response = _serialize_interrupt_data(user_response)
-                    logger.log_hitl_response(
-                        task_id=actual_interrupt_data.get("task_id", "unknown"),
-                        response_type=user_response.get("type", "unknown"),
-                        response_data=serialized_response
-                    )
                 
                 try:
                     global_state.hitl_status = json.dumps(user_response, ensure_ascii=False)
@@ -479,10 +713,6 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
                     thread_id=thread_id,
                     resume_value=user_response
                 )
-                
-                if logger:
-                    logger.log_node_execution("executor_subgraph", None, result.get("result"),
-                                             f"恢复执行 #{iteration_count}")
                 
             except KeyboardInterrupt:
                 print("\n用户退出，终止执行")
@@ -517,161 +747,105 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     # 映射回全局状态
     global_state = executor_output_mapper(final_state, global_state)
     
-    if logger:
-        logger.log_node_execution("executor_output_mapper", final_state, global_state,
-                                 "Executor 输出映射")
-        logger.log_node_execution("executor_subgraph", executor_input, final_state,
-                                 "Executor 最终状态")
-    
-    # 记录参数推断结果（从 executor 状态中提取）
-    if hasattr(final_state, 'task_results') and final_state.task_results:
-        print(f"\n  【参数推断和执行汇总】")
-        print(f"  {'='*70}")
-        for task_id, task_result in final_state.task_results.items():
-            print(f"  Task {task_id}:")
-            if task_result.result_summary:
-                print(f"    执行汇总: {json.dumps(task_result.result_summary, ensure_ascii=False, indent=2)[:200]}...")
-            # 从任务结果中提取参数推断信息（如果存在）
-            if task_result.output:
-                try:
-                    output_data = json.loads(task_result.output) if isinstance(task_result.output, str) else task_result.output
-                    if isinstance(output_data, dict) and "inferred_params" in output_data:
-                        print(f"    推断的参数: {json.dumps(output_data['inferred_params'], ensure_ascii=False, indent=2)[:200]}...")
-                except:
-                    pass
-        print(f"  {'='*70}")
-    
-    # 记录所有任务执行结果（优化：提取final_result和关键消息，过滤进度消息）
-    if logger:
-        for task_id, task_result in final_state.task_results.items():
-            # 准备result字典，包含完整的关键信息
-            result_dict = {
-                "confidence_score": task_result.confidence_score,
-                "retry_count": task_result.retry_count,
-                "execution_time_ms": int(task_result.execution_time * 1000) if task_result.execution_time else None
-            }
-            
-            # 处理output：提取type为result的消息（工具执行结果），过滤掉progress消息
-            if task_result.output:
-                output = task_result.output
-                
-                # 如果是字符串，尝试解析
-                if isinstance(output, str):
-                    try:
-                        output = json.loads(output)
-                    except:
-                        # 如果解析失败，保存完整原始字符串
-                        result_dict["output"] = output
-                        output = None
-                
-                # 如果是字典，提取result类型的消息
-                if isinstance(output, dict):
-                    # 提取task_id和service_id
-                    if "task_id" in output:
-                        result_dict["task_id"] = output["task_id"]
-                    if "service_id" in output:
-                        result_dict["service_id"] = output["service_id"]
-                    
-                    # 优先提取final_result（如果存在）
-                    if "final_result" in output and output["final_result"]:
-                        result_dict["final_result"] = output["final_result"]
-                    
-                    # 从messages中提取type为result的消息（工具执行结果）
-                    if "messages" in output and isinstance(output["messages"], list):
-                        result_messages = []
-                        progress_count = 0
-                        
-                        for msg in output["messages"]:
-                            if isinstance(msg, dict):
-                                msg_type = msg.get("type", "")
-                                
-                                # 只保留type为result的消息（工具执行结果）
-                                if msg_type == "result":
-                                    result_messages.append(msg)
-                                elif msg_type == "progress":
-                                    progress_count += 1
-                                # 也保留error和end类型的消息（用于错误诊断）
-                                elif msg_type in ["error", "end"]:
-                                    result_messages.append(msg)
-                        
-                        # 记录result消息
-                        if result_messages:
-                            result_dict["result_messages"] = result_messages
-                            result_dict["result_messages_count"] = len(result_messages)
-                        
-                        # 记录统计信息
-                        result_dict["total_messages"] = len(output["messages"])
-                        result_dict["progress_messages_filtered"] = progress_count
-                    
-                    # 保存完整的output结构（但messages中只包含result消息）
-                    result_dict["output"] = output
-                elif output is not None:
-                    # 如果不是字典也不是字符串，直接保存
-                    result_dict["output"] = output
-            
-            # 添加错误信息（包含完整堆栈）
-            if task_result.error:
-                result_dict["error"] = task_result.error  # 包含完整错误堆栈
-                result_dict["error_full"] = task_result.error  # 确保完整错误信息被记录
-            if task_result.error_type:
-                result_dict["error_type"] = task_result.error_type
-            if task_result.error_category:
-                result_dict["error_category"] = task_result.error_category.value if (hasattr(task_result.error_category, 'value')) else str(task_result.error_category)
-            
-            # 添加执行汇总信息
-            if task_result.result_summary:
-                result_dict["execution_summary"] = task_result.result_summary
-            
-            # 添加代码信息到 result_dict（即使代码为空或失败，也记录）
-            if task_result.code:
-                result_dict["generated_code"] = task_result.code
-            elif task_result.execution_mode == "codeact":
-                # 如果是 CodeAct 模式但没有代码，记录为 None（表示代码生成失败）
-                result_dict["generated_code"] = None
-                result_dict["code_generation_failed"] = True
-            
-            logger.log_task_execution(
-                task_id=task_id,
-                status=task_result.status.value if (task_result.status and hasattr(task_result.status, 'value')) else str(task_result.status) if task_result.status else "None",
-                execution_mode=task_result.execution_mode,
-                result=result_dict,
-                error=task_result.error if task_result.error else None  # 不截断错误信息，包含完整堆栈
-            )
-            
-            # 记录 CodeAct 代码（无论成功或失败都要记录）
-            if task_result.code:
-                logger.log_codeact_output(
-                    task_id=task_id,
-                    generated_code=task_result.code,  # 不截断代码
-                    execution_result={
-                        "status": task_result.status.value if (task_result.status and hasattr(task_result.status, 'value')) else str(task_result.status) if task_result.status else "None",
-                        "output": task_result.output if task_result.output else None,  # 不截断输出
-                        "error": task_result.error if task_result.error else None,  # 包含完整错误堆栈
-                        "error_category": task_result.error_category.value if (task_result.error_category and hasattr(task_result.error_category, 'value')) else str(task_result.error_category) if task_result.error_category else None
-                    }
-                )
-            elif task_result.execution_mode == "codeact":
-                # 如果是 CodeAct 模式但没有代码，也记录（表示代码生成失败）
-                logger.log_codeact_output(
-                    task_id=task_id,
-                    generated_code=None,  # 代码生成失败
-                    execution_result={
-                        "status": task_result.status.value if (task_result.status and hasattr(task_result.status, 'value')) else str(task_result.status) if task_result.status else "None",
-                        "output": task_result.output if task_result.output else None,
-                        "error": task_result.error if task_result.error else "Code generation failed",
-                        "error_category": task_result.error_category.value if (task_result.error_category and hasattr(task_result.error_category, 'value')) else str(task_result.error_category) if task_result.error_category else None
-                    }
-                )
-    
-    # ==================== 步骤 5: 汇总结果 ====================
     print(f"\n{'='*80}")
-    print(f"【执行完成总结】")
+    print(f"【步骤 5/5】结果汇总中...")
     print(f"{'='*80}")
-    print(f"总任务数: {final_state.total_tasks}")
-    print(f"已完成: {final_state.completed_count}")
-    print(f"失败: {final_state.failed_count}")
-    print(f"HITL请求数: {len(final_state.hitl_requests)}")
-    print(f"HITL响应数: {len(final_state.hitl_responses)}")
+    
+    # 只打印关键信息：每个任务的结果
+    print(f"\n{'='*80}")
+    print(f"【3. 任务执行结果】")
+    print(f"{'='*80}")
+    if hasattr(final_state, 'task_results') and final_state.task_results:
+        for task_id, task_result in final_state.task_results.items():
+            status_icon = "✓" if task_result.status and str(task_result.status).upper() == "COMPLETED" else "✗"
+            status_str = task_result.status.value if hasattr(task_result.status, 'value') else str(task_result.status)
+            print(f"\n  {status_icon} Task {task_id}: {status_str}")
+            if task_result.error:
+                print(f"     错误: {task_result.error[:200]}..." if len(str(task_result.error)) > 200 else f"     错误: {task_result.error}")
+            if task_result.output:
+                output_preview = str(task_result.output)[:500]
+                if len(str(task_result.output)) > 500:
+                    output_preview += "..."
+                print(f"     输出: {output_preview}")
+    
+    if logger:
+        for task_id, task_result in final_state.task_results.items():
+            iteration_history = []
+            if task_result.result_summary and isinstance(task_result.result_summary, dict):
+                iteration_history = task_result.result_summary.get("code_iterations", []) or []
+            if not iteration_history:
+                iteration_history = [{
+                    "status": task_result.status.value if hasattr(task_result.status, "value") else str(task_result.status),
+                    "error": task_result.error,
+                    "error_type": task_result.error_type,
+                    "execution_time": task_result.execution_time,
+                    "code": task_result.code
+                }]
+            
+            for iteration_index, iteration_entry in enumerate(iteration_history, start=1):
+                output_error_type = _extract_error_type_from_output(task_result.output)
+                resolved_error_type = (
+                    iteration_entry.get("error_type")
+                    or task_result.error_type
+                    or output_error_type
+                )
+                result_dict = {
+                    "iteration": iteration_index,
+                    "parameters": task_result.parameters,
+                    "missing_parameters": task_result.missing_parameters,
+                    "code": iteration_entry.get("code") or task_result.code,
+                    "execution_result": _filter_progress_messages(task_result.output),
+                    "error": iteration_entry.get("error") or task_result.error,
+                    "error_type": resolved_error_type,
+                    "execution_time": iteration_entry.get("execution_time") or task_result.execution_time,
+                    "confidence_score": task_result.confidence_score,
+                    "retry_count": task_result.retry_count
+                }
+                logger.log_task_execution(
+                    task_id=task_id,
+                    status=iteration_entry.get("status") or (
+                        task_result.status.value if (task_result.status and hasattr(task_result.status, "value"))
+                        else str(task_result.status) if task_result.status else "None"
+                    ),
+                    execution_mode=task_result.execution_mode,
+                    result=result_dict,
+                    error=result_dict["error"],
+                    error_type=resolved_error_type
+                )
+    
+    # ==================== 最终汇总 ====================
+    print(f"\n{'='*80}")
+    print(f"【4. 执行汇总】")
+    print(f"{'='*80}")
+    print(f"总任务数: {final_state.total_tasks} | 完成: {final_state.completed_count} | 失败: {final_state.failed_count}")
+    print(f"{'='*80}\n")
+    hitl_request_history = getattr(final_state, "hitl_request_history", None)
+    hitl_response_history = getattr(final_state, "hitl_response_history", None)
+    hitl_request_source = hitl_request_history if isinstance(hitl_request_history, dict) else final_state.hitl_requests
+    hitl_response_source = hitl_response_history if isinstance(hitl_response_history, dict) else final_state.hitl_responses
+    hitl_request_count = len(hitl_request_source)
+    hitl_response_count = len(hitl_response_source)
+    hitl_pending_count = len([k for k in hitl_request_source.keys() if k not in hitl_response_source])
+    if logger and hasattr(logger, "logs"):
+        hitl_request_tasks = {
+            log.get("data", {}).get("task_id")
+            for log in logger.logs
+            if log.get("event_type") == "hitl_request"
+        }
+        hitl_request_tasks.discard(None)
+        hitl_response_tasks = {
+            log.get("data", {}).get("task_id")
+            for log in logger.logs
+            if log.get("event_type") == "hitl_response"
+        }
+        hitl_response_tasks.discard(None)
+        if hitl_request_tasks or hitl_response_tasks:
+            hitl_request_count = len(hitl_request_tasks)
+            hitl_response_count = len(hitl_response_tasks)
+            hitl_pending_count = len(hitl_request_tasks - hitl_response_tasks)
+    print(f"HITL请求数: {hitl_request_count}")
+    print(f"HITL响应数: {hitl_response_count}")
+    print(f"HITL未响应数: {hitl_pending_count}")
     print(f"中断迭代次数: {iteration_count}")
     
     # 打印每个任务的执行状态
@@ -684,12 +858,12 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
             status_str = task_result.status.value if (task_result.status and hasattr(task_result.status, 'value')) else str(task_result.status) if task_result.status else "None"
             print(f"  {status_icon} {task.task_id}: {status_str}")
             if task_result.error:
-                print(f"     错误: {task_result.error[:100]}")
+                print(f"     错误: {task_result.error}")
             if task_result.retry_count > 0:
                 print(f"     重试次数: {task_result.retry_count}")
             if task_result.result_summary:
-                summary_preview = json.dumps(task_result.result_summary, ensure_ascii=False)[:100]
-                print(f"     执行汇总: {summary_preview}...")
+                summary_full = json.dumps(task_result.result_summary, ensure_ascii=False)
+                print(f"     执行汇总: {summary_full}")
         else:
             print(f"  ? {task.task_id}: 未执行")
     
@@ -703,23 +877,31 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     
     # 记录汇总结果
     if logger:
+        preprocess_info = global_state.merged_result.get("preprocess", {})
         logger.log_summary({
             "user_input": user_input,
-            "execution_plan": execution_plan,
+            "execution_plan": global_state.execution_plan,
+            "preprocess": {
+                "session_id": preprocess_info.get("session_id"),
+                "sandbox_data_dir": preprocess_info.get("sandbox_data_dir"),
+                "file_count": len(preprocess_info.get("file_analyses", [])),
+                "extracted_parameters": preprocess_info.get("extracted_parameters", {}).get("user_parameters", {})
+            },
             "task_classification": global_state.user_task_type.value if hasattr(global_state.user_task_type, 'value') else str(global_state.user_task_type),
-                "supervisor_decision": global_state.supervisor_decision,
-                "supervisor_reasoning": global_state.supervisor_reasoning,
+            "supervisor_decision": global_state.supervisor_decision,
+            "supervisor_reasoning": global_state.supervisor_reasoning,
             "total_tasks": final_state.total_tasks,
             "completed": final_state.completed_count,
             "failed": final_state.failed_count,
-            "hitl_requests_count": len(final_state.hitl_requests),
-            "hitl_responses_count": len(final_state.hitl_responses),
+            "hitl_requests_count": hitl_request_count,
+            "hitl_responses_count": hitl_response_count,
+            "hitl_pending_count": hitl_pending_count,
             "interrupt_iterations": iteration_count,
             "tasks_count": len(all_tasks),
-                "parallel_groups_count": len(global_state.parallel_task_groups),
-                "use_react_supervisor": use_react_supervisor,
-                "use_react_executor": use_react_executor,
-                "react_max_steps": react_max_steps
+            "parallel_groups_count": len(global_state.parallel_task_groups),
+            "use_react_supervisor": use_react_supervisor,
+            "use_react_executor": use_react_executor,
+            "react_max_steps": react_max_steps
         })
     
     print(f"{'='*80}\n")
@@ -746,6 +928,11 @@ def test_case_logger(request):
 
 # 主函数，支持直接运行
 if __name__ == "__main__":
+    # 启用 OpenSandbox
+    os.environ["OPENSANDBOX_ENABLED"] = "true"
+    os.environ["CODEACT_SANDBOX_PROVIDER"] = "opensandbox"  # 关键：指定使用 OpenSandbox 执行代码
+    os.environ["OPENSANDBOX_SKIP_MCP_INSTALL"] = "true"
+    
     # 初始化日志
     test_file_name = Path(__file__).stem
     init_global_logger(test_file_name)

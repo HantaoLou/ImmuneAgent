@@ -58,3 +58,10 @@ class GlobalState(BaseModel):
     use_react_supervisor: bool = Field(default=False, description="Use React supervisor for task classification")
     supervisor_decision: Optional[str] = Field(default=None, description="Supervisor decision label")
     supervisor_reasoning: Optional[str] = Field(default=None, description="Supervisor reasoning")
+    
+    # Preprocessing results - parameter table for the entire workflow
+    session_id: Optional[str] = Field(default=None, description="Unique session ID for file management")
+    opensandbox_id: Optional[str] = Field(default=None, description="OpenSandbox instance ID")
+    sandbox_data_dir: Optional[str] = Field(default=None, description="Data directory in sandbox")
+    extracted_parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameter table extracted from user input")
+    file_analyses: List[Dict[str, Any]] = Field(default_factory=list, description="File analysis results")
