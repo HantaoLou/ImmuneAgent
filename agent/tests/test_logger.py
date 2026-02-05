@@ -143,7 +143,8 @@ class TestCaseLogger:
         })
     
     def log_task_execution(self, task_id: str, status: str, execution_mode: str,
-                          result: Dict[str, Any], error: Optional[str] = None):
+                          result: Dict[str, Any], error: Optional[str] = None,
+                          error_type: Optional[str] = None):
         """记录任务执行结果"""
         self._log("task_execution", {
             "task_id": task_id,
@@ -151,6 +152,7 @@ class TestCaseLogger:
             "execution_mode": execution_mode,
             "result": result,
             "error": error,
+            "error_type": error_type,
             "timestamp": datetime.now().isoformat()
         })
     

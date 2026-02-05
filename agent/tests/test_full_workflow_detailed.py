@@ -246,33 +246,53 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
         # 4. invoke r_data_integration service's all tools
         # 4. invoke bioinformatics service's all tools
         # 5. invoke alphafold3
-    # 问题1 (暂时禁用 - igblast服务未连接)
+    # 问题1
     # user_input = '''
     #     please design a computational method to identifiy broadly neutralizing antibodies against H5N1.
-    #
-    #     use the following mcp services:
+    
+    #     only use the following mcp services:
     #     - igblast
     #     - metabcr
     #     - r_data_integration
     #     - bioinformatics
+
     #     parameters:
-    #     - metadata: /data/benchmark_data/flu_benchmark/260129_flu_metadata.csv
+    #     - meta csv file: /data/benchmark_data/flu_benchmark/260129_flu_metadata.csv
     #     - antigen file: /data/benchmark_data/flu_benchmark/flu_antig_seq.csv
-    #     - RDS file: /data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds
+    #     - meta RDS file: /data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds
+
     #     NOTE:
-    #     - All tools provided by each mcp service used must be utilized.
+    #     - All tools provided by bioinformatics service must be used.
     # '''
 
-    # 问题2 (使用metabcr服务，不需要igblast)
+    # 问题2
+    user_input = '''
+        Analyze the antigen binding prediction for flu antibodies.
+
+        only use the following mcp services:
+        - igblast
+        - metabcr
+        - r_data_integration
+        - bioinformatics
+
+        parameters:
+        - meta csv file: /data/benchmark_data/flu_benchmark/260129_flu_metadata.csv
+        - antigen file: /data/benchmark_data/flu_benchmark/flu_antig_seq.csv
+        - meta RDS file: /data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds
+
+        note:
+        - all tools provided by bioinformatics service must be used.
+    '''
+
+    # 问题3
     # user_input = '''
-    #     Analyze the antigen binding prediction for flu antibodies.
+    #     What structural features differentiate broadly neutralizing antibodies from those with narrow specificity?
 
     #     only use the following mcp services:
     #     - igblast
     #     - metabcr
     #     - r_data_integration
     #     - bioinformatics
-    #     - alphafold3
 
     #     parameters:
     #     - meta csv file: /data/benchmark_data/flu_benchmark/260129_flu_metadata.csv
@@ -282,26 +302,6 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     #     note:
     #     - all tools provided by bioinformatics service must be used.
     # '''
-
-    # 问题3
-    user_input = '''
-        What structural features differentiate broadly neutralizing antibodies from those with narrow specificity?
-
-        only use the following mcp services:
-        - igblast
-        - metabcr
-        - r_data_integration
-        - bioinformatics
-        - alphafold3
-
-        parameters:
-        - sars meta csv file: /data/benchmark_data/sars_benchmark/260129_sars_metadata.csv
-        - sars antigen file: /data/benchmark_data/sars_benchmark/sars_antig_seq.csv
-        - sars meta RDS file: /data/benchmark_data/sars_benchmark/260129_sars_benchmark.rds
-
-        note:
-        - all tools provided by bioinformatics service must be used.
-    '''
 
     # 问题4
     # user_input = '''
@@ -361,7 +361,7 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     # 格式: "/host/path:/container/path" - 将服务器上的目录挂载到容器的 /tmp/sessions
     if not os.environ.get("OPENSANDBOX_VOLUME_BINDINGS"):
         # 使用服务器默认的持久化目录
-        os.environ["OPENSANDBOX_VOLUME_BINDINGS"] = "/data/sessions:/tmp/sessions"
+        os.environ["OPENSANDBOX_VOLUME_BINDINGS"] = "/data/sessions:/tmp/sessions,/data:/data:ro"
         print(f"  [Config] 已配置持久化共享卷: /data/sessions -> /tmp/sessions")
     
     print(f"\n{'='*80}")

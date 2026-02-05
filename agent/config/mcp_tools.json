@@ -217,15 +217,6 @@
     "description": "Identify cluster-specific marker genes using Seurat, output marker gene lists and summary tables"
   },
   {
-    "name": "differential_gene_correlation_analysis",
-    "service": "bioinformatics",
-    "description": "Differential gene correlation analysis, output correlation scatter plots, statistics, and CSV",
-    "depends_on": [
-      "metabcr"
-    ],
-    "execution_order": "after_dependencies"
-  },
-  {
     "name": "differential_gene_expression_correlation_pipeline",
     "service": "bioinformatics",
     "description": "Integrated pipeline for differential gene volcano plots and correlation analysis, output complete analysis files",
@@ -308,11 +299,6 @@
     "name": "export_annotations",
     "service": "r_annotation",
     "description": "Export cell type annotation results, support multiple formats, output summary statistics"
-  },
-  {
-    "name": "extract_cdr3_from_airr",
-    "service": "igblast",
-    "description": "Extract CDR3 information from AIRR data, support multiple input formats, stream progress"
   },
   {
     "name": "extract_seurat_umap_metadata",

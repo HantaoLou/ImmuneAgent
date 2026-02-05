@@ -2054,7 +2054,34 @@ def _preprocess_parameters_with_codeact(
         if is_fasta_tool:
             print(f"  [ParamPreprocess] Checking FASTA requirement for tool: {tool_name}")
             print(f"  [ParamPreprocess] Current parameters: {list(updated.keys())}")
-            for param_name in sequence_params:
+            
+            # Get tool parameter definitions to find all sequence-related parameters
+            tool_params = tools_params_map.get(tool_name)
+            if not tool_params:
+                tool_name_lower = tool_name.lower()
+                for key in tools_params_map.keys():
+                    key_lower = key.lower()
+                    if tool_name_lower in key_lower or key_lower in tool_name_lower:
+                        tool_params = tools_params_map.get(key)
+                        break
+            
+            # Collect all parameters that accept FASTA/CSV sequences
+            sequence_param_names = set(sequence_params)  # Start with default list
+            if tool_params:
+                input_params = tool_params.get("input_params", [])
+                for param in input_params:
+                    param_name = param.get("name", "")
+                    param_type = param.get("type", "").lower()
+                    param_desc = param.get("description", "").lower()
+                    # Check if parameter accepts sequences/FASTA/CSV
+                    if any(keyword in param_type or keyword in param_desc 
+                           for keyword in ['fasta', 'sequence', 'csv']):
+                        sequence_param_names.add(param_name)
+                        print(f"  [ParamPreprocess] Added sequence parameter from tool definition: {param_name}")
+            
+            print(f"  [ParamPreprocess] Sequence parameter names to check: {sequence_param_names}")
+            
+            for param_name in sequence_param_names:
                 if param_name not in updated:
                     continue
                 param_value = updated.get(param_name)
@@ -2062,8 +2089,49 @@ def _preprocess_parameters_with_codeact(
                 if not isinstance(param_value, str):
                     print(f"  [ParamPreprocess] Skipping: param_value is not str, type={type(param_value)}")
                     continue
-                if not param_value.lower().endswith('.csv'):
-                    print(f"  [ParamPreprocess] Skipping: not a CSV file")
+                
+                # Check if it's a CSV file (more flexible detection)
+                param_lower = param_value.lower()
+                is_csv = (
+                    param_lower.endswith('.csv') or
+                    '/csv' in param_lower or
+                    'csv' in param_lower.split('/')[-1].split('.')  # Check filename
+                )
+                
+                # Also check if it's already a FASTA file
+                is_fasta = (
+                    param_lower.endswith(('.fasta', '.fa', '.fas')) or
+                    '/fasta' in param_lower or
+                    'fasta' in param_lower.split('/')[-1].split('.')
+                )
+                
+                if is_fasta:
+                    print(f"  [ParamPreprocess] Already a FASTA file, no conversion needed: {param_value}")
+                    continue
+                
+                if not is_csv:
+                    # Check if it might be a CSV based on file analysis
+                    if state.parent_state and hasattr(state.parent_state, 'file_analyses'):
+                        for analysis in state.parent_state.file_analyses:
+                            # Handle both dict and FileAnalysis object
+                            if isinstance(analysis, dict):
+                                sandbox_path = analysis.get("sandbox_path", "")
+                                original_path = analysis.get("original_path", "")
+                                file_type = analysis.get("file_type", "")
+                            else:
+                                # FileAnalysis object
+                                sandbox_path = getattr(analysis, "sandbox_path", "")
+                                original_path = getattr(analysis, "original_path", "")
+                                file_type = getattr(analysis, "file_type", "")
+                            
+                            if sandbox_path == param_value or original_path == param_value:
+                                if file_type == 'csv':
+                                    is_csv = True
+                                    print(f"  [ParamPreprocess] Detected CSV from file analysis: {param_value}")
+                                    break
+                
+                if not is_csv:
+                    print(f"  [ParamPreprocess] Skipping: not detected as CSV file")
                     continue
                 
                 print(f"  [ParamPreprocess] Tool {tool_name} requires FASTA, but got CSV: {param_value}")

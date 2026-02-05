@@ -631,9 +631,29 @@ async def _upload_and_analyze_files_in_opensandbox(
                     llm_file_info = _find_llm_file_info(original_path, llm_result) if llm_result else None
                     purpose = llm_file_info.get('purpose') if llm_file_info else None
                     
-                    # Handle file not found case
+                    # Handle different file statuses
                     if file_status == "not_found":
-                        content_summary = f"File not found in sandbox. {file_info.get('error', '')} Purpose: {purpose or 'unknown'}."
+                        # File not found in container, but might be accessible to MCP services
+                        error_msg = file_info.get('error', '')
+                        if "Check if /data is mounted" in error_msg:
+                            # This is a remote file that's not accessible in container
+                            # But MCP services on server can access it directly
+                            content_summary = f"Remote file on server (not accessible in container). MCP services can access it directly at {container_path}. Purpose: {purpose or 'unknown'}."
+                            # Update sandbox_path to use original server path for MCP services
+                            if container_path.startswith("/data/"):
+                                sandbox_path = container_path  # Keep server path for MCP
+                        else:
+                            content_summary = f"File not found in sandbox. {error_msg} Purpose: {purpose or 'unknown'}."
+                    elif file_status == "remote_only":
+                        # Remote file that's only accessible to MCP services
+                        content_summary = f"Remote file on server. MCP services can access it directly. Purpose: {purpose or 'unknown'}."
+                        # Ensure we use the original server path for MCP services
+                        if container_path.startswith("/data/"):
+                            sandbox_path = container_path
+                    elif file_status == "analysis_failed":
+                        # Analysis failed but file might still be accessible
+                        error_msg = file_info.get('error', '')
+                        content_summary = f"File analysis failed: {error_msg}. File may still be accessible to MCP services. Purpose: {purpose or 'unknown'}."
                     else:
                         content_summary = None  # Will be filled by LLM later
                     
@@ -687,16 +707,31 @@ files_data = {files_json}
 # This ensures MCP services (running as different users) can also write to these directories
 import os
 user_files_dir = Path("{sandbox_input_dir}")
+# CRITICAL: Create all parent directories with full permissions
 user_files_dir.mkdir(parents=True, exist_ok=True)
 # Set permissions to 777 (rwxrwxrwx) so all users can read/write
 try:
+    # Set permissions on input directory
     os.chmod(str(user_files_dir), 0o777)
-    os.chmod(str(user_files_dir.parent), 0o777)  # Also set parent session dir
-except Exception:
+    # Set permissions on parent session directory
+    if user_files_dir.parent.exists():
+        os.chmod(str(user_files_dir.parent), 0o777)
+    # Set permissions on grandparent sessions directory
+    if user_files_dir.parent.parent.exists():
+        os.chmod(str(user_files_dir.parent.parent), 0o777)
+except Exception as perm_err:
+    print(f"Permission setting warning (non-critical): {{perm_err}}")
     pass  # Ignore permission errors on Windows or if already exists
 
 # Also create output directory with full permissions
 output_dir = user_files_dir.parent / "output"
+output_dir.mkdir(parents=True, exist_ok=True)
+try:
+    os.chmod(str(output_dir), 0o777)
+except Exception:
+    pass
+
+print(f"Created directories: input={{user_files_dir}}, output={{output_dir}}")
 output_dir.mkdir(parents=True, exist_ok=True)
 try:
     os.chmod(str(output_dir), 0o777)
@@ -824,31 +859,63 @@ for original_path, file_info in files_data.items():
             print(f"[OK] Local binary file uploaded: {{original_path}} -> {{sandbox_path}}", flush=True)
             
         elif file_type == "remote":
-            # Sandbox server file: copy to session directory for isolation
+            # Sandbox server file: try to copy to session directory for isolation
             source_path = file_info.get("sandbox_path", original_path)
-            if not os.path.exists(source_path):
-                print(f"[WARN] Remote file not found: {{source_path}}", flush=True)
-                # Record file as not found but still include in results
-                # Still use user_purpose if available
-                results["files"].append({{
-                    "original_path": original_path,
-                    "sandbox_path": source_path,
-                    "file_type": Path(source_path).suffix.lstrip(".").lower() or "unknown",
-                    "file_size": 0,
-                    "row_count": None,
-                    "column_names": None,
-                    "sample_data": None,
-                    "detected_data_type": user_purpose,  # Use user-specified purpose
-                    "suggested_parameters": {{}},
-                    "status": "not_found",
-                    "error": f"File not found at {{source_path}}. Check if /data is mounted in the sandbox container."
-                }})
-                continue
-            # Copy file to session directory to avoid polluting original data
-            import shutil
-            sandbox_path = str(user_files_dir / file_name)
-            shutil.copy2(source_path, sandbox_path)
-            print(f"[OK] Remote file copied: {{source_path}} -> {{sandbox_path}}", flush=True)
+            
+            # Strategy 1: Try to access file directly (if /data is mounted)
+            if os.path.exists(source_path):
+                # Copy file to session directory to avoid polluting original data
+                import shutil
+                sandbox_path = str(user_files_dir / file_name)
+                try:
+                    shutil.copy2(source_path, sandbox_path)
+                    print(f"[OK] Remote file copied: {{source_path}} -> {{sandbox_path}}", flush=True)
+                except Exception as copy_err:
+                    print(f"[WARN] Failed to copy remote file: {{copy_err}}", flush=True)
+                    # Fall through to use original path
+                    sandbox_path = source_path
+            else:
+                # Strategy 2: File not accessible in container, use original path
+                # MCP services run on the server and can access /data directly
+                print(f"[INFO] Remote file not accessible in container ({{source_path}}), using original path for MCP services", flush=True)
+                print(f"[INFO] This is expected if /data is not mounted. MCP services can access the file directly.", flush=True)
+                # Use original path - MCP services will access it directly
+                sandbox_path = source_path
+                
+                # Try to create a placeholder or read via alternative method
+                # For now, we'll use the original path and let MCP services handle it
+                # But we still need to analyze the file if possible
+                # Check if we can read it via alternative paths or methods
+                alternative_paths = [
+                    source_path,  # Original path
+                    source_path.replace("/data/", "/mnt/data/"),  # Alternative mount point
+                    source_path.replace("/data/", "/shared/data/"),  # Another alternative
+                ]
+                
+                accessible_path = None
+                for alt_path in alternative_paths:
+                    if os.path.exists(alt_path):
+                        accessible_path = alt_path
+                        print(f"[INFO] Found file at alternative path: {{alt_path}}", flush=True)
+                        break
+                
+                if accessible_path:
+                    # Copy from alternative path
+                    import shutil
+                    sandbox_path = str(user_files_dir / file_name)
+                    try:
+                        shutil.copy2(accessible_path, sandbox_path)
+                        print(f"[OK] Remote file copied from alternative path: {{accessible_path}} -> {{sandbox_path}}", flush=True)
+                    except Exception as copy_err:
+                        print(f"[WARN] Failed to copy from alternative path: {{copy_err}}", flush=True)
+                        sandbox_path = source_path  # Fall back to original
+                else:
+                    # File truly not accessible in container
+                    # Use original path - MCP services on server can access it
+                    sandbox_path = source_path
+                    print(f"[INFO] Using original server path for MCP services: {{sandbox_path}}", flush=True)
+                    # Note: We'll still try to analyze, but if it fails, that's OK
+                    # The file will be accessible to MCP services which run on the server
             
         elif file_type == "url":
             # URL file: download in sandbox
