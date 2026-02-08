@@ -462,6 +462,8 @@ def _expected_file_extensions(param_name: str, param_type: Optional[str]) -> Opt
 
 def _extract_file_candidates_from_text(text: Optional[str]) -> List[str]:
     """Extract file path candidates from free-form text."""
+    # Ensure re module is available (avoid scope issues)
+    import re as re_module
     if not text:
         return []
     patterns = [
@@ -471,7 +473,7 @@ def _extract_file_candidates_from_text(text: Optional[str]) -> List[str]:
     ]
     candidates: List[str] = []
     for pattern in patterns:
-        for match in re.findall(pattern, text):
+        for match in re_module.findall(pattern, text):
             cleaned = match.strip().strip(".,;:()[]{}<>\"'")
             if cleaned and not _looks_like_status_message(cleaned):
                 candidates.append(cleaned)
@@ -534,10 +536,182 @@ def _select_file_candidate(
     if not candidates:
         return None
     expected_exts = _expected_file_extensions(param_name, param_type)
+    
+    # First, try exact matches
     for candidate in candidates:
         if _path_matches_expected_types(candidate, expected_exts):
             return candidate
-    return candidates[0]
+    
+    # If expecting CSV/TSV, also accept RDS files (will be converted in preprocessing)
+    if expected_exts and expected_exts.issubset({"csv", "tsv"}):
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.lower().endswith('.rds'):
+                return candidate
+    
+    # If expecting CSV/TSV, also accept Excel files (will be converted)
+    if expected_exts and expected_exts.issubset({"csv", "tsv"}):
+        for candidate in candidates:
+            if isinstance(candidate, str):
+                _, ext = os.path.splitext(candidate.lower())
+                if ext.lstrip('.') in {"xls", "xlsx"}:
+                    return candidate
+    
+    # Fallback: return first candidate
+    return candidates[0] if candidates else None
+
+
+def _auto_convert_rds_to_csv(
+    rds_path: str,
+    state: "ExecutorState",
+    sandbox_id: Optional[str],
+    output_csv_path: Optional[str] = None
+) -> Optional[str]:
+    """
+    Auto-convert RDS file to CSV format using pyreadr library.
+    
+    Args:
+        rds_path: Path to input RDS file
+        state: Executor state
+        sandbox_id: OpenSandbox instance ID
+        output_csv_path: Optional output CSV file path
+        
+    Returns:
+        Generated CSV file path, or None if conversion failed
+    """
+    if not rds_path or not rds_path.endswith(('.rds', '.RDS')):
+        return None
+    
+    print(f"  [RDS->CSV] Auto-converting RDS to CSV: {rds_path}")
+    
+    # Determine output path
+    if not output_csv_path:
+        from pathlib import Path
+        rds_path_normalized = rds_path.replace("\\", "/")
+        rds_name = Path(rds_path_normalized).stem
+        
+        # Get sandbox_data_dir from parent_state
+        sandbox_data_dir = None
+        if state.parent_state and hasattr(state.parent_state, 'sandbox_data_dir'):
+            sandbox_data_dir = getattr(state.parent_state, 'sandbox_data_dir', None)
+        
+        if sandbox_data_dir:
+            sandbox_data_dir = sandbox_data_dir.replace("\\", "/")
+            # Convert server path to container path for sandbox code execution
+            if sandbox_data_dir.startswith("/data/sessions/"):
+                container_data_dir = sandbox_data_dir.replace("/data/sessions/", "/tmp/sessions/", 1)
+            else:
+                container_data_dir = sandbox_data_dir
+            output_csv_path = f"{container_data_dir}/output/{rds_name}.csv"
+        else:
+            # Fallback: extract session_id
+            import re
+            session_id = None
+            if state.parent_state and hasattr(state.parent_state, 'extracted_parameters'):
+                extracted = state.parent_state.extracted_parameters or {}
+                files = extracted.get("files", {})
+                for file_key, file_info in files.items():
+                    if isinstance(file_info, dict):
+                        sandbox_path = file_info.get("sandbox_path", "")
+                        session_match = re.search(r'/(?:data|tmp)/sessions/([^/]+)/', sandbox_path)
+                        if session_match:
+                            session_id = session_match.group(1)
+                            break
+            
+            if session_id:
+                output_csv_path = f"/tmp/sessions/{session_id}/output/{rds_name}.csv"
+            else:
+                output_csv_path = f"/tmp/{rds_name}.csv"
+    
+    # Generate conversion code using pyreadr
+    conversion_code = f'''
+import pyreadr
+import pandas as pd
+import os
+
+rds_path = "{rds_path}"
+csv_path = "{output_csv_path}"
+
+# Ensure output directory exists
+output_dir = os.path.dirname(csv_path)
+os.makedirs(output_dir, exist_ok=True)
+try:
+    os.chmod(output_dir, 0o777)
+except Exception:
+    pass
+
+try:
+    # Read RDS file
+    result = pyreadr.read_r(rds_path)
+    
+    if not result:
+        print("[ERROR] Failed to read RDS file or file is empty", flush=True)
+        print("__RDS_CSV_FAILED__", flush=True)
+    else:
+        # Get the first data.frame or compatible object
+        df = None
+        for key, data in result.items():
+            if isinstance(data, pd.DataFrame):
+                df = data
+                print(f"Found DataFrame: {{key}} with {{len(df)}} rows", flush=True)
+                break
+            elif isinstance(data, dict):
+                # Try to convert dict to DataFrame
+                try:
+                    df = pd.DataFrame(data)
+                    print(f"Converted dict to DataFrame: {{key}} with {{len(df)}} rows", flush=True)
+                    break
+                except Exception as e:
+                    print(f"Could not convert {{key}} to DataFrame: {{e}}", flush=True)
+                    continue
+        
+        if df is None:
+            print("[ERROR] No compatible data object found in RDS file", flush=True)
+            print("__RDS_CSV_FAILED__", flush=True)
+        else:
+            # Save to CSV
+            df.to_csv(csv_path, index=False, encoding='utf-8')
+            print(f"[OK] Generated CSV with {{len(df)}} rows: {{csv_path}}", flush=True)
+            print(f"__RDS_CSV_SUCCESS__:{{csv_path}}:{{len(df)}}", flush=True)
+            
+except ImportError:
+    print("[ERROR] pyreadr library not available. Install with: pip install pyreadr", flush=True)
+    print("__RDS_CSV_FAILED__", flush=True)
+except Exception as e:
+    print(f"[ERROR] Error converting RDS to CSV: {{e}}", flush=True)
+    print("__RDS_CSV_FAILED__", flush=True)
+'''
+    
+    # Execute in sandbox
+    if sandbox_id:
+        try:
+            from utils.opensandbox_executor import run_code_in_opensandbox_sync
+            result = run_code_in_opensandbox_sync(
+                code=conversion_code,
+                task_id="auto_rds_to_csv",
+                timeout_seconds=120,
+                env={"OPENSANDBOX_SKIP_MCP_INSTALL": "true"}
+            )
+            
+            stdout = result.get("stdout", "") + result.get("formatted_output", "") if result else ""
+            if result and "__RDS_CSV_SUCCESS__" in stdout:
+                for line in stdout.split("\n"):
+                    if "__RDS_CSV_SUCCESS__:" in line:
+                        parts = line.split(":")
+                        if len(parts) >= 2:
+                            csv_path = parts[1]
+                            # Convert container path to server path if needed
+                            if csv_path.startswith("/tmp/sessions/"):
+                                csv_path = csv_path.replace("/tmp/sessions/", "/data/sessions/", 1)
+                            print(f"  [RDS->CSV] Conversion successful: {csv_path}")
+                            return csv_path
+            else:
+                print(f"  [RDS->CSV] Conversion failed: {result.get('stderr', 'Unknown error') if result else 'No result'}")
+        except Exception as e:
+            print(f"  [RDS->CSV] Conversion error: {e}")
+    else:
+        print(f"  [RDS->CSV] No sandbox_id, cannot execute conversion")
+    
+    return None
 
 
 def _auto_convert_csv_to_fasta(
@@ -1534,6 +1708,104 @@ def _record_hitl_response(state: "ExecutorState", task_id: str, response: Dict[s
         }
 
 
+def _extract_file_path_from_description(value: str) -> Optional[str]:
+    """Extract actual file path from descriptive strings like 'TCR rds file (/path/to/file.rds)'."""
+    if not isinstance(value, str):
+        return None
+    
+    # Try to extract path from parentheses: "description (/path/to/file.rds)"
+    import re
+    patterns = [
+        r'\(([^)]+\.(?:csv|tsv|json|xlsx|xls|rds|fasta|fa|fastq|txt|pdb))\)',  # Path in parentheses
+        r'\[([^\]]+\.(?:csv|tsv|json|xlsx|xls|rds|fasta|fa|fastq|txt|pdb))\]',  # Path in brackets
+        r'([A-Za-z]:\\[^\s\"\'()]+\.(?:csv|tsv|json|xlsx|xls|rds|fasta|fa|fastq|txt|pdb))',  # Windows absolute path
+        r'(/[^\s\"\'()]+\.(?:csv|tsv|json|xlsx|xls|rds|fasta|fa|fastq|txt|pdb))',  # Unix absolute path
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, value)
+        if matches:
+            # Return the first match that looks like a valid path
+            for match in matches:
+                if _is_path_like(match):
+                    return match.strip()
+    
+    # If no pattern matched, check if the entire string is a valid path
+    if _is_path_like(value) and not any(char in value for char in ['(', ')', '[', ']']) or value.startswith('/') or (len(value) > 2 and value[1:3] == ":\\"):
+        return value.strip()
+    
+    return None
+
+
+def _validate_file_in_parameter_table(
+    file_path: str,
+    state: "ExecutorState",
+    param_name: str
+) -> bool:
+    """
+    Validate that a file path exists in the parameter table.
+    
+    CRITICAL: All file parameters must come from the parameter table.
+    This ensures that files are properly tracked and have valid sources.
+    
+    Args:
+        file_path: File path to validate
+        state: Executor state containing parameter table
+        param_name: Parameter name (for logging)
+    
+    Returns:
+        True if file is in parameter table, False otherwise
+    """
+    if not state.parent_state:
+        return False
+    
+    extracted_params = state.parent_state.extracted_parameters or {}
+    
+    # Check in files dictionary
+    files = extracted_params.get("files", {})
+    for file_key, file_info in files.items():
+        if isinstance(file_info, dict):
+            original_path = file_info.get("original_path", "")
+            sandbox_path = file_info.get("sandbox_path", "")
+            if file_path == original_path or file_path == sandbox_path:
+                print(f"    [ParamValidate] File found in parameter table (files): {file_path}")
+                return True
+    
+    # Check in sandbox_file_paths
+    sandbox_file_paths = extracted_params.get("sandbox_file_paths", {})
+    for key, path in sandbox_file_paths.items():
+        if file_path == path:
+            print(f"    [ParamValidate] File found in parameter table (sandbox_file_paths): {file_path}")
+            return True
+    
+    # Check in task_outputs
+    task_outputs = extracted_params.get("task_outputs", {})
+    for task_output in task_outputs.values():
+        if isinstance(task_output, dict):
+            output_files = task_output.get("output_files", [])
+            if file_path in output_files:
+                print(f"    [ParamValidate] File found in parameter table (task_outputs): {file_path}")
+                return True
+    
+    # Check if it's a user-provided file from preprocessing
+    # User-provided files should be in files dictionary, but check file_analyses as fallback
+    if hasattr(state.parent_state, 'file_analyses'):
+        for analysis in state.parent_state.file_analyses:
+            if isinstance(analysis, dict):
+                sandbox_path = analysis.get("sandbox_path", "")
+                original_path = analysis.get("original_path", "")
+            else:
+                sandbox_path = getattr(analysis, "sandbox_path", "")
+                original_path = getattr(analysis, "original_path", "")
+            
+            if file_path == original_path or file_path == sandbox_path:
+                print(f"    [ParamValidate] File found in parameter table (file_analyses): {file_path}")
+                return True
+    
+    print(f"    [ParamValidate] File NOT found in parameter table: {file_path}")
+    return False
+
+
 def _is_path_like(value: str) -> bool:
     """Heuristic to detect file-like paths."""
     if not isinstance(value, str):
@@ -1609,6 +1881,11 @@ def _normalize_inferred_param_value(param_name: str, param_type: Optional[str], 
 
     if _is_file_type(param_name, param_type):
         if isinstance(value, str):
+            # First try to extract actual file path from descriptive strings
+            extracted_path = _extract_file_path_from_description(value)
+            if extracted_path:
+                return extracted_path
+            # If extraction failed, check if the value itself is a valid path
             return value if _is_path_like(value) else None
         return value
 
@@ -2175,6 +2452,187 @@ def _preprocess_parameters_with_codeact(
                         print(f"  [ParamPreprocess] CSV to FASTA conversion failed or no sequence columns found")
                 except Exception as conv_error:
                     print(f"  [ParamPreprocess] CSV to FASTA conversion error: {conv_error}")
+        
+        # ========== RDS to CSV conversion ==========
+        # Check if tool requires CSV but got RDS file
+        tool_params = tools_params_map.get(tool_name)
+        if not tool_params:
+            tool_name_lower = tool_name.lower()
+            for key in tools_params_map.keys():
+                key_lower = key.lower()
+                if tool_name_lower in key_lower or key_lower in tool_name_lower:
+                    tool_params = tools_params_map.get(key)
+                    break
+        
+        if tool_params:
+            input_params = tool_params.get("input_params", [])
+            # Get service name to check if it's mixtcrpred or nettcr
+            service_name = tool_params.get("service", "").lower()
+            is_mixtcrpred_or_nettcr = service_name in ["mixtcrpred", "nettcr"]
+            
+            for param in input_params:
+                param_name = param.get("name", "")
+                param_type = param.get("type", "").lower()
+                param_desc = param.get("description", "").lower()
+                
+                # Check if parameter expects CSV
+                # Note: param_type can be "csv file", "csv_file", "Optional[csv file]", etc.
+                expects_csv = (
+                    "csv" in param_type or
+                    "csv" in param_desc or
+                    param_name.lower().endswith("_csv") or
+                    param_name.lower() in ["csv_file", "input_csv", "data_csv", "input_file"]  # input_file may need CSV for some tools
+                )
+                
+                # Special case: if param_name is "input_file" and param_type contains "csv", definitely expects CSV
+                if param_name.lower() == "input_file" and "csv" in param_type:
+                    expects_csv = True
+                
+                if param_name not in updated:
+                    continue
+                
+                param_value = updated.get(param_name)
+                if not isinstance(param_value, str):
+                    continue
+                
+                # Special handling for mixtcrpred and nettcr services:
+                # These services accept file paths (RDS or CSV) even if parameter type is "str"
+                # If input_data or input_file contains an RDS file path, convert it to CSV
+                if is_mixtcrpred_or_nettcr and param_name.lower() in ["input_data", "input_file"]:
+                    param_lower = param_value.lower()
+                    is_rds = (
+                        param_lower.endswith(('.rds', '.RDS')) or
+                        '/rds' in param_lower or
+                        'rds' in param_lower.split('/')[-1].split('.')
+                    )
+                    if is_rds:
+                        expects_csv = True
+                        print(f"  [ParamPreprocess] Detected RDS file for {service_name} service parameter {param_name}, will convert to CSV")
+                
+                if not expects_csv:
+                    continue
+                
+                # Check if it's an RDS file
+                param_lower = param_value.lower()
+                is_rds = (
+                    param_lower.endswith(('.rds', '.RDS')) or
+                    '/rds' in param_lower or
+                    'rds' in param_lower.split('/')[-1].split('.')
+                )
+                
+                # Also check if it's already a CSV file
+                is_csv = (
+                    param_lower.endswith('.csv') or
+                    '/csv' in param_lower or
+                    'csv' in param_lower.split('/')[-1].split('.')
+                )
+                
+                if is_csv:
+                    print(f"  [ParamPreprocess] Already a CSV file, no conversion needed: {param_value}")
+                    continue
+                
+                if not is_rds:
+                    # Check if it might be RDS based on file analysis
+                    if state.parent_state and hasattr(state.parent_state, 'file_analyses'):
+                        for analysis in state.parent_state.file_analyses:
+                            if isinstance(analysis, dict):
+                                sandbox_path = analysis.get("sandbox_path", "")
+                                original_path = analysis.get("original_path", "")
+                                file_type = analysis.get("file_type", "")
+                            else:
+                                sandbox_path = getattr(analysis, "sandbox_path", "")
+                                original_path = getattr(analysis, "original_path", "")
+                                file_type = getattr(analysis, "file_type", "")
+                            
+                            if sandbox_path == param_value or original_path == param_value:
+                                if file_type.lower() == 'rds':
+                                    is_rds = True
+                                    print(f"  [ParamPreprocess] Detected RDS from file analysis: {param_value}")
+                                    break
+                
+                if not is_rds:
+                    continue
+                
+                print(f"  [ParamPreprocess] Tool {tool_name} requires CSV, but got RDS: {param_value}")
+                
+                # Use the SANDBOX path (param_value), not the original path
+                rds_path_for_conversion = param_value
+                
+                # If the param_value is the original path, try to find the corresponding sandbox path
+                if state.parent_state and hasattr(state.parent_state, 'extracted_parameters'):
+                    extracted = state.parent_state.extracted_parameters or {}
+                    files = extracted.get("files", {})
+                    for file_key, file_info in files.items():
+                        if isinstance(file_info, dict):
+                            original_path = file_info.get("original_path", "")
+                            sandbox_path = file_info.get("sandbox_path", "")
+                            if original_path and param_value == original_path and sandbox_path:
+                                rds_path_for_conversion = sandbox_path
+                                print(f"  [ParamPreprocess] Using sandbox path instead of original: {rds_path_for_conversion}")
+                                break
+                            elif sandbox_path and param_value == sandbox_path:
+                                print(f"  [ParamPreprocess] Already using sandbox path: {rds_path_for_conversion}")
+                                break
+                
+                print(f"  [ParamPreprocess] RDS path for conversion: {rds_path_for_conversion}")
+                
+                # Try to convert RDS to CSV
+                try:
+                    # Get sandbox_id from state
+                    sandbox_id = None
+                    if state.parent_state:
+                        merged_result = getattr(state.parent_state, 'merged_result', None) or {}
+                        sandbox_id = merged_result.get('opensandbox_id')
+                    
+                    csv_path = _auto_convert_rds_to_csv(
+                        rds_path=rds_path_for_conversion,
+                        state=state,
+                        sandbox_id=sandbox_id
+                    )
+                    if csv_path:
+                        print(f"  [ParamPreprocess] Converted RDS to CSV: {csv_path}")
+                        updated[param_name] = csv_path
+                        
+                        # CRITICAL: Add converted CSV file to parameter table
+                        # This ensures the converted file can be used by subsequent tasks
+                        if state.parent_state:
+                            from pathlib import Path
+                            csv_name = Path(csv_path).name
+                            file_key = f"rds_to_csv_{csv_name}"
+                            
+                            # Add to files dictionary
+                            if not hasattr(state.parent_state, 'extracted_parameters') or not state.parent_state.extracted_parameters:
+                                state.parent_state.extracted_parameters = {
+                                    "files": {},
+                                    "sandbox_file_paths": {},
+                                    "task_outputs": {}
+                                }
+                            
+                            extracted_params = state.parent_state.extracted_parameters
+                            files = extracted_params.get("files", {})
+                            sandbox_file_paths = extracted_params.get("sandbox_file_paths", {})
+                            
+                            # Add file metadata
+                            files[file_key] = {
+                                "original_path": csv_path,
+                                "sandbox_path": csv_path,
+                                "file_type": "csv",
+                                "description": f"CSV file converted from RDS: {rds_path_for_conversion}",
+                                "source": "rds_conversion",
+                                "source_rds": rds_path_for_conversion
+                            }
+                            
+                            # Add to sandbox_file_paths
+                            sandbox_file_paths[file_key] = csv_path
+                            
+                            extracted_params["files"] = files
+                            extracted_params["sandbox_file_paths"] = sandbox_file_paths
+                            
+                            print(f"  [ParamPreprocess] Added converted CSV to parameter table: {csv_path}")
+                    else:
+                        print(f"  [ParamPreprocess] RDS to CSV conversion failed")
+                except Exception as conv_error:
+                    print(f"  [ParamPreprocess] RDS to CSV conversion error: {conv_error}")
         
         # ========== Excel to CSV/TSV conversion (existing logic) ==========
         tool_params = tools_params_map.get(tool_name)
@@ -3411,6 +3869,11 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
     llm = create_reasoning_llm()
     tools_params_map = _load_tools_params_table() or {}
     
+    # Initialize sandbox_data_dir at function scope to avoid scope issues
+    sandbox_data_dir = None
+    if state.parent_state and hasattr(state.parent_state, 'sandbox_data_dir'):
+        sandbox_data_dir = getattr(state.parent_state, 'sandbox_data_dir', None)
+    
     for task in ready_tasks:
         # Initialize task result
         if task.task_id not in state.task_results:
@@ -3829,12 +4292,11 @@ Return JSON format:
                 print(f"  [ParamInfer] Bioinformatics tool detected: {tool_name}")
                 
                 # Get sandbox output directory for base_dir
+                # Note: sandbox_data_dir is already initialized at function scope above
                 sandbox_output_dir = None
-                if state.parent_state and hasattr(state.parent_state, 'sandbox_data_dir'):
-                    sandbox_data_dir = getattr(state.parent_state, 'sandbox_data_dir', None)
-                    if sandbox_data_dir:
-                        sandbox_output_dir = f"{sandbox_data_dir}/output"
-                        print(f"  [ParamInfer] Sandbox output dir: {sandbox_output_dir}")
+                if sandbox_data_dir:
+                    sandbox_output_dir = f"{sandbox_data_dir}/output"
+                    print(f"  [ParamInfer] Sandbox output dir: {sandbox_output_dir}")
                 
                 # Auto-fill base_dir parameter with sandbox output directory
                 # Put directly in all_params to prevent override
@@ -3986,11 +4448,68 @@ Return JSON format:
                             # Match file extension
                             if expected_exts and not _path_matches_expected_types(out_file, expected_exts):
                                 continue
-                            # Found matching output file from dependency
-                            all_params[param_name] = out_file
-                            param_sources[param_name] = "dependency_task_output"
-                            print(f"    [DEBUG] {param_name} resolved from task_outputs[{dep_task_id}]: {out_file}")
-                            break
+                            
+                            # Special handling for mixtcrpred and nettcr services:
+                            # Convert RDS to CSV if needed
+                            service_name = tool_params.get("service", "").lower() if tool_params else ""
+                            is_mixtcrpred_or_nettcr = service_name in ["mixtcrpred", "nettcr"]
+                            is_rds_file = out_file.lower().endswith('.rds')
+                            
+                            if is_mixtcrpred_or_nettcr and is_rds_file and param_name.lower() in ["input_data", "input_file"]:
+                                print(f"  [ParamInfer] Detected RDS file from dependency for {service_name} service parameter {param_name}, converting to CSV")
+                                try:
+                                    sandbox_id = None
+                                    if state.parent_state:
+                                        merged_result = getattr(state.parent_state, 'merged_result', None) or {}
+                                        sandbox_id = merged_result.get('opensandbox_id')
+                                    
+                                    csv_path = _auto_convert_rds_to_csv(
+                                        rds_path=out_file,
+                                        state=state,
+                                        sandbox_id=sandbox_id
+                                    )
+                                    if csv_path:
+                                        print(f"  [ParamInfer] Converted RDS to CSV: {csv_path}")
+                                        all_params[param_name] = csv_path
+                                        param_sources[param_name] = "dependency_task_output"
+                                        # Add to parameter table (same logic as PRIORITY 3)
+                                        if state.parent_state:
+                                            from pathlib import Path
+                                            csv_name = Path(csv_path).name
+                                            file_key = f"rds_to_csv_{csv_name}"
+                                            if not hasattr(state.parent_state, 'extracted_parameters') or not state.parent_state.extracted_parameters:
+                                                state.parent_state.extracted_parameters = {"files": {}, "sandbox_file_paths": {}, "task_outputs": {}}
+                                            extracted_params = state.parent_state.extracted_parameters
+                                            files = extracted_params.get("files", {})
+                                            sandbox_file_paths = extracted_params.get("sandbox_file_paths", {})
+                                            files[file_key] = {
+                                                "original_path": csv_path,
+                                                "sandbox_path": csv_path,
+                                                "file_type": "csv",
+                                                "description": f"CSV file converted from RDS: {out_file}",
+                                                "source": "rds_conversion",
+                                                "source_rds": out_file
+                                            }
+                                            sandbox_file_paths[file_key] = csv_path
+                                            extracted_params["files"] = files
+                                            extracted_params["sandbox_file_paths"] = sandbox_file_paths
+                                        break
+                                    else:
+                                        print(f"  [ParamInfer] RDS to CSV conversion failed, using original RDS")
+                                        all_params[param_name] = out_file
+                                        param_sources[param_name] = "dependency_task_output"
+                                        break
+                                except Exception as conv_error:
+                                    print(f"  [ParamInfer] RDS to CSV conversion error: {conv_error}, using original RDS")
+                                    all_params[param_name] = out_file
+                                    param_sources[param_name] = "dependency_task_output"
+                                    break
+                            else:
+                                # Found matching output file from dependency
+                                all_params[param_name] = out_file
+                                param_sources[param_name] = "dependency_task_output"
+                                print(f"    [DEBUG] {param_name} resolved from task_outputs[{dep_task_id}]: {out_file}")
+                                break
                         if param_name in all_params:
                             break
                     
@@ -4012,6 +4531,56 @@ Return JSON format:
                         llm=llm,
                     )
                     if dep_value is not None and _value_matches_expected_types(param_name, param_type, dep_value):
+                        # Special handling for mixtcrpred and nettcr services:
+                        # Convert RDS to CSV if needed
+                        service_name = tool_params.get("service", "").lower() if tool_params else ""
+                        is_mixtcrpred_or_nettcr = service_name in ["mixtcrpred", "nettcr"]
+                        is_rds_file = isinstance(dep_value, str) and dep_value.lower().endswith('.rds')
+                        
+                        if is_mixtcrpred_or_nettcr and is_rds_file and param_name.lower() in ["input_data", "input_file"]:
+                            print(f"  [ParamInfer] Detected RDS file from dependency resolution for {service_name} service parameter {param_name}, converting to CSV")
+                            try:
+                                sandbox_id = None
+                                if state.parent_state:
+                                    merged_result = getattr(state.parent_state, 'merged_result', None) or {}
+                                    sandbox_id = merged_result.get('opensandbox_id')
+                                
+                                csv_path = _auto_convert_rds_to_csv(
+                                    rds_path=dep_value,
+                                    state=state,
+                                    sandbox_id=sandbox_id
+                                )
+                                if csv_path:
+                                    print(f"  [ParamInfer] Converted RDS to CSV: {csv_path}")
+                                    all_params[param_name] = _convert_to_sandbox_path(csv_path)
+                                    param_sources[param_name] = "dependency"
+                                    # Add to parameter table
+                                    if state.parent_state:
+                                        from pathlib import Path
+                                        csv_name = Path(csv_path).name
+                                        file_key = f"rds_to_csv_{csv_name}"
+                                        if not hasattr(state.parent_state, 'extracted_parameters') or not state.parent_state.extracted_parameters:
+                                            state.parent_state.extracted_parameters = {"files": {}, "sandbox_file_paths": {}, "task_outputs": {}}
+                                        extracted_params = state.parent_state.extracted_parameters
+                                        files = extracted_params.get("files", {})
+                                        sandbox_file_paths = extracted_params.get("sandbox_file_paths", {})
+                                        files[file_key] = {
+                                            "original_path": csv_path,
+                                            "sandbox_path": csv_path,
+                                            "file_type": "csv",
+                                            "description": f"CSV file converted from RDS: {dep_value}",
+                                            "source": "rds_conversion",
+                                            "source_rds": dep_value
+                                        }
+                                        sandbox_file_paths[file_key] = csv_path
+                                        extracted_params["files"] = files
+                                        extracted_params["sandbox_file_paths"] = sandbox_file_paths
+                                    continue
+                                else:
+                                    print(f"  [ParamInfer] RDS to CSV conversion failed, using original RDS")
+                            except Exception as conv_error:
+                                print(f"  [ParamInfer] RDS to CSV conversion error: {conv_error}, using original RDS")
+                        
                         # Convert to sandbox path if needed
                         all_params[param_name] = _convert_to_sandbox_path(dep_value)
                         param_sources[param_name] = "dependency"
@@ -4030,18 +4599,74 @@ Return JSON format:
                     if normalized is not None:
                         expected_exts = _expected_file_extensions(param_name, param_type)
                         is_excel = False
+                        is_rds = False
                         if isinstance(normalized, str):
                             _, actual_ext = os.path.splitext(normalized)
                             actual_ext = actual_ext.lower().lstrip(".")
                             is_excel = actual_ext in {"xls", "xlsx"}
+                            is_rds = actual_ext == "rds"
                         allow_excel_for_csv = (
                             expected_exts is not None
                             and expected_exts.issubset({"csv", "tsv"})
                             and is_excel
                         )
+                        # Allow RDS files for CSV parameters - will be converted in preprocessing
+                        allow_rds_for_csv = (
+                            expected_exts is not None
+                            and expected_exts.issubset({"csv", "tsv"})
+                            and is_rds
+                        )
+                        
+                        # Special handling for mixtcrpred and nettcr services:
+                        # Convert RDS to CSV immediately
+                        service_name = tool_params.get("service", "").lower() if tool_params else ""
+                        is_mixtcrpred_or_nettcr = service_name in ["mixtcrpred", "nettcr"]
+                        
+                        if is_mixtcrpred_or_nettcr and is_rds and param_name.lower() in ["input_data", "input_file"]:
+                            print(f"  [ParamInfer] Detected RDS file from task parameters for {service_name} service parameter {param_name}, converting to CSV")
+                            try:
+                                sandbox_id = None
+                                if state.parent_state:
+                                    merged_result = getattr(state.parent_state, 'merged_result', None) or {}
+                                    sandbox_id = merged_result.get('opensandbox_id')
+                                
+                                csv_path = _auto_convert_rds_to_csv(
+                                    rds_path=normalized,
+                                    state=state,
+                                    sandbox_id=sandbox_id
+                                )
+                                if csv_path:
+                                    print(f"  [ParamInfer] Converted RDS to CSV: {csv_path}")
+                                    normalized = csv_path
+                                    # Add to parameter table
+                                    if state.parent_state:
+                                        from pathlib import Path
+                                        csv_name = Path(csv_path).name
+                                        file_key = f"rds_to_csv_{csv_name}"
+                                        if not hasattr(state.parent_state, 'extracted_parameters') or not state.parent_state.extracted_parameters:
+                                            state.parent_state.extracted_parameters = {"files": {}, "sandbox_file_paths": {}, "task_outputs": {}}
+                                        extracted_params = state.parent_state.extracted_parameters
+                                        files = extracted_params.get("files", {})
+                                        sandbox_file_paths = extracted_params.get("sandbox_file_paths", {})
+                                        files[file_key] = {
+                                            "original_path": csv_path,
+                                            "sandbox_path": csv_path,
+                                            "file_type": "csv",
+                                            "description": f"CSV file converted from RDS: {normalized}",
+                                            "source": "rds_conversion",
+                                            "source_rds": normalized
+                                        }
+                                        sandbox_file_paths[file_key] = csv_path
+                                        extracted_params["files"] = files
+                                        extracted_params["sandbox_file_paths"] = sandbox_file_paths
+                                else:
+                                    print(f"  [ParamInfer] RDS to CSV conversion failed, keeping original RDS path")
+                            except Exception as conv_error:
+                                print(f"  [ParamInfer] RDS to CSV conversion error: {conv_error}")
+                        
                         type_matches = _value_matches_expected_types(param_name, param_type, normalized)
-                        print(f"    [DEBUG] {param_name} type_matches={type_matches}, expected_exts={expected_exts}, allow_excel={allow_excel_for_csv}")
-                        if type_matches or allow_excel_for_csv:
+                        print(f"    [DEBUG] {param_name} type_matches={type_matches}, expected_exts={expected_exts}, allow_excel={allow_excel_for_csv}, allow_rds={allow_rds_for_csv}")
+                        if type_matches or allow_excel_for_csv or allow_rds_for_csv:
                             # Convert to sandbox path if needed
                             final_value = _convert_to_sandbox_path(_normalize_base_dir_value(param_name, normalized))
                             all_params[param_name] = final_value
@@ -4055,6 +4680,8 @@ Return JSON format:
                         print(f"    [DEBUG] {param_name} normalization returned None, trying other sources")
 
                 # PRIORITY 3: Check extracted params from context
+                # CRITICAL: All parameter values must come from parameter table
+                # Values extracted from context must be validated against parameter table
                 if param_name in extracted_params:
                     raw_value = extracted_params[param_name]
                     explicit_match = False
@@ -4063,6 +4690,28 @@ Return JSON format:
                         explicit_match = bool(raw_value.get("__explicit"))
                         explicit_label = raw_value.get("__label") or ""
                         raw_value = raw_value.get("__value")
+                    
+                    # Validate that the extracted value is legitimate
+                    # Reject values that look like DOI, paper IDs, or other non-parameter values
+                    if isinstance(raw_value, str):
+                        # Ensure re module is available (avoid scope issues)
+                        import re as re_module
+                        # Check if it looks like a DOI or paper ID (e.g., "10.1074/jbc.RA123.045678")
+                        if re_module.match(r'^\d+\.\d+/[a-zA-Z0-9._-]+$', raw_value) or re_module.match(r'^[a-zA-Z0-9._-]+/\d+$', raw_value):
+                            print(f"    [ParamValidate] Rejecting invalid parameter value (looks like DOI/paper ID): {raw_value}")
+                            continue
+                        # For file parameters, must validate against parameter table
+                        if _is_file_type(param_name, param_type):
+                            # Check if file path exists in parameter table
+                            is_in_param_table = _validate_file_in_parameter_table(
+                                file_path=raw_value,
+                                state=state,
+                                param_name=param_name
+                            )
+                            if not is_in_param_table:
+                                print(f"    [ParamValidate] Rejecting file parameter value not in parameter table: {raw_value}")
+                                continue
+                    
                     normalized = _normalize_inferred_param_value(param_name, param_type, raw_value)
                     if normalized is not None:
                         if _is_output_param(param_name, param_type):
@@ -4079,17 +4728,91 @@ Return JSON format:
                                     continue
                         expected_exts = _expected_file_extensions(param_name, param_type)
                         is_excel = False
+                        is_rds = False
                         if isinstance(normalized, str):
                             _, actual_ext = os.path.splitext(normalized)
                             actual_ext = actual_ext.lower().lstrip(".")
                             is_excel = actual_ext in {"xls", "xlsx"}
+                            is_rds = actual_ext == "rds"
                         allow_excel_for_csv = (
                             explicit_match
                             and expected_exts is not None
                             and expected_exts.issubset({"csv", "tsv"})
                             and is_excel
                         )
-                        if _value_matches_expected_types(param_name, param_type, normalized) or allow_excel_for_csv:
+                        # Allow RDS files for CSV parameters - will be converted in preprocessing
+                        allow_rds_for_csv = (
+                            expected_exts is not None
+                            and expected_exts.issubset({"csv", "tsv"})
+                            and is_rds
+                        )
+                        
+                        # Special handling for mixtcrpred and nettcr services:
+                        # These services require CSV files, so convert RDS to CSV immediately
+                        service_name = tool_params.get("service", "").lower() if tool_params else ""
+                        is_mixtcrpred_or_nettcr = service_name in ["mixtcrpred", "nettcr"]
+                        
+                        if is_mixtcrpred_or_nettcr and is_rds and param_name.lower() in ["input_data", "input_file"]:
+                            # Convert RDS to CSV for mixtcrpred/nettcr services
+                            print(f"  [ParamInfer] Detected RDS file for {service_name} service parameter {param_name}, converting to CSV")
+                            try:
+                                # Get sandbox_id from state
+                                sandbox_id = None
+                                if state.parent_state:
+                                    merged_result = getattr(state.parent_state, 'merged_result', None) or {}
+                                    sandbox_id = merged_result.get('opensandbox_id')
+                                
+                                csv_path = _auto_convert_rds_to_csv(
+                                    rds_path=normalized,
+                                    state=state,
+                                    sandbox_id=sandbox_id
+                                )
+                                if csv_path:
+                                    print(f"  [ParamInfer] Converted RDS to CSV: {csv_path}")
+                                    normalized = csv_path
+                                    # Update to use CSV path
+                                    final_value = _convert_to_sandbox_path(_normalize_base_dir_value(param_name, normalized))
+                                    all_params[param_name] = final_value
+                                    param_sources[param_name] = "explicit" if explicit_match else "llm_context"
+                                    
+                                    # Add converted CSV to parameter table
+                                    if state.parent_state:
+                                        from pathlib import Path
+                                        csv_name = Path(csv_path).name
+                                        file_key = f"rds_to_csv_{csv_name}"
+                                        
+                                        if not hasattr(state.parent_state, 'extracted_parameters') or not state.parent_state.extracted_parameters:
+                                            state.parent_state.extracted_parameters = {
+                                                "files": {},
+                                                "sandbox_file_paths": {},
+                                                "task_outputs": {}
+                                            }
+                                        
+                                        extracted_params = state.parent_state.extracted_parameters
+                                        files = extracted_params.get("files", {})
+                                        sandbox_file_paths = extracted_params.get("sandbox_file_paths", {})
+                                        
+                                        files[file_key] = {
+                                            "original_path": csv_path,
+                                            "sandbox_path": csv_path,
+                                            "file_type": "csv",
+                                            "description": f"CSV file converted from RDS: {normalized}",
+                                            "source": "rds_conversion",
+                                            "source_rds": normalized
+                                        }
+                                        
+                                        sandbox_file_paths[file_key] = csv_path
+                                        extracted_params["files"] = files
+                                        extracted_params["sandbox_file_paths"] = sandbox_file_paths
+                                        print(f"  [ParamInfer] Added converted CSV to parameter table: {csv_path}")
+                                    continue
+                                else:
+                                    print(f"  [ParamInfer] RDS to CSV conversion failed, keeping original RDS path")
+                            except Exception as conv_error:
+                                print(f"  [ParamInfer] RDS to CSV conversion error: {conv_error}")
+                                # Fall through to allow RDS (will be converted in preprocessing)
+                        
+                        if _value_matches_expected_types(param_name, param_type, normalized) or allow_excel_for_csv or allow_rds_for_csv:
                             # Convert to sandbox path if needed
                             final_value = _convert_to_sandbox_path(_normalize_base_dir_value(param_name, normalized))
                             all_params[param_name] = final_value
@@ -4250,9 +4973,7 @@ Return JSON format:
             
             # Auto-generate output file paths for output parameters
             # This prevents HITL for output_file type parameters that can be auto-generated
-            sandbox_data_dir = None
-            if state.parent_state and hasattr(state.parent_state, 'sandbox_data_dir'):
-                sandbox_data_dir = getattr(state.parent_state, 'sandbox_data_dir', None)
+            # Note: sandbox_data_dir is already initialized at function scope above
             
             # Special handling for integrate_bcr_data_complete: rds_file and output_file
             # Rules:
@@ -6656,16 +7377,43 @@ def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalSt
     Map Executor subgraph state back to main graph state
     
     Args:
-        executor_state: Executor subgraph state
+        executor_state: Executor subgraph state (subtasks already merged with parallel groups)
         global_state: Main graph global state
     
     Returns:
         Updated main graph state
     """
+    # IMPORTANT: Executor merges parallel task groups into subtasks during initialization
+    # So executor_state.subtasks contains ALL tasks (serial + parallel)
+    # We should update global_state.subtasks to match executor_state.subtasks to avoid counting issues
+    
+    # Update global_state.subtasks to match executor's merged subtasks
+    # This ensures consistency between executor_state.total_tasks and test's all_tasks count
+    if executor_state.subtasks:
+        # Create a mapping of task_id -> task for quick lookup
+        executor_task_map = {task.task_id: task for task in executor_state.subtasks}
+        
+        # Update existing tasks in global_state.subtasks with executor results
+        updated_subtasks = []
+        for task in global_state.subtasks:
+            if task.task_id in executor_task_map:
+                # Update with executor's version (which may have been merged from parallel groups)
+                updated_subtasks.append(executor_task_map[task.task_id])
+            else:
+                updated_subtasks.append(task)
+        
+        # Add any tasks from executor that are not in global_state.subtasks
+        # (these are tasks that were in parallel groups and merged)
+        for executor_task in executor_state.subtasks:
+            if not any(t.task_id == executor_task.task_id for t in updated_subtasks):
+                updated_subtasks.append(executor_task)
+        
+        global_state.subtasks = updated_subtasks
+    
     # Update task results (including tasks in subtasks and parallel task groups)
     all_tasks_to_update = list(global_state.subtasks)
     
-    # Extract all tasks from parallel task groups
+    # Extract all tasks from parallel task groups (for backward compatibility)
     for group_id, group in global_state.parallel_task_groups.items():
         if hasattr(group, 'subtasks') and group.subtasks:
             for task in group.subtasks:

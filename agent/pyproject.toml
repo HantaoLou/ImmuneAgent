@@ -2,18 +2,19 @@
 name = "bio-agent"
 version = "0.1.0"
 description = "生物信息学智能Agent系统"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.12,<3.13"
 keywords = ["agent", "llm", "bioinformatics", "langgraph"]
 
 # 核心依赖
 dependencies = [
     "langgraph>=1.0.0",
+    "langchain>=0.2.0",  # Deep research 模块需要 langchain.chat_models.init_chat_model (0.2.0+ 引入)
     "langchain-core>=1.0.0",
     "pydantic>=2.11.4",
     "python-dotenv>=1.0.1",
     "langchain-openai>=1.0.0",
     "langchain-mcp-adapters>=0.1.0",
-    "tiktoken>=0.12.0",  # 指定更新版本以支持 Python 3.13 预编译 wheel
+    "tiktoken>=0.12.0",  # 指定更新版本以支持 Python 3.12 预编译 wheel
 ]
 
 # 可选依赖

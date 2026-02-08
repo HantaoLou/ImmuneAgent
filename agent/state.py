@@ -9,6 +9,7 @@ class UserTaskType(str, Enum):
     GENERAL_QA = "GENERAL_QA"
     EXECUTE_PLAN = "EXECUTE_PLAN"
     IMMUNOLOGY_TASK = "IMMUNOLOGY_TASK"
+    USE_HISTORY = "USE_HISTORY"
 
 # Task status enum
 class TaskStatus(str, Enum):

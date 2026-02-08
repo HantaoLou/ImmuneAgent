@@ -404,18 +404,26 @@ def preprocess_user_input_node(state: SupervisorState) -> SupervisorState:
         mcp_services = list(set(mcp_services + ['igblast']))
     
     if mcp_services:
+        # 安全地运行异步代码（处理事件循环可能不存在的情况）
         try:
-            file_analyses, fasta_mappings = asyncio.get_event_loop().run_until_complete(
-                _convert_csv_to_fasta_if_needed(
-                    file_analyses=file_analyses,
-                    mcp_services=mcp_services,
-                    sandbox_id=sandbox_id,
-                    sandbox_input_dir=sandbox_input_dir,
-                    sandbox_output_dir=sandbox_output_dir
+            # 尝试获取正在运行的事件循环
+            loop = asyncio.get_running_loop()
+            # 如果有正在运行的事件循环，需要在新线程中运行
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    _convert_csv_to_fasta_if_needed(
+                        file_analyses=file_analyses,
+                        mcp_services=mcp_services,
+                        sandbox_id=sandbox_id,
+                        sandbox_input_dir=sandbox_input_dir,
+                        sandbox_output_dir=sandbox_output_dir
+                    )
                 )
-            )
+                file_analyses, fasta_mappings = future.result()
         except RuntimeError:
-            # No event loop, try creating one
+            # 没有正在运行的事件循环，可以直接使用 asyncio.run
             file_analyses, fasta_mappings = asyncio.run(
                 _convert_csv_to_fasta_if_needed(
                     file_analyses=file_analyses,
@@ -2073,8 +2081,17 @@ def supervisor_output_mapper(subgraph_output: SupervisorState | dict, global_sta
         subgraph_output = SupervisorState(**subgraph_output)
     
     # Store task type classification result to user_task_type
+    # 确保 user_task_type 是枚举类型而不是字符串
     if subgraph_output.user_task_type:
-        global_state.user_task_type = subgraph_output.user_task_type
+        task_type = subgraph_output.user_task_type
+        # 如果是字符串，转换为枚举类型
+        if isinstance(task_type, str):
+            try:
+                task_type = UserTaskType(task_type)
+            except (ValueError, KeyError):
+                # 如果转换失败，保持原值（可能是 None 或其他值）
+                pass
+        global_state.user_task_type = task_type
     
     # Synchronize execution plan (if execution plan was determined)
     if subgraph_output.execution_plan:

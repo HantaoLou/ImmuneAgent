@@ -4290,8 +4290,8 @@
       },
       {
         "name": "input_file",
-        "description": "Path to the input file containing TCR-epitope sequences for binding prediction.",
-        "type": "str",
+        "description": "Path to the csv file containing TCR-epitope sequences for binding prediction.",
+        "type": "csv file",
         "demo": "path/to/tcr_epitopes.fasta",
         "options": []
       },

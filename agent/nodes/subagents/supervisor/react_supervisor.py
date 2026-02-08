@@ -167,7 +167,19 @@ def supervisor_input_mapper(global_state: GlobalState) -> ReactSupervisorState:
 def supervisor_output_mapper(subgraph_output: ReactSupervisorState | dict, global_state: GlobalState) -> GlobalState:
     if isinstance(subgraph_output, dict):
         subgraph_output = ReactSupervisorState(**subgraph_output)
-    global_state.user_task_type = subgraph_output.user_task_type
+    
+    # 确保 user_task_type 是枚举类型而不是字符串
+    task_type = subgraph_output.user_task_type
+    if task_type is not None:
+        if isinstance(task_type, str):
+            try:
+                from state import UserTaskType
+                task_type = UserTaskType(task_type)
+            except (ValueError, KeyError):
+                # 如果转换失败，保持原值
+                pass
+        global_state.user_task_type = task_type
+    
     global_state.supervisor_decision = subgraph_output.decision
     global_state.supervisor_reasoning = subgraph_output.reasoning
     if subgraph_output.sandbox_file_paths:

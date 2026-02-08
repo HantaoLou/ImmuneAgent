@@ -127,7 +127,7 @@
     },
     "mixtcrpred": {
         "transport": "sse",
-        "url": "http://117.148.176.36:8100/sse",
+        "url": "http://117.10.59.114:40001/mcp/8100/sse",
         "timeout": 36000,
         "sse_read_timeout": 36000,
         "session_kwargs": {}
@@ -148,7 +148,7 @@
     },
     "nettcr": {
         "transport": "sse",
-        "url": "http://117.148.176.36:8103/sse",
+        "url": "http://117.10.59.114:40001/mcp/8103/sse",
         "timeout": 36000,
         "sse_read_timeout": 36000,
         "session_kwargs": {}

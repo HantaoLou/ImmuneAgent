@@ -1,0 +1,16 @@
+.venv/
+*.egg-info/
+__pycache__/
+output/
+.vscode/
+.DS_Store
+.ruff_cache/
+node_modules/
+dist/
+tests/logs/
+
+# Large model files
+*.pth.filepart
+**/pytorch_model.bin
+**/Models/**/*.pth
+**/Models/**/*.filepart

@@ -63,8 +63,9 @@ class ModelPurpose(str, Enum):
 # ===================== Model Configuration Mapping =====================
 MODEL_CONFIGS: Dict[ModelPurpose, List[Tuple[str, str, float]]] = {
     ModelPurpose.REASONING: [
+        ("dashscope", "qwen-max", 0.2),  # Qwen Max - preferred
         ("dashscope", "qwen-turbo", 0.1),  # Qwen Turbo - preferred
-        ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.1),
+        ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.3),
     ],
     
     # Bioinformatics model: Prefer Qwen, then use models with good scientific literature understanding
