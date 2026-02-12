@@ -24,6 +24,8 @@ from typing import Optional, Any, Dict, List, Tuple
 from enum import Enum
 import os
 
+from langchain_core.tools import BaseTool
+
 try:
     from dotenv import load_dotenv, find_dotenv
 except ImportError:
@@ -167,6 +169,16 @@ def _create_zhipu_llm(
         print(f"Error: Failed to create Zhipu AI LLM ({model}): {e}")
         return None
 
+def _create_llm_with_tools(
+    model: str = "qwen-max",
+    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    temperature: float = 0.1,
+    tools: List[BaseTool] = None
+) -> Optional[Any]:
+    """Internal function: Create LLM instance with tools"""
+    if not LLM_AVAILABLE or ChatOpenAI is None:
+        return None
+    return ChatOpenAI(model=model, base_url=base_url, temperature=temperature).bind_tools(tools)
 # ===================== Create LLM by Purpose =====================
 def create_reasoning_llm(
     temperature: Optional[float] = None,

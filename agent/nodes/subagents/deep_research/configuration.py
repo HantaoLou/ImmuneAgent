@@ -241,6 +241,4 @@ class Configuration(BaseModel):
         }
         return cls(**{k: v for k, v in values.items() if v is not None})
 
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True
-    )
+    model_config = ConfigDict(arbitrary_types_allowed=True)

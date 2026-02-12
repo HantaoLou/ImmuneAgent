@@ -15,6 +15,11 @@ This implementation uses local config and vectorstore modules.
 """
 
 import os
+
+# 完全离线模式 - 使用本地缓存的 HuggingFace 模型，禁止所有网络请求
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 import re
 import asyncio
 import logging
@@ -28,7 +33,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.chat_models import init_chat_model
 from langchain_qdrant import QdrantVectorStore
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.embeddings import OllamaEmbeddings, HuggingFaceEmbeddings
 from pydantic import BaseModel, Field
 
 # Import only framework configuration (keep this)
@@ -64,6 +69,129 @@ KEY_PAGE_CONTENT = "page_content"
 KEY_PAGE = "page"
 KEY_ORIGINAL_CHUNKS = "original_chunks"
 KEY_ORIGINAL_DOCUMENT = "original_document"
+
+# ============================================================================
+# Multi-Collection Configuration (Phase 3)
+# ============================================================================
+
+# Collection configuration with dimension grouping and source field mapping
+# Each collection specifies:
+#   - dimension: embedding vector dimension (1536 or 768)
+#   - source_key: Qdrant filter key for parent document lookup
+#   - source_field: Document.metadata field name for source
+#   - embedder_group: which embedder configuration to use
+COLLECTION_CONFIG = {
+    # 1536-dimension collections (OpenAI text-embedding-3-small)
+    "Immunology": {
+        "dimension": 1536,
+        "source_key": "metadata.source",
+        "source_field": "source",
+        "embedder_group": "openai_1536",
+    },
+    # 768-dimension collections (PubMedBERT)
+    "ImmuneAgent": {
+        "dimension": 768,
+        "source_key": "metadata.source",
+        "source_field": "source",
+        "embedder_group": "pubmedbert_768",
+    },
+    "virology": {
+        "dimension": 768,
+        "source_key": "metadata.source",
+        "source_field": "source",
+        "embedder_group": "pubmedbert_768",
+    },
+    # HLE collections (768-dimension, use source_file field)
+    "hle_immunology": {
+        "dimension": 768,
+        "source_key": "metadata.source_file",
+        "source_field": "source_file",
+        "embedder_group": "pubmedbert_768",
+    },
+    "hle_microbiology": {
+        "dimension": 768,
+        "source_key": "metadata.source_file",
+        "source_field": "source_file",
+        "embedder_group": "pubmedbert_768",
+    },
+    "hle_biophysics": {
+        "dimension": 768,
+        "source_key": "metadata.source_file",
+        "source_field": "source_file",
+        "embedder_group": "pubmedbert_768",
+    },
+    "hle_genomics": {
+        "dimension": 768,
+        "source_key": "metadata.source_file",
+        "source_field": "source_file",
+        "embedder_group": "pubmedbert_768",
+    },
+    "hle_knowledge_graph": {
+        "dimension": 768,
+        "source_key": "metadata.source_file",
+        "source_field": "source_file",
+        "embedder_group": "pubmedbert_768",
+    },
+}
+
+# Embedder group configurations
+# Loaded from environment variables with fallback defaults
+EMBEDDER_GROUPS = {
+    "openai_1536": {
+        "provider": "openai",
+        "dimension": 1536,
+        "env_model": "EMBEDDING_MODEL",
+        "env_api_key": "EMBEDDING_API_KEY",
+        "env_base_url": "EMBEDDING_BASE_URL",
+        "default_model": "text-embedding-3-small",
+    },
+    "pubmedbert_768": {
+        "provider": "huggingface",
+        "dimension": 768,
+        "env_model": "EMBEDDING_MODEL_768",
+        "default_model": "pritamdeka/S-PubMedBert-MS-MARCO",
+    },
+}
+
+
+def get_collection_config(collection_name: str) -> dict:
+    """Get configuration for a collection, with fallback to default."""
+    if collection_name in COLLECTION_CONFIG:
+        return COLLECTION_CONFIG[collection_name]
+    # Default configuration for unknown collections (assume 1536 OpenAI)
+    return {
+        "dimension": 1536,
+        "source_key": "metadata.source",
+        "source_field": "source",
+        "embedder_group": "openai_1536",
+    }
+
+
+def get_doc_source(doc, collection_name: str) -> str:
+    """Extract source from document, adapting to collection's source field.
+    
+    Args:
+        doc: Document object with metadata
+        collection_name: Name of the collection
+        
+    Returns:
+        Source string (file path or URL)
+    """
+    config = get_collection_config(collection_name)
+    source_field = config.get("source_field", "source")
+    
+    # Try the configured field first
+    if hasattr(doc, 'metadata') and isinstance(doc.metadata, dict):
+        source = doc.metadata.get(source_field)
+        if source:
+            return source
+        # Fallback to 'source' if configured field not found
+        source = doc.metadata.get("source")
+        if source:
+            return source
+    
+    return "unknown"
+
 
 VECTOR_SEARCH_DESCRIPTION = (
     "Search internal knowledge base using vector similarity. "
@@ -288,11 +416,16 @@ from typing import Optional
 from functools import cache as fc
 
 
-# Global singleton cache for Qdrant client and related objects
+# Global cache for Qdrant client and related objects
+# Changed from singleton to dict for multi-collection support (Phase 3)
 _qdrant_client_cache: Optional[QdrantClient] = None
 _qdrant_config_cache: Optional['QdrantConfig'] = None
-_embedder_cache: Optional[object] = None
-_vector_store_cache: Optional[QdrantVectorStore] = None
+# Dict cache: key = embedder_group (e.g., "openai_1536", "ollama_768")
+_embedder_cache: dict = {}
+# Dict cache: key = collection_name (e.g., "Immunology", "virology")
+_vector_store_cache: dict = {}
+# Legacy single embedder cache for backward compatibility
+_legacy_embedder_cache: Optional[object] = None
 
 
 @dataclass
@@ -374,6 +507,8 @@ class QdrantParentDocumentRetriever(BaseRetriever):
     then retrieves the parent documents based on chunk metadata, and performs context-aware summarization.
     
     From vectorstore/store.py
+    
+    Phase 3: Added source_key and source_field for multi-collection support.
     """
 
     summarize_model: BaseChatModel
@@ -383,6 +518,10 @@ class QdrantParentDocumentRetriever(BaseRetriever):
     # Role of the summarization model
     role: str = "An academic paper reviewer"
     summarize: bool = True
+    # Phase 3: Configurable source key for Qdrant filter (e.g., "metadata.source" or "metadata.source_file")
+    source_key: str = "metadata.source"
+    # Phase 3: Configurable source field in Document.metadata (e.g., "source" or "source_file")
+    source_field: str = "source"
 
     def _get_full_parent(self, parent_source: str) -> Optional[str]:
         """Retrieve full parent document by assembling all chunks."""
@@ -391,7 +530,8 @@ class QdrantParentDocumentRetriever(BaseRetriever):
             query_filter=Filter(
                 must=[
                     FieldCondition(
-                        key=KEY_SRC_FULL, match=MatchValue(value=parent_source)
+                        # Phase 3: Use configurable source_key instead of hardcoded KEY_SRC_FULL
+                        key=self.source_key, match=MatchValue(value=parent_source)
                     )
                 ]
             ),
@@ -426,9 +566,12 @@ class QdrantParentDocumentRetriever(BaseRetriever):
         if self.chunk_filter is not None:
             chunk_docs = self.chunk_filter(chunk_docs)
         by_parent: dict[str, list[Document]] = {}
-        # group by source
+        # group by source - Phase 3: Use configurable source_field
         for doc in chunk_docs:
-            parent_id = doc.metadata[KEY_SRC]
+            # Try configured source_field first, fallback to KEY_SRC
+            parent_id = doc.metadata.get(self.source_field) or doc.metadata.get(KEY_SRC)
+            if parent_id is None:
+                continue  # Skip documents without source
             if parent_id not in by_parent:
                 by_parent[parent_id] = []
             by_parent[parent_id].append(doc)
@@ -475,10 +618,76 @@ class QdrantParentDocumentRetriever(BaseRetriever):
 # Configuration and Model Creation
 # ============================================================================
 
+def _create_embedder_for_group(embedder_group: str):
+    """Create embedder for a specific embedder group (Phase 3).
+    
+    Uses dict cache to support multiple embedder groups with different dimensions.
+    
+    Args:
+        embedder_group: Name of embedder group (e.g., "openai_1536", "ollama_768")
+        
+    Returns:
+        Embedding model instance (cached per group)
+    """
+    global _embedder_cache
+    
+    # Return cached embedder if available
+    if embedder_group in _embedder_cache:
+        return _embedder_cache[embedder_group]
+    
+    # Get embedder group configuration
+    group_config = EMBEDDER_GROUPS.get(embedder_group)
+    if not group_config:
+        logger.warning(f"Unknown embedder group: {embedder_group}, using default openai_1536")
+        group_config = EMBEDDER_GROUPS["openai_1536"]
+    
+    provider = group_config["provider"]
+    default_model = group_config["default_model"]
+    
+    # Read model from environment variable with fallback to default
+    model = os.getenv(group_config.get("env_model", "EMBEDDING_MODEL"), default_model)
+    
+    logger.info(f"Creating embedder for group '{embedder_group}': provider={provider}, model={model}")
+    
+    if provider.lower() == 'openai':
+        api_key = os.getenv(group_config.get("env_api_key", "EMBEDDING_API_KEY")) or os.getenv('OPENAI_API_KEY')
+        base_url = os.getenv(group_config.get("env_base_url", "EMBEDDING_BASE_URL"))
+        
+        kwargs = {
+            'model': model,
+            'openai_api_key': api_key
+        }
+        if base_url:
+            kwargs['openai_api_base'] = base_url
+        
+        _embedder_cache[embedder_group] = OpenAIEmbeddings(**kwargs)
+    elif provider.lower() == 'huggingface':
+        # HuggingFace embeddings (e.g., PubMedBERT)
+        # Use local cached model, no network required
+        cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+        logger.info(f"Loading HuggingFace model from local cache: {model}")
+        
+        _embedder_cache[embedder_group] = HuggingFaceEmbeddings(
+            model_name=model,
+            cache_folder=cache_dir,
+            model_kwargs={'device': 'cpu', 'local_files_only': True},
+            encode_kwargs={'normalize_embeddings': True}
+        )
+    else:  # Ollama or other
+        base_url = os.getenv(group_config.get("env_base_url", "OLLAMA_BASE_URL"))
+        kwargs = {'model': model}
+        if base_url:
+            kwargs['base_url'] = base_url
+        _embedder_cache[embedder_group] = OllamaEmbeddings(**kwargs)
+    
+    return _embedder_cache[embedder_group]
+
+
 def _create_embedder_from_config(config: RunnableConfig):
     """Create embedder from environment variables (from retrieve_tools.py).
     
     Uses singleton pattern to cache embedder instance.
+    LEGACY: Kept for backward compatibility, uses default openai_1536 group.
     
     Reads configuration from environment variables:
     - EMBEDDING_PROVIDER: 'openai' or 'ollama' (default: 'openai')
@@ -492,9 +701,9 @@ def _create_embedder_from_config(config: RunnableConfig):
     Returns:
         Embedding model instance (cached singleton)
     """
-    global _embedder_cache
-    if _embedder_cache is not None:
-        return _embedder_cache
+    global _legacy_embedder_cache
+    if _legacy_embedder_cache is not None:
+        return _legacy_embedder_cache
     
     # Read from environment variables
     provider = os.getenv('EMBEDDING_PROVIDER', 'openai')
@@ -513,11 +722,63 @@ def _create_embedder_from_config(config: RunnableConfig):
         if base_url:  # Only add base_url if it exists and is not empty
             kwargs['openai_api_base'] = base_url
         
-        _embedder_cache = OpenAIEmbeddings(**kwargs)
+        _legacy_embedder_cache = OpenAIEmbeddings(**kwargs)
     else:  # Ollama or other
-        _embedder_cache = OllamaEmbeddings(model=model)
+        _legacy_embedder_cache = OllamaEmbeddings(model=model)
     
-    return _embedder_cache
+    return _legacy_embedder_cache
+
+
+def _get_vector_store(collection_name: str, config: RunnableConfig) -> QdrantVectorStore:
+    """Get or create vector store for a specific collection (Phase 3).
+    
+    Uses dict cache to support multiple collections with different embedders.
+    
+    Args:
+        collection_name: Name of the Qdrant collection
+        config: RunnableConfig
+        
+    Returns:
+        QdrantVectorStore instance (cached per collection)
+    """
+    global _vector_store_cache
+    
+    # Return cached vector store if available
+    if collection_name in _vector_store_cache:
+        return _vector_store_cache[collection_name]
+    
+    # Get collection configuration
+    col_config = get_collection_config(collection_name)
+    embedder_group = col_config.get("embedder_group", "openai_1536")
+    
+    # Get embedder for this collection's group
+    embedder = _create_embedder_for_group(embedder_group)
+    
+    # Get Qdrant client (shared singleton)
+    qdrant_config = QdrantConfig.from_env()
+    client = qdrant_config.get_client()
+    
+    logger.info(f"Creating vector store for collection: {collection_name} (embedder_group: {embedder_group})")
+    
+    # Get content_key from collection config (default: page_content)
+    content_key = col_config.get("content_key", "page_content")
+    # Get metadata_key from collection config (default: metadata, None for flat structure)
+    metadata_key = col_config.get("metadata_key", "metadata")
+    
+    # Build QdrantVectorStore kwargs
+    vs_kwargs = {
+        "client": client,
+        "embedding": embedder,
+        "collection_name": collection_name,
+        "content_payload_key": content_key,
+    }
+    # Only set metadata_payload_key if not None (flat structure uses None)
+    if metadata_key is not None:
+        vs_kwargs["metadata_payload_key"] = metadata_key
+    
+    _vector_store_cache[collection_name] = QdrantVectorStore(**vs_kwargs)
+    
+    return _vector_store_cache[collection_name]
 
 
 def _get_summarize_model(config: RunnableConfig) -> BaseChatModel:
@@ -758,6 +1019,96 @@ def _safe_document_filter(documents: List[Document], doc_evaluations: List[tuple
 # Core Retrieval Functions (from retrieve_tools.py)
 # ============================================================================
 
+def _retrieve_from_single_collection(
+    collection_name: str,
+    query: List[str],
+    config: RunnableConfig,
+    k_per_query: int = 5
+) -> tuple[List[Document], str]:
+    """Retrieve documents from a single collection (Phase 3 helper).
+    
+    Args:
+        collection_name: Name of the Qdrant collection
+        query: List of query strings
+        config: RunnableConfig
+        k_per_query: Number of documents per query
+        
+    Returns:
+        Tuple of (list of documents, collection_name)
+    """
+    try:
+        # Get collection configuration
+        col_config = get_collection_config(collection_name)
+        source_key = col_config.get("source_key", "metadata.source")
+        source_field = col_config.get("source_field", "source")
+        metadata_key = col_config.get("metadata_key", "metadata")
+        
+        # Get vector store for this collection
+        vector_store = _get_vector_store(collection_name, config)
+        
+        all_docs = []
+        
+        # For flat payload structure (metadata_key is None), use simple similarity search
+        # and manually fetch metadata from Qdrant
+        if metadata_key is None:
+            qdrant_client = vector_store.client
+            for q in query:
+                try:
+                    # Use simple similarity search
+                    docs = vector_store.similarity_search(q, k=k_per_query)
+                    
+                    # For each doc, fetch full payload from Qdrant to get source_file
+                    for doc in docs:
+                        doc_id = doc.metadata.get("_id")
+                        if doc_id:
+                            # Fetch point with full payload
+                            points = qdrant_client.retrieve(
+                                collection_name=collection_name,
+                                ids=[doc_id],
+                                with_payload=True
+                            )
+                            if points:
+                                # Add source_file from payload to metadata
+                                payload = points[0].payload
+                                doc.metadata[source_field] = payload.get(source_field, "")
+                                doc.metadata["_collection"] = collection_name
+                        doc.page_content = remove_think_tags(doc.page_content)
+                    all_docs.extend(docs)
+                    print(f"[{collection_name}] Query '{q[:40]}...' retrieved {len(docs)} documents")
+                except Exception as e:
+                    print(f"[{collection_name}] Query failed: {e}")
+        else:
+            # Standard retrieval with QdrantParentDocumentRetriever for nested metadata
+            retriever = QdrantParentDocumentRetriever(
+                summarize_model=_get_summarize_model(config),
+                vector_store=vector_store,
+                role="computational antibody design expert",
+                retriever_kwargs={
+                    "search_type": "mmr",
+                    "search_kwargs": {"k": k_per_query, "lambda_mult": 0.65},
+                },
+                chunk_filter=_filter_chunks,
+                source_key=source_key,
+                source_field=source_field,
+            )
+            
+            for q in query:
+                try:
+                    docs = retriever.invoke(q)
+                    for doc in docs:
+                        doc.page_content = remove_think_tags(doc.page_content)
+                        doc.metadata["_collection"] = collection_name
+                    all_docs.extend(docs)
+                    print(f"[{collection_name}] Query '{q[:40]}...' retrieved {len(docs)} documents")
+                except Exception as e:
+                    print(f"[{collection_name}] Retriever query failed: {e}")
+        
+        return all_docs, collection_name
+    except Exception as e:
+        print(f"[{collection_name}] Collection retrieval failed: {e}")
+        return [], collection_name
+
+
 def retrieve_doc(
     query: List[str], 
     config: RunnableConfig, 
@@ -765,14 +1116,17 @@ def retrieve_doc(
 ) -> list[RetrievedDocument]:
     """Retrieve related documents from the knowledge base (from retrieve_tools.py).
     
+    Phase 3: Enhanced to support multi-collection queries.
+    
     This is the core retrieval function that:
-    1. Creates QdrantParentDocumentRetriever with MMR search
-    2. Retrieves documents for each query
-    3. Removes think tags
-    4. Deduplicates results
-    5. Cleans and filters content
-    6. Applies LLM-based ranking
-    7. Returns structured RetrievedDocument objects
+    1. Parses QDRANT_COLLECTIONS (or QDRANT_COLLECTION for backward compatibility)
+    2. Creates QdrantParentDocumentRetriever for each collection with proper source configuration
+    3. Retrieves documents from all collections
+    4. Removes think tags
+    5. Deduplicates results by source (cross-collection)
+    6. Cleans and filters content
+    7. Applies LLM-based ranking (unified across all collections)
+    8. Returns structured RetrievedDocument objects
 
     Args:
         query: List of query strings. It is recommended that each string can be 16 to 128 tokens in length.
@@ -783,66 +1137,33 @@ def retrieve_doc(
         Retrieved documents with source and page content, where source is the path or url of original paper.
     """
     try:
-        global _vector_store_cache
+        # Phase 3: Parse collections from environment
+        collections_str = os.getenv("QDRANT_COLLECTIONS", "")
+        if collections_str:
+            collections = [c.strip() for c in collections_str.split(",") if c.strip()]
+        else:
+            # No collections configured, return empty
+            logger.warning("QDRANT_COLLECTIONS not configured")
+            return ""
         
-        # Create Qdrant configuration from environment variables (uses singleton)
-        qdrant_config = QdrantConfig.from_env()
-        collection_name = os.getenv("QDRANT_COLLECTION", "Immunology")
-        
-        # Use cached vector_store if available
-        if _vector_store_cache is None:
-            embedder = _create_embedder_from_config(config)
-            client = qdrant_config.get_client()
-            
-            logger.info(f"Creating new vector store for collection: {collection_name}")
-            _vector_store_cache = QdrantVectorStore(
-                client=client,
-                embedding=embedder,
-                collection_name=collection_name
-            )
-        
-        vector_store = _vector_store_cache
-        
-        # Create QdrantParentDocumentRetriever with MMR search
-        retriever = QdrantParentDocumentRetriever(
-            summarize_model=_get_summarize_model(config),
-            vector_store=vector_store,
-            role="computational antibody design expert",
-            retriever_kwargs={
-                "search_type": "mmr",
-                "search_kwargs": {"k": k_per_query, "lambda_mult": 0.65},
-            },
-            chunk_filter=_filter_chunks,
-        )
+        print(f"Querying {len(collections)} collection(s): {collections}")
         
         all_docs = []
-        seen_docs = set()
-
-        # Execute retrieval sequentially to avoid vector database concurrency conflicts
-        results = []
-        for q in query:
-            try:
-                docs = retriever.invoke(q)
-
-                # Some retrievers may include <think/> tags
-                for doc in docs:
-                    doc.page_content = remove_think_tags(doc.page_content)
-                    
-                results.append(docs)
-                print(f"Query '{q[:50]}...' retrieved {len(docs)} documents")
-            except Exception as e:
-                print(f"Retriever query failed: {e}")
-                results.append([])
-
-        # Merge results and deduplicate
+        seen_sources = set()  # Deduplicate by source (cross-collection)
         total_retrieved = 0
-        for docs in results:
+        
+        # Retrieve from each collection
+        for collection_name in collections:
+            docs, _ = _retrieve_from_single_collection(
+                collection_name, query, config, k_per_query
+            )
             total_retrieved += len(docs)
-
+            
+            # Deduplicate by source (same document may exist in multiple collections)
             for doc in docs:
-                doc_hash = hash(doc.page_content)
-                if doc_hash not in seen_docs:
-                    seen_docs.add(doc_hash)
+                source = get_doc_source(doc, collection_name)
+                if source not in seen_sources:
+                    seen_sources.add(source)
                     all_docs.append(doc)
 
         # Content cleaning and filtering
@@ -854,23 +1175,28 @@ def retrieve_doc(
                 scored_docs.append(doc)
 
         print(
-            f"Total retrieved {total_retrieved} documents, {len(all_docs)} after deduplication, {len(scored_docs)} after cleaning"
+            f"Total retrieved {total_retrieved} documents from {len(collections)} collection(s), "
+            f"{len(all_docs)} after deduplication, {len(scored_docs)} after cleaning"
         )
 
-        # Model filtering and ranking
+        # Model filtering and ranking (unified across all collections)
         if len(scored_docs) > 0:
             top_docs = model_filter_and_rank(scored_docs, query, config)
             print(f"Obtained {len(top_docs)} high-quality documents after model filtering")
         else:
             top_docs = []
-            
-        return [
-            RetrievedDocument(
-                source=doc.metadata[KEY_SRC], 
+        
+        # Build result with proper source extraction
+        results = []
+        for doc in top_docs:
+            collection_name = doc.metadata.get("_collection", "unknown")
+            source = get_doc_source(doc, collection_name)
+            results.append(RetrievedDocument(
+                source=source,
                 page_content=doc.page_content
-            )
-            for doc in top_docs
-        ]
+            ))
+        
+        return results
     except Exception as e:
         import traceback
         print(f"Retrieval query failed: {e}")
@@ -979,9 +1305,11 @@ async def get_vector_search_tools(config: RunnableConfig) -> list:
         List containing vector search tool, or empty list if not configured
     """
     # Check if vector database is configured by checking environment variables
-    required_vars = ['QDRANT_HOST', 'QDRANT_PORT', 'QDRANT_COLLECTION']
-    if not all(os.getenv(var) for var in required_vars):
-        logging.warning("Vector database not fully configured (missing QDRANT_HOST/PORT/COLLECTION), skipping vector_db_search tool")
+    qdrant_host = os.getenv('QDRANT_HOST')
+    qdrant_port = os.getenv('QDRANT_PORT')
+    qdrant_collections = os.getenv('QDRANT_COLLECTIONS')
+    if not (qdrant_host and qdrant_port and qdrant_collections):
+        logging.warning("Vector database not fully configured (missing QDRANT_HOST/PORT/COLLECTIONS), skipping vector_db_search tool")
         return []
     
     # Return the vector search tool

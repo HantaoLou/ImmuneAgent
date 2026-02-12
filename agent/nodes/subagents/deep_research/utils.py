@@ -78,8 +78,13 @@ async def tavily_search(
         from nodes.subagents.deep_research.vector_search_tool import get_vector_search_tools, retrieve
         import os
         # Check if vector DB is configured
-        if all(os.getenv(var) for var in ['QDRANT_HOST', 'QDRANT_PORT', 'QDRANT_COLLECTION']):
+        qdrant_host = os.getenv('QDRANT_HOST')
+        qdrant_port = os.getenv('QDRANT_PORT')
+        qdrant_collections = os.getenv('QDRANT_COLLECTIONS')
+        if qdrant_host and qdrant_port and qdrant_collections:
+            print(f"[VectorSearch] Executing with queries: {queries[:2]}...")
             vector_results_text = await retrieve(query=queries, config=config, k_per_query=5)
+            print(f"[VectorSearch] Completed, got {len(vector_results_text)} chars")
     except Exception as e:
         logging.warning(f"Vector search failed (continuing with web results only): {e}")
     

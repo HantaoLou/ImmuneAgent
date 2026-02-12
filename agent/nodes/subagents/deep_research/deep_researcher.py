@@ -830,84 +830,17 @@ async def run_deep_research(
         "messages": [{"role": "user", "content": question}]
     }
     
-    # Execute research with error handling to preserve partial results
-    try:
-        final_state = await graph.ainvoke(research_input, config)
-    except Exception as e:
-        # If execution fails, try to get partial state from checkpoint
-        # This allows us to return documents that were retrieved even if final report generation failed
-        print(f"⚠️ Deep research execution encountered error: {type(e).__name__}: {e}")
-        print("   Attempting to extract partial results from checkpoint...")
-        
-        try:
-            # Try to get the last checkpoint state
-            from langgraph.checkpoint.memory import MemorySaver
-            checkpointer = MemorySaver()
-            
-            # Get the last state from checkpoint (if available)
-            # Note: This is a simplified approach - in production you might want more sophisticated state recovery
-            checkpoint_state = None
-            try:
-                # Try to read from checkpoint (this may not work depending on implementation)
-                # For now, we'll return a partial result structure
-                checkpoint_state = {
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "partial": True
-                }
-            except:
-                pass
-            
-            # If we have checkpoint state, use it; otherwise return error info
-            if checkpoint_state:
-                final_state = checkpoint_state
-            else:
-                # Return minimal error result
-                return {
-                    "final_report": f"Deep research failed: {type(e).__name__}: {e}",
-                    "research_brief": "",
-                    "message_count": 0,
-                    "thread_id": config["configurable"]["thread_id"],
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "partial": True
-                }
-        except Exception as recovery_error:
-            # If recovery also fails, return error info
-            return {
-                "final_report": f"Deep research failed: {type(e).__name__}: {e}",
-                "research_brief": "",
-                "message_count": 0,
-                "thread_id": config["configurable"]["thread_id"],
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "partial": True
-            }
+    # Execute research
+    final_state = await graph.ainvoke(research_input, config)
     
     # Return based on preference
     if return_full_state:
         return final_state
     
     # Return simplified result
-    # Extract useful information even if final_report is empty
-    result = {
+    return {
         "final_report": final_state.get("final_report", "No report generated"),
         "research_brief": final_state.get("research_brief", ""),
         "message_count": len(final_state.get("messages", [])),
         "thread_id": config["configurable"]["thread_id"],
     }
-    
-    # If final_report is empty but we have notes or findings, use those
-    if not result["final_report"] or result["final_report"] == "No report generated":
-        notes = final_state.get("notes", [])
-        findings = final_state.get("findings", "")
-        compressed_research = final_state.get("compressed_research", "")
-        
-        if compressed_research:
-            result["final_report"] = compressed_research
-        elif notes:
-            result["final_report"] = "\n".join(notes) if isinstance(notes, list) else str(notes)
-        elif findings:
-            result["final_report"] = findings
-    
-    return result
