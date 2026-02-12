@@ -17,26 +17,16 @@ Architecture (instance-level isolation):
 """
 
 import logging
-import os
 import re
-import sys
 
 from .tools import inject_tools_to_namespace, make_tracked_knowledge_search
 
 # ---------------------------------------------------------------------------
-# Path setup: make result_evaluator importable
+# Import CodeActAgent from result_evaluator
 # ---------------------------------------------------------------------------
-_result_evaluator_dir = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "result_evaluator")
-)
-if _result_evaluator_dir not in sys.path:
-    sys.path.insert(0, _result_evaluator_dir)
-
-# These imports rely on the path setup above.
-# agent.py internally adds result_evaluator/ to sys.path as a side effect,
-# making executor and llm importable as top-level modules.
-from agent import CodeActAgent  # noqa: E402
-import executor  # noqa: E402  — for namespace clearing
+# Use absolute import to avoid conflict with top-level agent package
+from agent.nodes.subagents.result_evaluator.agent import CodeActAgent
+from agent.nodes.subagents.result_evaluator import executor
 
 logger = logging.getLogger(__name__)
 

@@ -30,23 +30,16 @@ Data flow:
 """
 
 import logging
-import os
 import re
-import sys
 
 from .tools import inject_lightweight_tools_to_namespace
 
 # ---------------------------------------------------------------------------
-# Path setup: make result_evaluator importable
+# Import CodeActAgent from result_evaluator
 # ---------------------------------------------------------------------------
-_result_evaluator_dir = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "result_evaluator")
-)
-if _result_evaluator_dir not in sys.path:
-    sys.path.insert(0, _result_evaluator_dir)
-
-from agent import CodeActAgent  # noqa: E402
-import executor  # noqa: E402
+# Use absolute import to avoid conflict with top-level agent package
+from agent.nodes.subagents.result_evaluator.agent import CodeActAgent
+from agent.nodes.subagents.result_evaluator import executor
 
 logger = logging.getLogger(__name__)
 

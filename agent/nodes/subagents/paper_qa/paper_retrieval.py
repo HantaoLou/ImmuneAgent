@@ -303,13 +303,16 @@ async def _add_result_to_docs(
                 timeout=timeout,
             )
             if docname:
+                logger.debug(f"Successfully indexed via URL: '{title[:50]}'")
                 return True
-        except (asyncio.TimeoutError, Exception) as e:
-            logger.debug(f"URL indexing failed for '{title[:50]}': {e}")
+        except asyncio.TimeoutError:
+            logger.debug(f"URL indexing timeout for '{title[:50]}' (>{timeout}s)")
+        except Exception as e:
+            logger.debug(f"URL indexing failed for '{title[:50]}': {type(e).__name__}: {e}")
 
     # Fall back to content-based indexing
     with tempfile.NamedTemporaryFile(
-        suffix=".txt", mode="w", delete=False
+        suffix=".txt", mode="w", delete=False, encoding="utf-8"
     ) as f:
         f.write(f"Title: {title}\n\n{content}\n")
         temp_path = f.name
@@ -322,9 +325,12 @@ async def _add_result_to_docs(
             timeout=30.0,
         )
         if docname:
+            logger.debug(f"Successfully indexed via content: '{title[:50]}'")
             return True
-    except (asyncio.TimeoutError, Exception) as e:
-        logger.debug(f"Content indexing failed for '{title[:50]}': {e}")
+    except asyncio.TimeoutError:
+        logger.debug(f"Content indexing timeout for '{title[:50]}' (>30s)")
+    except Exception as e:
+        logger.debug(f"Content indexing failed for '{title[:50]}': {type(e).__name__}: {e}")
     finally:
         Path(temp_path).unlink(missing_ok=True)
 
@@ -599,6 +605,7 @@ async def safe_paper_pipeline(
             )
 
             if indexed:
+                logger.info(f"Successfully indexed {len(indexed)} papers into paper-qa")
                 pqa_result = await asyncio.wait_for(
                     gather_evidence(docs, question, settings),
                     timeout=timeout * 0.4,
@@ -619,8 +626,12 @@ async def safe_paper_pipeline(
                         "cost": pqa_result["cost"],
                         "sources": sources_used,
                     }
+                else:
+                    logger.warning("paper-qa indexed papers but evidence gathering returned empty text")
+            else:
+                logger.warning(f"paper-qa indexing failed: 0 papers indexed from {len(results)} discovered papers")
         except ImportError:
-            logger.info("paper-qa not installed, using direct formatting")
+            logger.info("paper-qa not installed, using direct formatting (papers_indexed will be 0)")
         except Exception as e:
             logger.warning(f"paper-qa processing failed, falling back: {e}")
 

@@ -598,19 +598,34 @@ Retrieved Knowledge:
 {retrieved_knowledge}
 
 Please perform the following tasks:
-1. Associate entities: Link key entities with retrieved knowledge
-2. Identify relationships: Find relationships between entities and concepts
-3. Form initial associations: Create initial logical associations based on knowledge
-4. Match with options: If applicable, match initial associations with question options
+1. **Phenomenon-Knowledge Matching**: Match phenomena/entities mentioned in the question with relevant knowledge points from retrieved knowledge
+   - For each domain in retrieved knowledge, identify which phenomena/entities match with which knowledge points
+   - Create a match table mapping phenomena to knowledge with confidence scores
+2. **Core Molecular Function Identification**: If applicable, identify the core molecular function or mechanism involved
+3. **Match Confidence Assessment**: Assess the confidence level of the matches (High/Medium/Low)
+4. **Recheck Flag**: Determine if the inference needs recheck due to knowledge reliability issues
+
+**CRITICAL: Output Format Requirements**
+- You MUST return a "phenomenon_knowledge_match_table" that maps domains to their matched phenomena and knowledge points
+- The match table should have this structure: {{"domain1": {{"phenomena": ["phenomenon1", ...], "matched_knowledge": ["knowledge1", ...], "confidence": "High|Medium|Low"}}, ...}}
+- If no clear matches are found, return an empty dict {{}} but still set match_confidence_label to "Low"
 
 Output your response in JSON format:
 {{
-    "initial_associations": [
-        {{"entity1": "entity1", "entity2": "entity2", "relationship": "relationship type", "evidence": "evidence from knowledge"}},
-        ...
-    ],
-    "option_associations": {{"A": "association", "B": "association", ...}} if applicable,
-    "reasoning": "brief explanation of initial inference"
+    "phenomenon_knowledge_match_table": {{
+        "domain1": {{
+            "phenomena": ["phenomenon1", "phenomenon2", ...],
+            "matched_knowledge": ["knowledge_point1", "knowledge_point2", ...],
+            "confidence": "High|Medium|Low"
+        }},
+        "domain2": {{
+            ...
+        }}
+    }},
+    "core_molecular_function": "core molecular function or mechanism if applicable, else null",
+    "match_confidence_label": "High|Medium|Low",
+    "need_recheck": true|false,
+    "reasoning": "brief explanation of initial inference and matching process"
 }}
 """
 

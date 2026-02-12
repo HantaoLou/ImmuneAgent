@@ -1034,10 +1034,15 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                         "references": paper_result.get('references', ''),
                         "cost": paper_result.get('cost', 0.0)
                     }
-                    print(f"  ✓ PaperQA retrieved {paper_result.get('papers_discovered', 0)} papers")
+                    papers_discovered = paper_result.get('papers_discovered', 0)
+                    papers_indexed = paper_result.get('papers_indexed', 0)
+                    print(f"  ✓ PaperQA retrieved {papers_discovered} papers")
                     print(f"    - Confidence: {paper_confidence:.2f}")
                     print(f"    - Sources: {', '.join(paper_result.get('sources', []))}")
-                    print(f"    - Papers indexed: {paper_result.get('papers_indexed', 0)}")
+                    print(f"    - Papers indexed: {papers_indexed}")
+                    if papers_indexed == 0 and papers_discovered > 0:
+                        print(f"    ⚠ Warning: No papers were indexed into paper-qa (using raw formatting)")
+                        print(f"      This may indicate: paper-qa not installed, indexing timeout, or indexing errors")
                 elif paper_result is None:
                     # Already handled above
                     state.paperqa_result = {"status": "failed", "reason": "timeout_or_error"}
@@ -2417,6 +2422,8 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
     # Result organization
     result = _parse_json_response(response)
     if not result:
+        print(f"  ❌ Failed to parse LLM response for initial inference")
+        print(f"    - Response preview: {response[:300] if response else 'N/A'}...")
         state.error_message = "Failed to parse LLM response for initial inference"
         return state
     
@@ -2425,11 +2432,51 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
     state.match_confidence_label = result.get("match_confidence_label")
     state.need_recheck = result.get("need_recheck", False)
     
+    # Diagnostic: Check if required fields are missing
+    if state.phenomenon_knowledge_match_table is None:
+        print(f"  ⚠ phenomenon_knowledge_match_table is missing from LLM response")
+        print(f"    - Available keys in result: {list(result.keys()) if result else 'N/A'}")
+        print(f"    - This may indicate the prompt format needs adjustment or LLM did not follow instructions")
+        # Try to extract from alternative field names (backward compatibility)
+        if "initial_associations" in result:
+            print(f"    - Found 'initial_associations' field (old format), attempting conversion...")
+            # Convert old format to new format if possible
+            initial_associations = result.get("initial_associations", [])
+            if initial_associations and isinstance(initial_associations, list):
+                # Create a basic match table from initial_associations
+                state.phenomenon_knowledge_match_table = {}
+                for assoc in initial_associations[:5]:  # Limit to first 5
+                    if isinstance(assoc, dict):
+                        entity1 = assoc.get("entity1", "")
+                        entity2 = assoc.get("entity2", "")
+                        if entity1 or entity2:
+                            domain = "general"  # Default domain
+                            if domain not in state.phenomenon_knowledge_match_table:
+                                state.phenomenon_knowledge_match_table[domain] = {
+                                    "phenomena": [],
+                                    "matched_knowledge": [],
+                                    "confidence": "Medium"
+                                }
+                            if entity1:
+                                state.phenomenon_knowledge_match_table[domain]["phenomena"].append(entity1)
+                            if entity2:
+                                state.phenomenon_knowledge_match_table[domain]["phenomena"].append(entity2)
+                            evidence = assoc.get("evidence", "")
+                            if evidence:
+                                state.phenomenon_knowledge_match_table[domain]["matched_knowledge"].append(evidence)
+                if state.phenomenon_knowledge_match_table:
+                    print(f"    ✓ Converted from old format: {len(state.phenomenon_knowledge_match_table)} domain(s)")
+                    state.match_confidence_label = state.match_confidence_label or "Medium"
+    
     if state.core_molecular_function:
         print(f"  ✓ Core molecular function: {state.core_molecular_function}")
     
     if state.need_recheck:
         print(f"  ⚠ Inference needs recheck (knowledge unreliable)")
+    
+    if state.phenomenon_knowledge_match_table:
+        match_count = sum(len(v.get("phenomena", [])) if isinstance(v, dict) else 0 for v in state.phenomenon_knowledge_match_table.values())
+        print(f"  ✓ Match table created: {len(state.phenomenon_knowledge_match_table)} domain(s), {match_count} total matches")
     
     print(f"✓ Match confidence: {state.match_confidence_label}")
     
@@ -3377,18 +3424,6 @@ def n8_5_critic_review_node(state: GeneralQAState) -> GeneralQAState:
     try:
         from agent.nodes.subagents.x_masters.critic import run_single_critic
         from agent.nodes.subagents.x_masters.tools import inject_lightweight_tools_to_namespace
-        import sys
-        import os
-        
-        # Path setup for CodeActAgent
-        _result_evaluator_dir = os.path.normpath(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "result_evaluator")
-        )
-        if _result_evaluator_dir not in sys.path:
-            sys.path.insert(0, _result_evaluator_dir)
-        
-        import executor  # noqa: E402
-        
     except ImportError as e:
         print(f"  ⚠ X-Masters critic not available (optional dependency): {e}")
         print(f"  → Continuing without X-Masters enhancement, using original candidate answers")
