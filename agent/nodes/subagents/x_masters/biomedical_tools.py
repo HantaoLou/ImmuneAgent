@@ -7,6 +7,8 @@ LLM agents to call directly in <execute> blocks without constructing Pydantic ob
 All functions return formatted strings suitable for LLM consumption.
 """
 
+import importlib
+import subprocess
 import sys
 import logging
 from typing import Optional, List, Dict, Any
@@ -17,6 +19,60 @@ logger = logging.getLogger(__name__)
 _project_root = "/data/server/ImmuneAgent_2.0"
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+
+# Mapping from import module name to pip package name
+_MODULE_TO_PACKAGE = {
+    "duckdb": "duckdb",
+    "pydantic": "pydantic",
+    "pandas": "pandas",
+    "numpy": "numpy",
+}
+
+
+def _auto_install_and_retry(module_name: str) -> bool:
+    """Attempt to pip-install a missing module and re-import it.
+
+    Returns True if the module is available after the attempt.
+    """
+    package = _MODULE_TO_PACKAGE.get(module_name, module_name)
+    logger.warning(f"Module '{module_name}' not found. Attempting: pip install {package}")
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-q", package],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=120,
+        )
+        # Force Python to re-scan for the newly installed package
+        importlib.invalidate_caches()
+        importlib.import_module(module_name)
+        logger.info(f"Successfully installed and imported '{module_name}'")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to auto-install '{package}': {e}")
+        return False
+
+
+def _auto_install_on_missing(func):
+    """Decorator: if *func* raises ModuleNotFoundError, auto-install the
+    missing package via pip and retry the call **once**.
+
+    This is applied to every ``query_*`` tool function so that the agent
+    never sees a raw ``ModuleNotFoundError`` — the dependency is installed
+    transparently on first use.
+    """
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except ModuleNotFoundError as e:
+            missing = e.name
+            if missing and _auto_install_and_retry(missing):
+                return func(*args, **kwargs)  # retry after install
+            return f"[Error] Missing dependency '{missing}' could not be installed automatically."
+    return wrapper
 
 
 def _format_results(results: List[Dict[str, Any]], tool_name: str, max_results: int = 20) -> str:
@@ -506,8 +562,13 @@ def query_drug_repurposing(drug_name: str = None, target: str = None,
 # Tool registry: all wrapper functions for injection
 # ============================================================
 def get_biomedical_tools() -> dict:
-    """Return a dict of all biomedical tool wrapper functions for namespace injection."""
-    return {
+    """Return a dict of all biomedical tool wrapper functions for namespace injection.
+
+    Every function is wrapped with ``_auto_install_on_missing`` so that a
+    missing dependency (e.g. ``duckdb``) is automatically pip-installed on
+    first call rather than surfacing a raw ``ModuleNotFoundError``.
+    """
+    raw = {
         "query_kg": query_kg,
         "query_expression": query_expression,
         "query_disease_gene": query_disease_gene,
@@ -534,3 +595,4 @@ def get_biomedical_tools() -> dict:
         "query_virus_host": query_virus_host,
         "query_drug_repurposing": query_drug_repurposing,
     }
+    return {name: _auto_install_on_missing(fn) for name, fn in raw.items()}

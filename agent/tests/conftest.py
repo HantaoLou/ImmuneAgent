@@ -45,4 +45,18 @@ def pytest_addoption(parser):
         type=float,
         help="LLM temperature parameter (e.g., 0.1, 0.3, 0.5)"
     )
+    parser.addoption(
+        "--start-index",
+        action="store",
+        default=None,
+        type=int,
+        help="Start index for question range (0-based, inclusive). If specified, questions will be selected from this index instead of random selection."
+    )
+    parser.addoption(
+        "--end-index",
+        action="store",
+        default=None,
+        type=int,
+        help="End index for question range (0-based, exclusive). If specified with --start-index, questions will be selected from [start_index, end_index)."
+    )
 

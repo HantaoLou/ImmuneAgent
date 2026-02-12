@@ -1503,7 +1503,23 @@ You have access to {len(tools)} biomedical database query tools. These tools pro
                         else:
                             llm_domain_knowledge_map[domain]["specialized_knowledge"].append(str(item))
         
-        state.key_facts = result.get("key_facts", {})
+        # Extract and validate key_facts - ensure all values are strings
+        raw_key_facts = result.get("key_facts", {})
+        state.key_facts = {}
+        if raw_key_facts and isinstance(raw_key_facts, dict):
+            for key, value in raw_key_facts.items():
+                if isinstance(value, str):
+                    state.key_facts[key] = value
+                elif isinstance(value, (list, dict)):
+                    # Convert list or dict to JSON string
+                    try:
+                        state.key_facts[key] = json.dumps(value, ensure_ascii=False)
+                    except (TypeError, ValueError):
+                        state.key_facts[key] = str(value)
+                else:
+                    # Convert other types to string
+                    state.key_facts[key] = str(value)
+        
         state.knowledge_validity_label = result.get("knowledge_validity_label", "Missing")
         state.knowledge_unreliable = result.get("knowledge_unreliable", False)
         
@@ -3374,8 +3390,8 @@ def n8_5_critic_review_node(state: GeneralQAState) -> GeneralQAState:
         import executor  # noqa: E402
         
     except ImportError as e:
-        print(f"  ❌ Failed to import X-Masters critic: {e}")
-        state.error_message = f"X-Masters critic not available: {e}"
+        print(f"  ⚠ X-Masters critic not available (optional dependency): {e}")
+        print(f"  → Continuing without X-Masters enhancement, using original candidate answers")
         state.critiqued_answers = state.candidate_answers  # Fallback: use original candidates
         return state
     
@@ -3481,8 +3497,8 @@ def n8_6_rewriter_synthesis_node(state: GeneralQAState) -> GeneralQAState:
     try:
         from agent.nodes.subagents.x_masters.rewriter import run_single_rewriter
     except ImportError as e:
-        print(f"  ❌ Failed to import X-Masters rewriter: {e}")
-        state.error_message = f"X-Masters rewriter not available: {e}"
+        print(f"  ⚠ X-Masters rewriter not available (optional dependency): {e}")
+        print(f"  → Continuing without X-Masters enhancement, using critiqued answers")
         state.rewritten_answers = state.critiqued_answers  # Fallback
         return state
     
@@ -4838,12 +4854,13 @@ def build_general_qa_graph():
     
     # N6 routing is already handled above (after n3) - removed duplicate
     
-    # N7 routes to N8 or N10
+    # N7 routes to N8, N6 (retry), or N10
     graph.add_conditional_edges(
         "n7_complete_inference",
         route_after_n7,
         {
             "n8_answer_generation": "n8_answer_generation",
+            "n6_initial_inference": "n6_initial_inference",
             "n10_exception_handling": "n10_exception_handling"
         }
     )

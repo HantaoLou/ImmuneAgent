@@ -91,6 +91,37 @@ def get_random_questions(questions: List[Dict[str, Any]], num_questions: int, se
     return random.sample(questions, num_questions)
 
 
+def get_questions_by_range(questions: List[Dict[str, Any]], start_index: int, end_index: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    按范围选择问题（从 start_index 到 end_index）
+    
+    Args:
+        questions: 所有问题列表
+        start_index: 起始索引（0-based，包含）
+        end_index: 结束索引（0-based，不包含）。如果为 None，则选择到列表末尾
+    
+    Returns:
+        指定范围的问题列表
+    """
+    if start_index < 0:
+        raise ValueError(f"start_index must be >= 0, got {start_index}")
+    
+    if start_index >= len(questions):
+        raise ValueError(f"start_index ({start_index}) exceeds total questions ({len(questions)})")
+    
+    if end_index is None:
+        end_index = len(questions)
+    
+    if end_index < start_index:
+        raise ValueError(f"end_index ({end_index}) must be >= start_index ({start_index})")
+    
+    if end_index > len(questions):
+        logger.warning(f"end_index ({end_index}) exceeds total questions ({len(questions)}), using {len(questions)} instead")
+        end_index = len(questions)
+    
+    return questions[start_index:end_index]
+
+
 # ===================== 节点产出记录 =====================
 
 class NodeOutputLogger:
@@ -511,32 +542,81 @@ def node_logger():
 
 def test_general_qa_with_random_questions(questions_data: List[Dict[str, Any]], node_logger: NodeOutputLogger, request):
     """
-    使用随机选择的问题测试 general_qa 子图（支持X-Masters优化）
+    使用随机选择或指定范围的问题测试 general_qa 子图（支持X-Masters优化）
     
-    从 csv_questions_data.json 中随机选择指定数量的问题进行测试。
+    从 csv_questions_data.json 中选择问题进行测试。
     
     使用方法：
-    1. 指定问题数量：
+    1. 指定问题数量（随机选择）：
        pytest tests/test_gengeral_qa_subgraph.py::test_general_qa_with_random_questions -v -s --num-questions=10
     
-    2. 使用环境变量：
+    2. 指定范围（从第几个到第几个，索引从0开始）：
+       pytest tests/test_gengeral_qa_subgraph.py::test_general_qa_with_random_questions -v -s --start-index=0 --end-index=10
+       # 测试第0到第9个问题（共10个问题）
+    
+    3. 只指定起始索引（从该索引到末尾）：
+       pytest tests/test_gengeral_qa_subgraph.py::test_general_qa_with_random_questions -v -s --start-index=50
+       # 测试第50个问题到最后一个问题
+    
+    4. 使用环境变量：
        NUM_QUESTIONS=20 pytest tests/test_gengeral_qa_subgraph.py::test_general_qa_with_random_questions -v -s
     
-    3. 使用固定随机种子（可重复测试）：
+    5. 使用固定随机种子（可重复测试）：
        RANDOM_SEED=42 pytest tests/test_gengeral_qa_subgraph.py::test_general_qa_with_random_questions -v -s --num-questions=5
     
-    4. 禁用X-Masters优化（测试原始general_qa）：
+    6. 禁用X-Masters优化（测试原始general_qa）：
        DISABLE_XMASTERS=1 pytest tests/test_gengeral_qa_subgraph.py::test_general_qa_with_random_questions -v -s --num-questions=3
     """
-    # 获取问题数量（优先从命令行参数，其次从环境变量，最后使用默认值）
+    # 检查是否指定了范围选择
     try:
-        num_questions = request.config.getoption("--num-questions", default=None)
-        if num_questions is None:
-            num_questions = int(os.getenv("NUM_QUESTIONS", "10"))
-        else:
-            num_questions = int(num_questions)
+        start_index = request.config.getoption("--start-index", default=None)
+        end_index = request.config.getoption("--end-index", default=None)
     except (ValueError, AttributeError):
-        num_questions = int(os.getenv("NUM_QUESTIONS", "10"))
+        start_index = None
+        end_index = None
+    
+    # 如果指定了范围，使用范围选择
+    if start_index is not None:
+        try:
+            start_index = int(start_index)
+            if end_index is not None:
+                end_index = int(end_index)
+            else:
+                end_index = None
+            selected_questions = get_questions_by_range(questions_data, start_index, end_index)
+            selection_mode = "range"
+            logger.info(f"Using range selection: start_index={start_index}, end_index={end_index or 'end'}")
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid range parameters: {e}")
+            raise
+    else:
+        # 否则使用随机选择
+        # 获取问题数量（优先从命令行参数，其次从环境变量，最后使用默认值）
+        try:
+            num_questions = request.config.getoption("--num-questions", default=None)
+            if num_questions is None:
+                num_questions = int(os.getenv("NUM_QUESTIONS", "10"))
+            else:
+                num_questions = int(num_questions)
+        except (ValueError, AttributeError):
+            num_questions = int(os.getenv("NUM_QUESTIONS", "10"))
+        
+        # 检查是否使用固定种子（用于可重复测试）
+        # 如果设置了 RANDOM_SEED 环境变量，使用该种子；否则使用 None（真正随机）
+        random_seed = os.getenv("RANDOM_SEED")
+        if random_seed is not None:
+            try:
+                random_seed = int(random_seed)
+                logger.info(f"Using fixed random seed: {random_seed}")
+            except ValueError:
+                random_seed = None
+        else:
+            random_seed = None  # 不使用固定种子，确保每次都是随机的
+            logger.info("Using random selection (no fixed seed)")
+        
+        # 随机选择问题
+        selected_questions = get_random_questions(questions_data, num_questions, seed=random_seed)
+        selection_mode = "random"
     
     # 检查是否禁用X-Masters（优先从命令行参数，其次从环境变量）
     try:
@@ -548,29 +628,20 @@ def test_general_qa_with_random_questions(questions_data: List[Dict[str, Any]], 
         logger.info("⚠ X-Masters optimization is DISABLED - testing original general_qa")
         os.environ["DISABLE_XMASTERS"] = "1"  # 设置环境变量供run_general_qa_for_question使用
     
-    # 检查是否使用固定种子（用于可重复测试）
-    # 如果设置了 RANDOM_SEED 环境变量，使用该种子；否则使用 None（真正随机）
-    random_seed = os.getenv("RANDOM_SEED")
-    if random_seed is not None:
-        try:
-            random_seed = int(random_seed)
-            logger.info(f"Using fixed random seed: {random_seed}")
-        except ValueError:
-            random_seed = None
-    else:
-        random_seed = None  # 不使用固定种子，确保每次都是随机的
-        logger.info("Using random selection (no fixed seed)")
-    
-    # 随机选择问题
-    selected_questions = get_random_questions(questions_data, num_questions, seed=random_seed)
-    
     # 打印选中的问题ID和基本信息
     selected_ids = [q.get("id", "unknown") for q in selected_questions]
     selected_categories = [q.get("category", "Unknown") for q in selected_questions]
     selected_subjects = [q.get("raw_subject", "Unknown") for q in selected_questions]
     
     logger.info(f"\n{'='*80}")
-    logger.info(f"🎲 Randomly selected {len(selected_questions)} questions from {len(questions_data)} total")
+    if selection_mode == "range":
+        logger.info(f"📋 Selected {len(selected_questions)} questions by range from {len(questions_data)} total")
+        if start_index is not None and end_index is not None:
+            logger.info(f"Range: [{start_index}, {end_index})")
+        elif start_index is not None:
+            logger.info(f"Range: [{start_index}, end)")
+    else:
+        logger.info(f"🎲 Randomly selected {len(selected_questions)} questions from {len(questions_data)} total")
     logger.info(f"{'='*80}")
     logger.info(f"Selected question IDs: {selected_ids}")
     logger.info(f"Categories: {set(selected_categories)}")

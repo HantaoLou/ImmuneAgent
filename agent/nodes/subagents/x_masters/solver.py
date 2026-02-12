@@ -67,6 +67,7 @@ You have access to the following pre-loaded tool functions that you can call dir
 ### Search Tools
 - **web_search(query, max_results=5)** — Search the web for current information and research findings
 - **knowledge_search(query, k=5)** — Search internal knowledge base for domain-specific papers and data
+- **read_webpage(url, max_chars=10000)** — Fetch and read the full text content of a URL (paper, article, documentation). Use this to read papers found via web_search instead of relying only on search snippets
 
 ### Biomedical Database Tools (88 tables, pre-loaded — call directly)
 - **query_kg(entity_name, entity_type, relation, target_type, limit=50)** — Knowledge graph: gene-disease-drug-pathway associations (8.1M records)
@@ -110,6 +111,8 @@ You have access to all standard Python libraries (numpy, scipy, sympy, pandas, e
 1. **EVERY response MUST contain either <execute> or <solution> tag.** No exceptions.
 2. **When you have the final answer, you MUST use <solution> tag immediately.**
 3. **Pure text responses without tags are NOT allowed** and will be rejected.
+4. **When choosing between answer choices, prefer the most specific and mechanistically precise answer.** If one answer describes a specific mechanism (e.g., a named structural motif or pathway) and another describes a more general phenomenon that could encompass it, choose the specific one. A precise mechanistic explanation is always preferred over a vague or composite description.
+5. **When you find a relevant primary research paper, read it carefully using read_webpage() and base your answer on the paper's actual conclusions**, not on textbook-level generalizations.
 """
 
 
@@ -125,11 +128,14 @@ I need to solve this problem carefully. Let me think about what approach would b
 I have access to an interactive coding environment where I can write and execute Python code. I should leverage this capability to:
 - Query biomedical databases directly using the pre-loaded tools (query_kg, query_expression, query_disease_gene, query_gwas, query_ppi, etc.) when the problem involves genes, diseases, drugs, or molecular biology
 - Search for relevant information using web_search() and knowledge_search() when I need broader facts or domain knowledge
+- **Read full paper content** using read_webpage(url) when web_search returns a relevant paper — search snippets are often insufficient for nuanced questions
 - Write code to perform calculations, mathematical derivations, or data analysis when the problem involves quantitative reasoning
 - Verify my reasoning by implementing checks and running them programmatically
 - Break down complex problems into smaller computational steps
 
-I should not rely solely on my internal knowledge — it may be incomplete or outdated. Instead, I will actively query databases, write code to compute, and verify before giving my final answer.
+CRITICAL: I should not rely solely on my internal knowledge or textbook-level understanding — real-world biology and chemistry often involve specialized mechanisms that deviate from simple textbook models. When I find a relevant paper via web_search, I MUST use read_webpage(url) to read its full content and extract the actual findings, rather than guessing from the title or snippet alone.
+
+I should actively look for non-obvious or specialized explanations that go beyond standard textbook answers. The correct answer may involve a nuanced mechanism that requires reading primary literature to understand.
 
 Let me start by analyzing what this problem requires and writing appropriate code.
 """
@@ -171,7 +177,7 @@ class SolverAgent(CodeActAgent):
         inputs = {
             "messages": [
                 HumanMessage(content=prompt),
-                AIMessage(content=SOLVER_IRG),
+                AIMessage(content=SOLVER_IRG.strip()),
             ],
             "next_step": "generate",
         }
@@ -258,7 +264,7 @@ def _go_verbose(solver, problem: str, solver_id: int):
     inputs = {
         "messages": [
             HumanMessage(content=problem),
-            AIMessage(content=SOLVER_IRG),
+            AIMessage(content=SOLVER_IRG.strip()),
         ],
         "next_step": "generate",
     }
@@ -464,7 +470,18 @@ def solve(
     Returns:
         List of dicts, each with: solution, log, solver_id, success
     """
-    logger.info(f"=== X-Masters Stage 1: Running {num_solvers} Solvers ===")
+    # Per-solver temperature schedule for diversity
+    _TEMP_SCHEDULE = [0.3, 0.5, 0.7, 0.9, 1.0]
+
+    def _solver_temp(sid: int) -> float:
+        if temperature != 0.7:  # user explicitly set
+            return temperature
+        if num_solvers == 1:
+            return 0.7
+        return _TEMP_SCHEDULE[sid % len(_TEMP_SCHEDULE)]
+
+    temps = [_solver_temp(i) for i in range(num_solvers)]
+    logger.info(f"=== X-Masters Stage 1: Running {num_solvers} Solvers (temps={temps}) ===")
     logger.info(f"Problem: {problem[:200]}...")
 
     results = []
@@ -472,7 +489,7 @@ def solve(
         result = run_single_solver(
             problem=problem,
             solver_id=i,
-            temperature=temperature,
+            temperature=temps[i],
             llm=llm,
             source=source,
             base_url=base_url,

@@ -160,14 +160,36 @@ def init_report_node(state: XMastersState) -> dict:
 # ---------------------------------------------------------------------------
 # Stage 1: Solver nodes
 # ---------------------------------------------------------------------------
+# Temperature schedule: spread temperatures across solvers for diversity.
+# Lower temps → more deterministic; higher temps → more creative/exploratory.
+_SOLVER_TEMPERATURES = [0.3, 0.5, 0.7, 0.9, 1.0]
+
+
+def _get_solver_temperature(solver_id: int, num_solvers: int, base_temp: float) -> float:
+    """Return a per-solver temperature for diversity.
+
+    If *base_temp* is explicitly set (not the default 0.7), all solvers use it.
+    Otherwise, temperatures are spread across ``_SOLVER_TEMPERATURES``.
+    """
+    if base_temp != 0.7:  # user explicitly set a temperature
+        return base_temp
+    if num_solvers == 1:
+        return 0.7
+    schedule = _SOLVER_TEMPERATURES
+    return schedule[solver_id % len(schedule)]
+
+
 def fan_out_to_solvers(state: XMastersState) -> list[Send]:
     """Fan-out: dispatch N Solver instances via Send API.
 
     Each Send creates an independent invocation of the solver_node
     with its own state copy containing the problem and solver_id.
+    Each solver receives a different temperature for answer diversity.
     """
     n = state.get("num_solvers", NUM_SOLVERS)
-    logger.info(f"=== Stage 1: Dispatching {n} Solvers ===")
+    base_temp = state.get("temperature", 0.7)
+    temps = [_get_solver_temperature(i, n, base_temp) for i in range(n)]
+    logger.info(f"=== Stage 1: Dispatching {n} Solvers (temps={temps}) ===")
     return [
         Send("solver", {
             "problem": state["problem"],
@@ -176,7 +198,7 @@ def fan_out_to_solvers(state: XMastersState) -> list[Send]:
             "source": state.get("source", ""),
             "base_url": state.get("base_url", ""),
             "api_key": state.get("api_key", ""),
-            "temperature": state.get("temperature", 0.7),
+            "temperature": temps[i],
             "timeout_seconds": state.get("timeout_seconds", 600),
         })
         for i in range(n)

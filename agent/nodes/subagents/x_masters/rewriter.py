@@ -78,6 +78,7 @@ You have access to the following pre-loaded tool functions that you can call dir
 
 ### Search Tools
 - **web_search(query, max_results=5)** — Search the web for current information and research findings
+- **read_webpage(url, max_chars=10000)** — Fetch and read the full text content of a URL (paper, article, documentation). Use this to read papers found via web_search instead of relying only on search snippets
 
 ### Biomedical Database Tools (88 tables, pre-loaded — call directly)
 - **query_kg(entity_name, entity_type, relation, target_type, limit=50)** — Knowledge graph: gene-disease-drug-pathway associations (8.1M records)
@@ -121,6 +122,8 @@ You have access to all standard Python libraries (numpy, scipy, sympy, pandas, e
 1. **EVERY response MUST contain either <execute> or <solution> tag.** No exceptions.
 2. **When you have the final answer, you MUST use <solution> tag immediately.**
 3. **Pure text responses without tags are NOT allowed** and will be rejected.
+4. **When choosing between answer choices, prefer the most specific and mechanistically precise answer.** If one answer describes a specific mechanism (e.g., a named structural motif or pathway) and another describes a more general phenomenon that could encompass it, choose the specific one. A precise mechanistic explanation is always preferred over a vague or composite description.
+5. **When you find a relevant primary research paper, read it carefully using read_webpage() and base your answer on the paper's actual conclusions**, not on textbook-level generalizations.
 """
 
 
@@ -134,11 +137,12 @@ I need to carefully review all proposed solutions and synthesize the best answer
 I have access to an interactive coding environment where I can write and execute Python code. I should leverage this capability to independently verify the proposed answers:
 - Query biomedical databases (query_kg, query_expression, query_disease_gene, query_gwas, query_ppi, etc.) to fact-check claims about genes, diseases, drugs, or molecular biology
 - Search for relevant information using web_search() to verify broader facts
+- **Read full paper content** using read_webpage(url) when web_search returns a relevant paper — search snippets are often insufficient for nuanced questions
 - Write code to independently re-derive or re-compute any calculations in the proposed solutions
 - Check if the proposed answers are consistent with known facts and constraints
 - Look for edge cases or assumptions that the original solvers may have missed
 
-I should not simply agree with the majority — my value is in finding the correct answer by verifying each claim. I will actively query databases, write code to verify before giving my verdict.
+CRITICAL: I should not simply agree with the majority — my value is in finding the correct answer by verifying each claim. When all solvers agree, I must be especially skeptical: they may all share the same blind spot (e.g., relying on textbook-level generalizations when a specialized mechanism is at play). I MUST use read_webpage(url) to read the actual content of relevant papers rather than guessing from titles or snippets.
 
 Let me start by comparing the solutions and identifying where they agree and disagree, then verify the disputed points.
 """
@@ -175,7 +179,7 @@ class RewriterAgent(CodeActAgent):
         inputs = {
             "messages": [
                 HumanMessage(content=prompt),
-                AIMessage(content=REWRITER_IRG),
+                AIMessage(content=REWRITER_IRG.strip()),
             ],
             "next_step": "generate",
         }
