@@ -102,6 +102,19 @@ from .hpo_tools import (
     query_hpo_xref, HPOXrefQuery, HPOXrefSource,
 )
 
+# Analysis Tools (NEW - specialized reasoning tools using @tool decorator)
+from .analysis_tools import (
+    verify_multi_statement,
+    calculate_modification_mass,
+    analyze_sgrna,
+    analyze_experimental_data,
+    get_analysis_tools,
+    MultiStatementInput,
+    ModificationInput,
+    SgRNAAnalysisInput,
+    ExperimentalDataInput
+)
+
 __all__ = [
     # Core
     "query_knowledge_graph", "KnowledgeGraphQuery", "KGNodeType",
@@ -152,4 +165,14 @@ __all__ = [
     "query_hpo_term", "HPOTermQuery",
     "query_hpo_hierarchy", "HPOHierarchyQuery", "HPOHierarchyDirection",
     "query_hpo_xref", "HPOXrefQuery", "HPOXrefSource",
+    # Analysis Tools (NEW - @tool decorated)
+    "verify_multi_statement",
+    "calculate_modification_mass",
+    "analyze_sgrna",
+    "analyze_experimental_data",
+    "get_analysis_tools",
+    "MultiStatementInput",
+    "ModificationInput",
+    "SgRNAAnalysisInput",
+    "ExperimentalDataInput",
 ]

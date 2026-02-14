@@ -179,13 +179,15 @@ def get_knowledge_retrieval_prompt(
     structured_subject: Dict[str, Any] = None,
     structured_condition: Dict[str, Any] = None,
     structured_goal: Dict[str, Any] = None,
-    synonyms: List[str] = None
+    synonyms: List[str] = None,
+    cleaned_text: str = None  # ENHANCEMENT: Add for data analysis
 ) -> str:
     """N3 prompt with genetics-specific knowledge retrieval"""
     base_prompt = get_base_knowledge_retrieval_prompt(
         core_domains, calculation_type, algorithm_domain, research_objective,
         structured_conditions, key_entities, answer_format_label, question_type_label,
-        structured_subject, structured_condition, structured_goal, synonyms
+        structured_subject, structured_condition, structured_goal, synonyms,
+        cleaned_text=cleaned_text  # ENHANCEMENT: Pass cleaned_text
     )
     
     genetics_enhancements = """
@@ -347,6 +349,30 @@ def get_complete_inference_prompt(
    - Build complete logic chain from genotype to phenotype
    - Verify each step follows genetic principles
    - Ensure final conclusion matches genetic laws
+
+**Genetics-Specific Option Analysis Strategy:**
+
+For genetics multiple choice questions, apply these verification rules:
+
+1. **Inheritance Pattern Options**:
+   - Check if each option is consistent with the stated inheritance pattern
+   - Verify phenotype ratios match expected Mendelian ratios
+   - Eliminate options that violate genetic principles
+
+2. **Calculation Options**:
+   - Recalculate allele/genotype frequencies for each option
+   - Verify HWE equilibrium is maintained (if applicable)
+   - Check if numerical values match genetic constraints
+
+3. **Mechanism Options**:
+   - Verify each mechanism is consistent with molecular genetics
+   - Check for logical consistency with known genetic pathways
+   - Eliminate options that contradict genetic dogma
+
+4. **Cross-Verification**:
+   - Compare options against genetic databases (OMIM, DisGeNET)
+   - Verify gene-disease associations are correct
+   - Check inheritance patterns against known disorders
 """
     
     return base_prompt + genetics_enhancements

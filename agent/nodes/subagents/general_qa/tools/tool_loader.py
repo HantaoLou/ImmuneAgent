@@ -62,6 +62,19 @@ from agent.nodes.subagents.general_qa.tools import (
     query_hpo_xref, HPOXrefQuery,
 )
 
+# Import Analysis Tools (using @tool decorator - LangChain 1.0 compatible)
+from agent.nodes.subagents.general_qa.tools.analysis_tools import (
+    verify_multi_statement,
+    calculate_modification_mass,
+    analyze_sgrna,
+    analyze_experimental_data,
+    get_analysis_tools,
+    MultiStatementInput,
+    ModificationInput,
+    SgRNAAnalysisInput,
+    ExperimentalDataInput
+)
+
 
 # Wrapper functions to convert expanded parameters to Pydantic models
 def _query_knowledge_graph_wrapper(**kwargs) -> List[Dict[str, Any]]:
@@ -505,6 +518,13 @@ def load_all_tools() -> List[StructuredTool]:
         args_schema=HPOXrefQuery
     ))
     
+    # Analysis Tools (NEW - using @tool decorator, already LangChain 1.0 compatible)
+    # These tools are already decorated with @tool, so we can add them directly
+    analysis_tools = get_analysis_tools()
+    for tool_func in analysis_tools:
+        # @tool decorated functions are already LangChain Tool objects
+        tools.append(tool_func)
+    
     return tools
 
 
@@ -527,6 +547,7 @@ def get_tools_by_category() -> Dict[str, List[StructuredTool]]:
         "interaction": [],  # Protein and genetic interactions
         "expression": [],  # Expression and cell type tools
         "repurposing": [],  # Drug repurposing tools
+        "analysis": [],  # Analysis tools (NEW - for specialized reasoning)
     }
     
     tool_name_to_category = {
@@ -576,6 +597,11 @@ def get_tools_by_category() -> Dict[str, List[StructuredTool]]:
         "query_hpo_term": "ontology",
         "query_hpo_hierarchy": "ontology",
         "query_hpo_xref": "ontology",
+        # Analysis tools (NEW)
+        "verify_multi_statement": "analysis",
+        "calculate_modification_mass": "analysis",
+        "analyze_sgrna": "analysis",
+        "analyze_experimental_data": "analysis",
     }
     
     for tool in all_tools:
@@ -631,10 +657,11 @@ def get_tools_for_node(
         # N0: Input preprocessing - no tools needed
         "n0_input_preprocessing": [],
         
-        # N1: Question decomposition - basic entity lookup tools
+        # N1: Question decomposition - basic entity lookup tools + analysis tools
         "n1_question_decomposition": (
             categories["disease_gene"] +
-            categories["ontology"][:2]  # GO and HPO term search
+            categories["ontology"][:2] +  # GO and HPO term search
+            categories["analysis"]  # Analysis tools for statement detection
         ),
         
         # N2: Calculation/algorithm recognition - no tools needed
@@ -647,7 +674,8 @@ def get_tools_for_node(
         "n4_calculation_decomposition": (
             categories["expression"] +
             categories["genetic"] +
-            categories["core_query"][:3]  # Basic query tools
+            categories["core_query"][:3] +  # Basic query tools
+            categories["analysis"]  # Include modification mass calculator
         ),
         
         # N5: Algorithm validation - pathway and interaction tools
@@ -657,28 +685,31 @@ def get_tools_for_node(
             categories["disease_gene"]
         ),
         
-        # N6: Initial inference - knowledge retrieval tools
+        # N6: Initial inference - knowledge retrieval tools + analysis tools
         "n6_initial_inference": (
             categories["core_query"] +
             categories["disease_gene"] +
             categories["interaction"] +
-            categories["genetic"]
+            categories["genetic"] +
+            categories["analysis"]  # Analysis tools for data interpretation
         ),
         
         # N7: Complete inference - all tools for comprehensive reasoning
         "n7_complete_inference": all_tools,
         
-        # N8: Answer generation - focused tools for answer refinement
+        # N8: Answer generation - focused tools for answer refinement + analysis
         "n8_answer_generation": (
             categories["disease_gene"] +
             categories["ontology"] +
-            categories["drug"]
+            categories["drug"] +
+            categories["analysis"]  # Analysis tools for verification
         ),
         
-        # N9: Result validation - validation tools
+        # N9: Result validation - validation tools + analysis tools
         "n9_result_validation": (
             categories["disease_gene"][:2] +  # DisGeNET, OMIM for validation
-            categories["ontology"][:2]  # GO, HPO for validation
+            categories["ontology"][:2] +  # GO, HPO for validation
+            categories["analysis"]  # Analysis tools for statement verification
         ),
         
         # N10: Exception handling - all tools for finding alternatives

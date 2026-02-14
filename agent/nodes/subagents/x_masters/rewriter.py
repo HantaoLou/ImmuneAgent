@@ -342,13 +342,18 @@ def run_single_rewriter(
     # Fallback: use the first solution if rewriter fails
     fallback = all_solutions[0] if all_solutions else ""
 
+    error_info = None
     try:
         log, last_content = rewriter.go(rewriter_prompt)
         rewritten_solution = extract_solution(last_content)
         success = True
         logger.info(f"[Rewriter {rewriter_id}] Completed successfully")
     except Exception as e:
+        import traceback
+        error_info = str(e)
+        error_traceback = traceback.format_exc()
         logger.error(f"[Rewriter {rewriter_id}] Failed: {e}")
+        logger.debug(f"[Rewriter {rewriter_id}] Traceback: {error_traceback}")
         rewritten_solution = fallback
         log = []
         success = False
@@ -361,4 +366,5 @@ def run_single_rewriter(
         "rewriter_id": rewriter_id,
         "log": log,
         "success": success,
+        "error": error_info,  # Include error information for debugging
     }

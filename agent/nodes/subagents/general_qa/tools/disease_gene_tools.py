@@ -108,7 +108,30 @@ def query_disgenet(query: DisGeNETQuery) -> List[Dict[str, Any]]:
     
     try:
         results = con.execute(sql, params).fetchdf()
-        return results.to_dict(orient="records")
+        records = results.to_dict(orient="records")
+        
+        # 如果结果为空，提供诊断信息和建议
+        if len(records) == 0:
+            suggestions = []
+            if query.disorder:
+                # 建议尝试更宽泛的搜索
+                first_word = query.disorder.split()[0] if query.disorder else None
+                if first_word and len(query.disorder.split()) > 1:
+                    suggestions.append(f"Try searching for '{first_word}' (first word only) for broader results")
+                suggestions.append("Try alternative disease names or synonyms")
+                suggestions.append("Check if the disorder is listed under a different name in DisGeNET")
+            
+            return [{
+                "result_count": 0,
+                "query_info": {
+                    "disorder": query.disorder,
+                    "gene": query.gene,
+                },
+                "suggestions": suggestions,
+                "note": "Query executed successfully but no matching records found. DisGeNET covers disease-gene associations. If searching for complex concepts like 'polygenic risk', try searching for specific disease names instead."
+            }]
+        
+        return records
     except Exception as e:
         return [{"error": f"Query failed: {str(e)}"}]
     finally:
@@ -203,7 +226,35 @@ def query_omim(query: OMIMQuery) -> List[Dict[str, Any]]:
     
     try:
         results = con.execute(sql, params).fetchdf()
-        return results.to_dict(orient="records")
+        records = results.to_dict(orient="records")
+        
+        # 如果结果为空，提供诊断信息和建议
+        if len(records) == 0:
+            suggestions = []
+            if query.phenotype:
+                # 建议尝试更宽泛的搜索
+                first_word = query.phenotype.split()[0] if query.phenotype else None
+                if first_word and len(query.phenotype.split()) > 1:
+                    suggestions.append(f"Try searching for '{first_word}' (first word only) for broader results")
+                suggestions.append("Try alternative phenotype names or disease names")
+                suggestions.append("Note: OMIM primarily covers single-gene (Mendelian) disorders. Complex traits like 'polygenic score' may not be in OMIM.")
+            
+            if query.gene_name:
+                suggestions.append("Try searching by gene symbol or approved gene name")
+            
+            return [{
+                "result_count": 0,
+                "query_info": {
+                    "gene_name": query.gene_name,
+                    "phenotype": query.phenotype,
+                    "mim_number": query.mim_number,
+                    "chromosome": query.chromosome,
+                },
+                "suggestions": suggestions,
+                "note": "Query executed successfully but no matching records found. OMIM covers Mendelian (single-gene) disorders. For polygenic/complex traits, consider using GWAS Catalog or other tools."
+            }]
+        
+        return records
     except Exception as e:
         return [{"error": f"Query failed: {str(e)}"}]
     finally:

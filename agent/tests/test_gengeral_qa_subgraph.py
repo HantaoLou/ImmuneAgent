@@ -125,14 +125,23 @@ def get_questions_by_range(questions: List[Dict[str, Any]], start_index: int, en
 # ===================== 节点产出记录 =====================
 
 class NodeOutputLogger:
-    """记录每个节点的产出"""
+    """记录每个节点的产出（实时写入文件）"""
     
-    def __init__(self):
+    def __init__(self, output_file_path: Optional[str] = None):
         self.node_outputs = defaultdict(dict)
         self.current_question_id = None
+        
+        # 设置输出文件路径（如果未指定，使用默认路径）
+        if output_file_path is None:
+            output_dir = Path(__file__).parent / "outputs"
+            output_dir.mkdir(exist_ok=True)
+            output_file_path = str(output_dir / f"node_outputs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+        
+        self.output_file_path = output_file_path
+        logger.info(f"NodeOutputLogger initialized, output file: {self.output_file_path}")
     
     def log_node_output(self, node_name: str, state: GeneralQAState):
-        """记录节点产出"""
+        """记录节点产出并立即写入文件"""
         if self.current_question_id:
             output = {
                 "node_name": node_name,
@@ -144,6 +153,15 @@ class NodeOutputLogger:
             # 同时记录到日志
             logger.info(f"[{self.current_question_id}] Node {node_name} completed")
             logger.debug(f"[{self.current_question_id}] Node {node_name} output: {json.dumps(output, indent=2, ensure_ascii=False)}")
+            
+            # CRITICAL: 立即写入文件，实现实时记录
+            try:
+                self._flush_to_file()
+                # 使用 info 级别日志，确保用户能看到文件已保存
+                logger.info(f"✓ Node {node_name} output saved to: {self.output_file_path}")
+            except Exception as e:
+                logger.error(f"✗ Failed to save node {node_name} output: {e}", exc_info=True)
+                # 即使保存失败，也继续执行，但记录错误
     
     def _extract_state_snapshot(self, state: GeneralQAState, node_name: str) -> Dict[str, Any]:
         """提取状态快照（只包含相关字段）"""
@@ -225,15 +243,72 @@ class NodeOutputLogger:
         """设置当前问题ID"""
         self.current_question_id = question_id
     
+    def _flush_to_file(self):
+        """立即将当前所有节点产出增量更新到文件（实时更新）"""
+        try:
+            # 确保输出目录存在
+            output_dir = Path(self.output_file_path).parent
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 读取现有文件（如果存在），实现增量更新
+            existing_outputs = {}
+            if os.path.exists(self.output_file_path):
+                try:
+                    with open(self.output_file_path, 'r', encoding='utf-8') as f:
+                        existing_outputs = json.load(f)
+                except (json.JSONDecodeError, IOError) as e:
+                    logger.warning(f"Failed to read existing outputs file, starting fresh: {e}")
+                    existing_outputs = {}
+            
+            # 合并当前输出到现有输出（增量更新）
+            current_outputs = self.get_all_outputs()
+            for question_id, nodes in current_outputs.items():
+                if question_id not in existing_outputs:
+                    existing_outputs[question_id] = {}
+                # 更新当前问题的节点输出（增量添加新节点，更新已存在的节点）
+                existing_outputs[question_id].update(nodes)
+            
+            # 使用临时文件确保原子性写入
+            temp_file = self.output_file_path + ".tmp"
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(existing_outputs, f, indent=2, ensure_ascii=False)
+                # 强制刷新到磁盘
+                f.flush()
+                os.fsync(f.fileno())
+            
+            # 原子性替换原文件
+            import shutil
+            shutil.move(temp_file, self.output_file_path)
+            
+            # 验证文件确实被写入
+            if not os.path.exists(self.output_file_path):
+                raise FileNotFoundError(f"Output file was not created: {self.output_file_path}")
+            
+            # 使用 debug 级别记录详细写入信息（避免日志过多，但保留调试能力）
+            logger.debug(f"Node outputs flushed to {self.output_file_path} (incremental update, {len(existing_outputs)} questions)")
+        except Exception as e:
+            logger.error(f"Failed to flush node outputs to file: {e}", exc_info=True)
+            # 重新抛出异常，让调用者知道写入失败
+            raise
+    
     def get_all_outputs(self) -> Dict[str, Any]:
         """获取所有节点产出"""
         return dict(self.node_outputs)
     
-    def save_to_file(self, filepath: str):
-        """保存节点产出到文件"""
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(self.get_all_outputs(), f, indent=2, ensure_ascii=False)
-        logger.info(f"Node outputs saved to {filepath}")
+    def save_to_file(self, filepath: Optional[str] = None):
+        """
+        保存节点产出到文件（兼容旧接口）
+        
+        如果 filepath 为 None，使用初始化时设置的 output_file_path
+        如果指定了 filepath，则保存到指定路径（用于最终保存或备份）
+        """
+        target_file = filepath or self.output_file_path
+        try:
+            with open(target_file, 'w', encoding='utf-8') as f:
+                json.dump(self.get_all_outputs(), f, indent=2, ensure_ascii=False)
+            logger.info(f"Node outputs saved to {target_file}")
+        except Exception as e:
+            logger.error(f"Failed to save node outputs to {target_file}: {e}", exc_info=True)
 
 
 # ===================== Node Metrics =====================
@@ -734,12 +809,16 @@ def test_general_qa_with_random_questions(questions_data: List[Dict[str, Any]], 
     baseline_path = resolve_baseline_node_outputs_path(request)
     generate_test_report(results, node_logger, baseline_path)
     
-    # 保存节点产出
+    # 节点产出已经在每个节点执行时实时写入文件
+    # 这里只需要记录最终文件路径（用于报告）
+    logger.info(f"Node outputs are being written in real-time to: {node_logger.output_file_path}")
+    
+    # 可选：保存一个最终备份（带时间戳）
     output_dir = Path(__file__).parent / "outputs"
     output_dir.mkdir(exist_ok=True)
-    output_file = output_dir / f"node_outputs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    node_logger.save_to_file(str(output_file))
-    logger.info(f"Node outputs saved to {output_file}")
+    final_backup_file = output_dir / f"node_outputs_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    node_logger.save_to_file(str(final_backup_file))
+    logger.info(f"Final backup saved to {final_backup_file}")
     
     # 断言：至少有一些问题成功
     success_count = sum(1 for r in results if r["success"])
@@ -830,24 +909,24 @@ def test_general_qa_all_questions(questions_data: List[Dict[str, Any]], node_log
         
         results.append(result)
         
-        # 每10个问题保存一次中间结果
+        # 节点产出已经在每个节点执行时实时写入文件，无需额外保存中间结果
+        # 每10个问题记录一次进度
         if i % 10 == 0:
-            output_dir = Path(__file__).parent / "outputs"
-            output_dir.mkdir(exist_ok=True)
-            intermediate_file = output_dir / f"node_outputs_intermediate_{i}.json"
-            node_logger.save_to_file(str(intermediate_file))
-            logger.info(f"Intermediate results saved to {intermediate_file}")
+            logger.info(f"Progress: {i}/{len(questions_data)} questions completed. Real-time outputs available at: {node_logger.output_file_path}")
     
     # 生成测试报告
     baseline_path = resolve_baseline_node_outputs_path(request)
     generate_test_report(results, node_logger, baseline_path)
     
-    # 保存最终节点产出
+    # 节点产出已经在每个节点执行时实时写入文件
+    logger.info(f"Node outputs are being written in real-time to: {node_logger.output_file_path}")
+    
+    # 可选：保存一个最终备份（带时间戳）
     output_dir = Path(__file__).parent / "outputs"
     output_dir.mkdir(exist_ok=True)
-    output_file = output_dir / f"node_outputs_all_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    node_logger.save_to_file(str(output_file))
-    logger.info(f"Final node outputs saved to {output_file}")
+    final_backup_file = output_dir / f"node_outputs_all_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    node_logger.save_to_file(str(final_backup_file))
+    logger.info(f"Final backup saved to {final_backup_file}")
 
 
 def generate_test_report(results: List[Dict[str, Any]], node_logger: NodeOutputLogger, baseline_node_outputs_path: Optional[str] = None):

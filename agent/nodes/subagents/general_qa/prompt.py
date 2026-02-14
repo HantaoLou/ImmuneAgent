@@ -7,7 +7,12 @@ Maintains backward compatibility with existing code.
 """
 
 from typing import Dict, List, Any, Optional
-from .prompts.domain_mapper import get_prompt_module, detect_domain_from_state
+from .prompts.domain_mapper import (
+    get_prompt_module, 
+    detect_domain_from_state,
+    map_core_domains_to_modules,
+    identify_fine_grained_domains
+)
 
 
 def _get_prompt_func(
@@ -20,7 +25,7 @@ def _get_prompt_func(
     **kwargs
 ):
     """
-    Internal helper to route to domain-specific prompt function
+    Internal helper to route to domain-specific prompt function - ENHANCED with fine-grained mapping
     
     Args:
         func_name: Name of the prompt function to call
@@ -33,9 +38,22 @@ def _get_prompt_func(
     Returns:
         Prompt string from domain-specific module
     """
+    # Apply fine-grained domain mapping if core_domains are provided
+    mapped_domain = domain
+    if core_domains:
+        primary_module, all_modules = map_core_domains_to_modules(core_domains, user_input or "")
+        mapped_domain = primary_module
+        # Note: all_modules is for internal use only, not passed to prompt functions
+    
+    # If domain is still not set, try fine-grained identification
+    if not mapped_domain and user_input:
+        fine_results = identify_fine_grained_domains(user_input)
+        if fine_results:
+            mapped_domain = fine_results[0][1]  # Use the best match
+    
     # Get the appropriate prompt module
     module = get_prompt_module(
-        domain=domain,
+        domain=mapped_domain,
         question_type=question_type,
         user_input=user_input,
         core_domains=core_domains
@@ -206,7 +224,8 @@ def get_knowledge_retrieval_prompt(
     structured_goal: Dict[str, Any] = None,
     synonyms: List[str] = None,
     domain: Optional[str] = None,
-    question_type: Optional[str] = None
+    question_type: Optional[str] = None,
+    cleaned_text: str = None  # ENHANCEMENT: Add original question for data analysis
 ) -> str:
     """
     Prompt for N3: Cross-domain knowledge retrieval
@@ -226,6 +245,7 @@ def get_knowledge_retrieval_prompt(
         synonyms: Synonyms list
         domain: Domain from raw_subject (optional, will use core_domains[0] if not provided)
         question_type: Question type (optional)
+        cleaned_text: Original question text for data analysis (ENHANCEMENT)
     
     Returns:
         Prompt string
@@ -250,7 +270,8 @@ def get_knowledge_retrieval_prompt(
         structured_subject=structured_subject,
         structured_condition=structured_condition,
         structured_goal=structured_goal,
-        synonyms=synonyms
+        synonyms=synonyms,
+        cleaned_text=cleaned_text  # ENHANCEMENT: Pass cleaned_text
     )
 
 

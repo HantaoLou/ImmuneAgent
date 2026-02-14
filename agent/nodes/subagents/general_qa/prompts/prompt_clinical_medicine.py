@@ -169,13 +169,15 @@ def get_knowledge_retrieval_prompt(
     structured_subject: Dict[str, Any] = None,
     structured_condition: Dict[str, Any] = None,
     structured_goal: Dict[str, Any] = None,
-    synonyms: List[str] = None
+    synonyms: List[str] = None,
+    cleaned_text: str = None  # ENHANCEMENT: Add for data analysis
 ) -> str:
     """N3 prompt with clinical medicine-specific knowledge retrieval"""
     base_prompt = get_base_knowledge_retrieval_prompt(
         core_domains, calculation_type, algorithm_domain, research_objective,
         structured_conditions, key_entities, answer_format_label, question_type_label,
-        structured_subject, structured_condition, structured_goal, synonyms
+        structured_subject, structured_condition, structured_goal, synonyms,
+        cleaned_text=cleaned_text  # ENHANCEMENT: Pass cleaned_text
     )
     
     clinical_enhancements = """
@@ -279,6 +281,33 @@ def get_complete_inference_prompt(
    - Apply diagnostic criteria strictly (e.g., BP ≥140/90 for hypertension)
    - Consider differential diagnoses
    - Verify test results against reference ranges
+
+**Clinical Medicine-Specific Option Analysis Strategy:**
+
+For clinical medicine multiple choice questions, apply these verification rules:
+
+1. **Treatment Options**:
+   - Check if each treatment option is indicated for the condition
+   - Verify no contraindications exist for the patient
+   - Eliminate options that violate clinical guidelines
+   - Check drug interactions and safety profiles
+
+2. **Drug Options**:
+   - Verify each drug is appropriate for the patient's condition
+   - Check contraindications (pregnancy, comorbidities, allergies)
+   - Verify dosage is within therapeutic range
+   - Eliminate options with drug-drug interactions
+
+3. **Diagnosis Options**:
+   - Verify diagnostic criteria are met for each option
+   - Check test results against reference ranges
+   - Consider differential diagnoses
+   - Eliminate options that don't fit clinical presentation
+
+4. **Cross-Verification**:
+   - Compare options against clinical guidelines (JNC8, ADA, etc.)
+   - Verify drug indications and contraindications
+   - Check evidence-based recommendations
 """
     
     return base_prompt + clinical_enhancements

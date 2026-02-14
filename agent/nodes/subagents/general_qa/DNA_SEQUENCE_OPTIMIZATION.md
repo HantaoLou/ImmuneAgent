@@ -143,3 +143,4 @@
   - `get_complete_inference_prompt`：添加DNA序列分析规则和基因表达规则
   - `get_answer_generation_prompt`：添加序列验证规则
 
+

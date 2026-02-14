@@ -130,7 +130,32 @@ def query_knowledge_graph(query: KnowledgeGraphQuery) -> List[Dict[str, Any]]:
     
     try:
         results = con.execute(sql, params).fetchdf()
-        return results.to_dict(orient="records")
+        records = results.to_dict(orient="records")
+        
+        # 如果结果为空，提供诊断信息和建议
+        if len(records) == 0:
+            suggestions = []
+            if query.entity_name:
+                # 建议尝试更宽泛的搜索
+                first_word = query.entity_name.split()[0] if query.entity_name else None
+                if first_word and len(query.entity_name.split()) > 1:
+                    suggestions.append(f"Try searching for '{first_word}' (first word only) for broader results")
+                suggestions.append("Try removing some filters (e.g., relation or target_type) to expand search")
+                suggestions.append("Check if the entity name exists in the database with a different spelling")
+            
+            return [{
+                "result_count": 0,
+                "query_info": {
+                    "entity_name": query.entity_name,
+                    "entity_type": query.entity_type.value if query.entity_type else None,
+                    "relation": query.relation,
+                    "target_type": query.target_type.value if query.target_type else None,
+                },
+                "suggestions": suggestions,
+                "note": "Query executed successfully but no matching records found. This may indicate: 1) The search terms don't exist in the database, 2) The filters are too restrictive, or 3) The data may be stored under different terminology."
+            }]
+        
+        return records
     except Exception as e:
         return [{"error": f"Query failed: {str(e)}"}]
     finally:

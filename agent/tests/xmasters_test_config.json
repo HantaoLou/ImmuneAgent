@@ -1,0 +1,35 @@
+{
+  "questions": [
+    "什么是DNA？",
+    "请解释一下什么是抗体",
+    "生物信息学的主要应用领域有哪些？"
+  ],
+  "llm_configs": [
+    {
+      "provider": "dashscope",
+      "model": "qwen-max",
+      "temperature": 0.1
+    },
+    {
+      "provider": "dashscope",
+      "model": "qwen-max",
+      "temperature": 0.3
+    },
+    {
+      "provider": "dashscope",
+      "model": "qwen-max",
+      "temperature": 0.5
+    },
+    {
+      "provider": "dashscope",
+      "model": "qwen-turbo",
+      "temperature": 0.3
+    },
+    {
+      "provider": "zhipu",
+      "model": "glm-4.5-air:1131206110::21rbvay4",
+      "temperature": 0.3
+    }
+  ]
+}
+

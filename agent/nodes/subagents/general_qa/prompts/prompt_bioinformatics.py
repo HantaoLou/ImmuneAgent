@@ -173,13 +173,15 @@ def get_knowledge_retrieval_prompt(
     structured_subject: Dict[str, Any] = None,
     structured_condition: Dict[str, Any] = None,
     structured_goal: Dict[str, Any] = None,
-    synonyms: List[str] = None
+    synonyms: List[str] = None,
+    cleaned_text: str = None  # ENHANCEMENT: Add for data analysis
 ) -> str:
     """N3 prompt with bioinformatics-specific knowledge retrieval"""
     base_prompt = get_base_knowledge_retrieval_prompt(
         core_domains, calculation_type, algorithm_domain, research_objective,
         structured_conditions, key_entities, answer_format_label, question_type_label,
-        structured_subject, structured_condition, structured_goal, synonyms
+        structured_subject, structured_condition, structured_goal, synonyms,
+        cleaned_text=cleaned_text  # ENHANCEMENT: Pass cleaned_text
     )
     
     bioinformatics_enhancements = """
@@ -287,11 +289,57 @@ def get_complete_inference_prompt(
     calculation_result: Any = None
 ) -> str:
     """N7: Complete inference - Bioinformatics domain"""
-    return get_base_complete_inference_prompt(
+    base_prompt = get_base_complete_inference_prompt(
         cleaned_text, research_objective, initial_associations, retrieved_knowledge,
         question_options, structured_subject, structured_condition, structured_goal,
         calculation_result
     )
+    
+    bioinformatics_enhancements = """
+
+**Bioinformatics-Specific Complete Inference Rules:**
+
+1. **Statistical Inference**:
+   - Apply statistical test logic correctly (chi-square, t-test, etc.)
+   - Verify p-value interpretation follows statistical conventions
+   - Check assumptions of statistical tests are met
+
+2. **Population Genetics Inference**:
+   - Apply HWE, Fst, theta, pi formulas correctly
+   - Verify population parameters are consistent
+   - Check calculation results are within expected ranges
+
+3. **Computational Logic**:
+   - Verify algorithm steps follow computational principles
+   - Check data quality requirements are satisfied
+   - Ensure computational assumptions are valid
+
+**Bioinformatics-Specific Option Analysis Strategy:**
+
+For bioinformatics multiple choice questions, apply these verification rules:
+
+1. **Statistical Options**:
+   - Recalculate statistical tests for each option
+   - Verify p-value ranges and significance levels
+   - Eliminate options with incorrect statistical interpretation
+
+2. **Calculation Options**:
+   - Recalculate values (theta, pi, Fst) for each option
+   - Verify numerical ranges are consistent with biology
+   - Check if values match expected magnitudes
+
+3. **Method Options**:
+   - Verify each method description is accurate
+   - Check algorithm steps are correctly described
+   - Eliminate options with methodological errors
+
+4. **Cross-Verification**:
+   - Compare against statistical reference values
+   - Verify formula applications are correct
+   - Check biological plausibility of results
+"""
+    
+    return base_prompt + bioinformatics_enhancements
 
 
 def get_answer_generation_prompt(

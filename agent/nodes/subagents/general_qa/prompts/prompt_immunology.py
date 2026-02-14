@@ -165,13 +165,15 @@ def get_knowledge_retrieval_prompt(
     structured_subject: Dict[str, Any] = None,
     structured_condition: Dict[str, Any] = None,
     structured_goal: Dict[str, Any] = None,
-    synonyms: List[str] = None
+    synonyms: List[str] = None,
+    cleaned_text: str = None  # ENHANCEMENT: Add for data analysis
 ) -> str:
     """N3 prompt with immunology-specific knowledge retrieval"""
     base_prompt = get_base_knowledge_retrieval_prompt(
         core_domains, calculation_type, algorithm_domain, research_objective,
         structured_conditions, key_entities, answer_format_label, question_type_label,
-        structured_subject, structured_condition, structured_goal, synonyms
+        structured_subject, structured_condition, structured_goal, synonyms,
+        cleaned_text=cleaned_text  # ENHANCEMENT: Pass cleaned_text
     )
     
     immunology_enhancements = """
@@ -294,6 +296,30 @@ def get_complete_inference_prompt(
    - Verify MHC class matches antigen type
    - Check TCR recognition requirements are met
    - Ensure MHC restriction is correctly applied
+
+**Immunology-Specific Option Analysis Strategy:**
+
+For immunology multiple choice questions, apply these verification rules:
+
+1. **Cell Development Options**:
+   - Check if each option correctly describes cell development stages
+   - Verify receptor expression matches cell type
+   - Eliminate options with incorrect developmental sequence
+
+2. **Mechanism Options**:
+   - Verify V(D)J recombination steps are correctly described
+   - Check selection mechanisms (positive/negative) are correctly applied
+   - Eliminate options that violate immunological principles
+
+3. **Receptor-Ligand Options**:
+   - Verify MHC-antigen-TCR relationships are correct
+   - Check co-stimulatory molecule requirements
+   - Eliminate options with incorrect receptor-ligand pairing
+
+4. **Cross-Verification**:
+   - Compare options against immunology databases (McPAS-TCR, etc.)
+   - Verify cell markers match known cell types
+   - Check signaling pathways are correctly described
 """
     
     return base_prompt + immunology_enhancements

@@ -334,13 +334,18 @@ def run_single_critic(
     logger.info(f"[Critic {solver_id}] received retrieved_context: {len(retrieved_context)} chars")
     critic_prompt = _build_critic_prompt(problem, solution, retrieved_context)
 
+    error_info = None
     try:
         log, last_content = critic.go(critic_prompt)
         revised_solution = extract_solution(last_content)
         success = True
         logger.info(f"[Critic {solver_id}] Completed successfully")
     except Exception as e:
+        import traceback
+        error_info = str(e)
+        error_traceback = traceback.format_exc()
         logger.error(f"[Critic {solver_id}] Failed: {e}")
+        logger.debug(f"[Critic {solver_id}] Traceback: {error_traceback}")
         # Fallback: preserve the original solution
         revised_solution = solution
         log = []
@@ -355,4 +360,5 @@ def run_single_critic(
         "log": log,
         "solver_id": solver_id,
         "success": success,
+        "error": error_info,  # Include error information for debugging
     }

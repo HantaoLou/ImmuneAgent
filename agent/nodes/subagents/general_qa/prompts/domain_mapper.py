@@ -13,24 +13,71 @@ import threading
 DOMAIN_MAPPING = {
     # raw_subject 到 prompt 模块的映射
     "Genetics": "genetics",
-    "Genomics": "genomics",
+    "Genomics": "genetics",
+    "Population Genetics": "genetics",
+    "HWE": "genetics",
+    "Fst Analysis": "genetics",
+    "Linkage Analysis": "genetics",
+    "GWAS": "genetics",
+    "Variant": "genetics",
+    
     "Immunology": "immunology",
+    "T Cell": "immunology",
+    "B Cell": "immunology",
+    "TCR": "immunology",
+    "BCR": "immunology",
+    "MHC": "immunology",
+    "Antigen Presentation": "immunology",
+    "V(D)J": "immunology",
+    "Hematopoiesis": "immunology",
+    "Stem Cell": "immunology",
+    
     "Biochemistry": "biochemistry",
+    "Enzyme": "biochemistry",
+    "Metabolism": "biochemistry",
+    "Sugar Metabolism": "biochemistry",
+    "Carbohydrate": "biochemistry",
+    "Raffinose": "biochemistry",
+    "Concentration": "biochemistry",
+    "Binding": "biochemistry",
+    "Kinetics": "biochemistry",
+    
     "Molecular Biology": "molecular_biology",
+    "Gene Expression": "molecular_biology",
+    "Transcription": "molecular_biology",
+    "Translation": "molecular_biology",
+    "Pathway": "molecular_biology",
+    
     "Bioinformatics": "bioinformatics",
-    "Computational Biology": "bioinformatics",  # 合并到 bioinformatics
+    "Computational Biology": "bioinformatics",
+    "Sequence Analysis": "bioinformatics",
+    "Alignment": "bioinformatics",
+    
     "Clinical Medicine": "clinical_medicine",
-    "Medicine": "clinical_medicine",  # 合并
+    "Medicine": "clinical_medicine",
+    "Drug": "clinical_medicine",
+    "Medication": "clinical_medicine",
+    "Hypertension": "clinical_medicine",
+    "Diabetes": "clinical_medicine",
+    "Treatment": "clinical_medicine",
+    
     "Microbiology": "microbiology",
+    "Virus": "microbiology",
+    "Bacteria": "microbiology",
+    "Pathogen": "microbiology",
+    "Infection": "microbiology",
+    
     "Biophysics": "biophysics",
-    "Neuroscience": "neuroscience",
-    "Pathology": "pathology",
-    "Pharmacy": "pharmacy",
-    "Physiology": "physiology",
-    "Anatomy": "anatomy",
-    "Ecology": "ecology",
-    "Public Health": "public_health",
-    "Bioengineering": "bioengineering",
+    "Membrane": "biophysics",
+    "Lipid": "biophysics",
+    "Cell Signaling": "biophysics",
+    "Receptor": "biophysics",
+    
+    "Entomology": "general",  # 昆虫学没有专门模块，使用general
+    "Insect Physiology": "general",
+    "Aphid": "general",
+    "Host Adaptation": "general",
+    
     "Biology": "general",  # 通用领域
     
     # question_type 到 prompt 模块的映射
@@ -48,7 +95,78 @@ DOMAIN_MAPPING = {
     "general_biomedical": "general",
 }
 
-# 领域核心关键词映射
+# 细粒度领域关键词映射（增强版）
+FINE_GRAINED_DOMAIN_KEYWORDS = {
+    # Population Genetics 细分
+    "Population Genetics": [
+        "Fst", "theta", "pi", "nucleotide diversity", "Watterson",
+        "Hardy-Weinberg", "HWE", "allele frequency", "genotype frequency",
+        "population structure", "genetic drift", "gene flow", "migration",
+        "hybrid zone", "cline", "isolation", "subpopulation"
+    ],
+    "Linkage Genetics": [
+        "linkage disequilibrium", "LD", "haplotype", "recombination",
+        "genetic map", "centimorgan", "cM", "linkage map"
+    ],
+    "Molecular Genetics": [
+        "SNP", "variant", "mutation", "insertion", "deletion",
+        "sequencing", "genotype", "allele"
+    ],
+    
+    # Immunology 细分
+    "T Cell Biology": [
+        "T cell", "CD4", "CD8", "TCR", "T cell receptor",
+        "thymus", "positive selection", "negative selection",
+        "regulatory T cell", "Treg", "effector T cell"
+    ],
+    "B Cell Biology": [
+        "B cell", "BCR", "B cell receptor", "antibody",
+        "plasma cell", "memory B cell", "germinal center",
+        "somatic hypermutation", "class switching"
+    ],
+    "V(D)J Recombination": [
+        "V(D)J", "VDJ", "rearrangement", "recombination",
+        "allelic exclusion", "allelic inclusion", "RAG",
+        "junctional diversity", "N nucleotide", "P nucleotide"
+    ],
+    "Hematopoiesis": [
+        "HSC", "hematopoietic stem cell", "MPP", "multipotent progenitor",
+        "lineage", "differentiation", "bone marrow", "hematopoiesis"
+    ],
+    
+    # Biochemistry 细分
+    "Enzyme Kinetics": [
+        "enzyme", "substrate", "Km", "Vmax", "kcat",
+        "Michaelis-Menten", "inhibition", "catalysis"
+    ],
+    "Sugar Metabolism": [
+        "sucrose", "raffinose", "glucose", "fructose",
+        "carbohydrate", "glycolysis", "RFO", "oligosaccharide",
+        "alpha-galactosidase", "galactosidase"
+    ],
+    "Protein Biochemistry": [
+        "protein", "folding", "stability", "conformation",
+        "denaturation", "aggregation", "oligomerization"
+    ],
+    
+    # Clinical Medicine 细分
+    "Hypertension Management": [
+        "hypertension", "blood pressure", "antihypertensive",
+        "JNC8", "ACE inhibitor", "ARB", "diuretic"
+    ],
+    "Drug Interaction": [
+        "drug interaction", "contraindication", "adverse effect",
+        "metabolism", "CYP450", "drug-drug"
+    ],
+    
+    # Entomology (昆虫学)
+    "Insect Physiology": [
+        "aphid", "biotype", "host plant", "phloem sap",
+        "digestive adaptation", "specialization", "host transfer"
+    ],
+}
+
+# 领域核心关键词映射（保持向后兼容）
 DOMAIN_KEYWORDS = {
     "Genetics": [
         "allele", "genotype", "phenotype", "locus", "haplotype",
@@ -62,7 +180,8 @@ DOMAIN_KEYWORDS = {
         "TCR", "BCR", "MHC", "antigen", "antibody", "cytokine",
         "allelic exclusion", "allelic inclusion", "positive selection",
         "negative selection", "V(D)J", "recombination", "CD4", "CD8",
-        "immune", "immunology", "lymphocyte", "leukocyte", "thymus"
+        "immune", "immunology", "lymphocyte", "leukocyte", "thymus",
+        "HSC", "hematopoietic", "stem cell", "MPP"
     ],
     "Clinical Medicine": [
         "hypertension", "diabetes", "medication", "drug", "treatment",
@@ -82,7 +201,9 @@ DOMAIN_KEYWORDS = {
         "concentration", "molecular weight", "enzyme", "substrate",
         "reaction", "equilibrium", "binding", "affinity", "kinetics",
         "protein", "ligand", "receptor", "pathway", "metabolism",
-        "biochemical", "biochemistry", "catalysis", "inhibition"
+        "biochemical", "biochemistry", "catalysis", "inhibition",
+        "sucrose", "raffinose", "glucose", "carbohydrate", "sugar",
+        "alpha-galactosidase", "galactosidase"
     ],
     "Molecular Biology": [
         "transcription", "translation", "DNA", "RNA", "protein",
@@ -97,6 +218,10 @@ DOMAIN_KEYWORDS = {
     "Biophysics": [
         "biophysics", "membrane", "lipid", "structure", "folding",
         "spectroscopy", "NMR", "X-ray", "crystallography"
+    ],
+    "Entomology": [
+        "aphid", "biotype", "insect", "host plant", "phloem",
+        "cotton", "watermelon", "melon", "adaptation", "specialization"
     ],
 }
 
@@ -130,6 +255,115 @@ def extract_keywords(text: str) -> List[str]:
                 keywords.append(keyword)
     
     return keywords
+
+
+def identify_fine_grained_domains(text: str) -> List[Tuple[str, str, float]]:
+    """
+    识别细粒度领域并映射到prompt模块
+    
+    Args:
+        text: 用户输入文本
+    
+    Returns:
+        List of (fine_grained_domain, prompt_module, confidence)
+    """
+    if not text:
+        return []
+    
+    text_lower = text.lower()
+    results = []
+    
+    # 检查细粒度领域关键词
+    for fine_domain, keywords in FINE_GRAINED_DOMAIN_KEYWORDS.items():
+        matches = 0
+        for keyword in keywords:
+            keyword_lower = keyword.lower()
+            pattern = r'\b' + re.escape(keyword_lower) + r'\b'
+            if re.search(pattern, text_lower):
+                matches += 1
+        
+        if matches > 0:
+            confidence = matches / len(keywords)
+            # 映射到prompt模块
+            prompt_module = DOMAIN_MAPPING.get(fine_domain, "general")
+            results.append((fine_domain, prompt_module, confidence))
+    
+    # 如果没有找到细粒度匹配，使用通用领域匹配
+    if not results:
+        for domain, keywords in DOMAIN_KEYWORDS.items():
+            matches = 0
+            for keyword in keywords:
+                keyword_lower = keyword.lower()
+                pattern = r'\b' + re.escape(keyword_lower) + r'\b'
+                if re.search(pattern, text_lower):
+                    matches += 1
+            
+            if matches > 0:
+                confidence = matches / len(keywords)
+                prompt_module = DOMAIN_MAPPING.get(domain, "general")
+                results.append((domain, prompt_module, confidence))
+    
+    # 按置信度排序
+    results.sort(key=lambda x: x[2], reverse=True)
+    return results
+
+
+def map_core_domains_to_modules(core_domains: List[str], user_input: str = "") -> Tuple[str, List[str]]:
+    """
+    将N1识别的core_domains映射到可用的prompt模块
+    
+    Args:
+        core_domains: N1节点识别的领域列表（如["Biochemistry", "Insect Physiology", "Sugar Metabolism"]）
+        user_input: 原始用户输入（用于细粒度匹配）
+    
+    Returns:
+        (primary_module, all_modules)
+        - primary_module: 主要prompt模块
+        - all_modules: 所有匹配的模块列表
+    """
+    if not core_domains:
+        # 使用细粒度识别
+        fine_results = identify_fine_grained_domains(user_input)
+        if fine_results:
+            return fine_results[0][1], [r[1] for r in fine_results[:3]]
+        return "general", ["general"]
+    
+    modules = []
+    for domain in core_domains:
+        # 直接映射
+        if domain in DOMAIN_MAPPING:
+            modules.append(DOMAIN_MAPPING[domain])
+        else:
+            # 尝试部分匹配
+            domain_lower = domain.lower()
+            for key in DOMAIN_MAPPING:
+                if key.lower() in domain_lower or domain_lower in key.lower():
+                    modules.append(DOMAIN_MAPPING[key])
+                    break
+            else:
+                # 使用细粒度识别
+                fine_results = identify_fine_grained_domains(f"{domain} {user_input}")
+                if fine_results:
+                    modules.append(fine_results[0][1])
+                else:
+                    modules.append("general")
+    
+    # 去重
+    unique_modules = list(dict.fromkeys(modules))
+    
+    # 如果只有一个模块，作为主模块
+    if len(unique_modules) == 1:
+        return unique_modules[0], unique_modules
+    
+    # 多模块情况：使用cross_domain或第一个
+    if len(unique_modules) > 1:
+        # 优先使用非general模块
+        non_general = [m for m in unique_modules if m != "general"]
+        if non_general:
+            return non_general[0], unique_modules
+        return unique_modules[0], unique_modules
+    
+    return "general", ["general"]
 
 
 def identify_domain(
@@ -324,24 +558,44 @@ def get_prompt_module(
 
 def detect_domain_from_state(state: Any) -> Optional[str]:
     """
-    Detect domain from state object
+    Detect domain from state object - ENHANCED with fine-grained mapping
     
     Args:
         state: GeneralQAState object
     
     Returns:
-        Detected domain string or None
+        Detected domain string (mapped to available prompt module) or None
     """
-    # 优先使用 question_type_label
-    if hasattr(state, 'question_type_label') and state.question_type_label:
-        return state.question_type_label
+    user_input = ""
+    if hasattr(state, 'user_input'):
+        user_input = state.user_input or ""
+    if hasattr(state, 'cleaned_text') and state.cleaned_text:
+        user_input = state.cleaned_text
     
-    # 其次使用 core_domains
+    # 优先使用 question_type_label（但需要映射到模块）
+    if hasattr(state, 'question_type_label') and state.question_type_label:
+        q_type = state.question_type_label
+        if q_type in DOMAIN_MAPPING:
+            return DOMAIN_MAPPING[q_type]
+        # 尝试细粒度匹配
+        fine_results = identify_fine_grained_domains(user_input)
+        if fine_results:
+            return fine_results[0][1]
+        return q_type
+    
+    # 其次使用 core_domains（应用细粒度映射）
     if hasattr(state, 'core_domains') and state.core_domains:
         if isinstance(state.core_domains, list) and len(state.core_domains) > 0:
-            return state.core_domains[0]
+            # 使用新的映射函数
+            primary_module, all_modules = map_core_domains_to_modules(
+                state.core_domains, user_input
+            )
+            return primary_module
         elif isinstance(state.core_domains, str):
-            return state.core_domains
+            primary_module, _ = map_core_domains_to_modules(
+                [state.core_domains], user_input
+            )
+            return primary_module
     
     # 最后使用 question_category_standard 推断
     if hasattr(state, 'question_category_standard') and state.question_category_standard:
@@ -350,13 +604,51 @@ def detect_domain_from_state(state: Any) -> Optional[str]:
             subcategory = category.split("-", 1)[1]
             # 尝试映射子类别到领域
             subcategory_mapping = {
-                "Genetics": "Genetics",
-                "Immunology": "Immunology",
-                "Biochemistry": "Biochemistry",
-                "LipidBiophysics": "Biophysics",
-                "ProteinStructure": "Biochemistry",
+                "Genetics": "genetics",
+                "Immunology": "immunology",
+                "Biochemistry": "biochemistry",
+                "LipidBiophysics": "biophysics",
+                "ProteinStructure": "biochemistry",
             }
-            return subcategory_mapping.get(subcategory)
+            mapped = subcategory_mapping.get(subcategory)
+            if mapped:
+                return mapped
+    
+    # 使用细粒度识别作为最后手段
+    fine_results = identify_fine_grained_domains(user_input)
+    if fine_results:
+        return fine_results[0][1]
     
     return None
+
+
+def detect_domain_and_modules_from_state(state: Any) -> Tuple[Optional[str], List[str]]:
+    """
+    检测领域并返回主要模块和所有相关模块
+    
+    Args:
+        state: GeneralQAState object
+    
+    Returns:
+        (primary_module, all_modules)
+        - primary_module: 主要prompt模块
+        - all_modules: 所有相关模块列表
+    """
+    user_input = ""
+    if hasattr(state, 'user_input'):
+        user_input = state.user_input or ""
+    if hasattr(state, 'cleaned_text') and state.cleaned_text:
+        user_input = state.cleaned_text
+    
+    core_domains = []
+    if hasattr(state, 'core_domains') and state.core_domains:
+        if isinstance(state.core_domains, list):
+            core_domains = state.core_domains
+        elif isinstance(state.core_domains, str):
+            core_domains = [state.core_domains]
+    
+    # 使用映射函数
+    primary_module, all_modules = map_core_domains_to_modules(core_domains, user_input)
+    
+    return primary_module, all_modules
 

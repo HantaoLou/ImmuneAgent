@@ -3,7 +3,16 @@ from pydantic import BaseModel, Field
 
 
 class GeneralQAState(BaseModel):
-    """General QA Agent State - Complete state model for all 12 nodes"""
+    """General QA Agent State - Complete state model for all 12 nodes
+    
+    Enhanced with:
+    - Self-Consistency multi-path reasoning
+    - Chain-of-Thought explicit reasoning chain
+    - Calculation cross-verification
+    - Iterative knowledge retrieval
+    - Meta-cognitive monitoring
+    - Smart exception diagnosis
+    """
     
     # ========== N0: Input Preprocessing & Question Classification ==========
     user_input: str = Field(description="User's original input (question text, may include options/experimental data)")
@@ -25,6 +34,9 @@ class GeneralQAState(BaseModel):
     structured_condition: Optional[Dict[str, Any]] = Field(default=None, description="Condition (条件) - 结构化信息: type (条件类型), key_features (关键特征)")
     structured_goal: Optional[Dict[str, Any]] = Field(default=None, description="Goal (目标) - 结构化信息: type (目标类型), constraint (目标约束)")
     
+    # ========== Domain Enhancement (N0 optimization) ==========
+    domain_enhancement: Optional[Dict[str, Any]] = Field(default=None, description="Domain enhancement data from N0 optimization including detected domains, key constraints, critical hints, etc.")
+    
     # ========== N1: Question Decomposition & Domain Localization ==========
     structured_conditions: Optional[Dict[str, Any]] = Field(default=None, description="Structured conditions dictionary extracted from question")
     core_domains: Optional[List[str]] = Field(default=None, description="Core domain list identified from question")
@@ -40,6 +52,7 @@ class GeneralQAState(BaseModel):
     strong_restrictions: Optional[List[str]] = Field(default=None, description="Strong restrictions (necessarily true/must be) - constraints that impose strict requirements")
     inference_core_restrictions: Optional[List[str]] = Field(default=None, description="Core restrictions needed for inference - merged from negative/exclusive/strong/key constraints")
     auto_retry_count: Optional[int] = Field(default=0, description="Auto-retry count for node interruption recovery")
+    n7_to_n6_retry_count: Optional[int] = Field(default=0, description="Retry count specifically for N7->N6 retry path to prevent infinite loops")
     node_visit_count: Optional[Dict[str, int]] = Field(default=None, description="Track number of visits to each node to prevent infinite loops")
     
     # ========== N2: Calculation/Algorithm Requirement Recognition ==========
@@ -78,6 +91,36 @@ class GeneralQAState(BaseModel):
     closed_inference_path: Optional[List[Dict[str, Any]]] = Field(default=None, description="Closed inference pathway (including calculation process, must cover all category_specific_solution_steps)")
     core_conclusion: Optional[str] = Field(default=None, description="Core conclusion from inference (must be based on facts/calculations, not subjective judgment)")
     fact_verification_result: Optional[str] = Field(default=None, description="Fact verification result: '结论与事实一致'/'结论与事实不一致' (from fact_verification step)")
+    
+    # ========== Enhancement: Self-Consistency 多路径推理 ==========
+    inference_paths: Optional[List[Dict[str, Any]]] = Field(default=None, description="Multiple inference paths generated with different temperatures")
+    self_consistency_result: Optional[Dict[str, Any]] = Field(default=None, description="Self-consistency voting result: {consensus_answer, consensus_ratio, confidence_level, answer_votes}")
+    
+    # ========== Enhancement: Chain-of-Thought 显式推理链 ==========
+    structured_inference_steps: Optional[List[Dict[str, Any]]] = Field(default=None, description="Structured inference steps with premise, operation, conclusion, and dependencies")
+    reasoning_depth: Optional[int] = Field(default=None, description="Reasoning depth metric (number of logical hops)")
+    inference_chain_coherent: Optional[bool] = Field(default=None, description="Whether the inference chain is logically coherent")
+    
+    # ========== Enhancement: Calculation Cross-Verification ==========
+    calculation_verification: Optional[Dict[str, Any]] = Field(default=None, description="Calculation verification result: {symbolic_result, numerical_result, all_match, discrepancy}")
+    needs_calculation_retry: Optional[bool] = Field(default=None, description="Whether calculation needs to be retried due to verification failure")
+    
+    # ========== Enhancement: Iterative Knowledge Retrieval ==========
+    retrieval_iterations: Optional[int] = Field(default=0, description="Number of knowledge retrieval iterations performed")
+    knowledge_gaps_identified: Optional[List[str]] = Field(default=None, description="Knowledge gaps identified during retrieval")
+    follow_up_questions: Optional[List[str]] = Field(default=None, description="Follow-up questions generated for iterative retrieval")
+    
+    # ========== Enhancement: Meta-Cognitive Monitoring ==========
+    meta_cognitive_assessment: Optional[Dict[str, Any]] = Field(default=None, description="Meta-cognitive assessment: {goal_alignment, constraint_coverage, knowledge_gaps, reasoning_coherence, needs_backtracking}")
+    needs_backtracking: Optional[bool] = Field(default=None, description="Whether the reasoning needs to backtrack to a previous node")
+    
+    # ========== Enhancement: Smart Exception Diagnosis ==========
+    root_cause_diagnosis: Optional[str] = Field(default=None, description="Root cause diagnosis for exception")
+    retry_strategy: Optional[Dict[str, Any]] = Field(default=None, description="Smart retry strategy: {target_node, action, params, reason}")
+    
+    # ========== Enhancement: Tool Intent Recognition ==========
+    required_tools: Optional[List[str]] = Field(default=None, description="Tools required for answering this question")
+    recommended_tools: Optional[List[str]] = Field(default=None, description="Tools recommended but not required")
     
     # ========== N8: Multi-Type Answer Generation ==========
     structured_answer: Optional[Dict[str, Any]] = Field(default=None, description="Structured answer (option matching table/numerical result/text answer)")

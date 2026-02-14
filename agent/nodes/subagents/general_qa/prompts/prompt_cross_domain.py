@@ -140,13 +140,15 @@ def get_knowledge_retrieval_prompt(
     structured_subject: Dict[str, Any] = None,
     structured_condition: Dict[str, Any] = None,
     structured_goal: Dict[str, Any] = None,
-    synonyms: List[str] = None
+    synonyms: List[str] = None,
+    cleaned_text: str = None  # ENHANCEMENT: Add for data analysis
 ) -> str:
     """N3: Knowledge retrieval - Cross-domain (merged tools from all domains)"""
     base_prompt = get_base_knowledge_retrieval_prompt(
         core_domains, calculation_type, algorithm_domain, research_objective,
         structured_conditions, key_entities, answer_format_label, question_type_label,
-        structured_subject, structured_condition, structured_goal, synonyms
+        structured_subject, structured_condition, structured_goal, synonyms,
+        cleaned_text=cleaned_text  # ENHANCEMENT: Pass cleaned_text
     )
     
     domains = _domains if _domains else core_domains
