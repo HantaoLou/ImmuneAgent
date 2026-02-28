@@ -815,11 +815,31 @@ class ExceptionDiagnostician:
             action="increase_sampling",
             params={"num_paths": 5, "temperatures": [0.0, 0.2, 0.4, 0.6, 0.8]},
             reason="Low consensus across reasoning paths"
+        ),
+        "llm_timeout": RetryStrategy(
+            target_node="n10_exception_handling",  # Don't retry, just provide fallback
+            action="use_fallback",
+            params={"skip_retry": True},
+            reason="LLM API timeout - external service unavailable, use fallback answer"
+        ),
+        "llm_error": RetryStrategy(
+            target_node="n10_exception_handling",
+            action="use_fallback",
+            params={"skip_retry": True},
+            reason="LLM API error - use fallback answer generation"
         )
     }
     
     def diagnose_root_cause(self, state: 'GeneralQAState') -> str:
         """诊断根因"""
+        # CRITICAL: First check for LLM errors (unrecoverable, should not retry)
+        if state.exception_type_label:
+            exception_lower = state.exception_type_label.lower()
+            if "timeout" in exception_lower or "timed out" in exception_lower:
+                return "llm_timeout"
+            if "llm" in exception_lower and ("error" in exception_lower or "failed" in exception_lower):
+                return "llm_error"
+        
         # 检查知识问题
         if state.knowledge_validity_label == "Invalid":
             return "knowledge_invalid"
@@ -1049,4 +1069,5 @@ def extract_numerical_result(text: str) -> Optional[float]:
                 continue
     
     return None
+
 

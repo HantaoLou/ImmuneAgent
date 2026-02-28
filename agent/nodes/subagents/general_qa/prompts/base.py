@@ -78,243 +78,64 @@ def get_calculation_validation_rules() -> Dict[str, List[str]]:
 
 def get_base_input_preprocessing_prompt(user_input: str) -> str:
     """
-    Base template for N0: Input Preprocessing
-    Domain-specific modules will enhance this template
+    Base template for N0: Input Preprocessing (OPTIMIZED - reduced from ~240 to ~80 lines)
     """
-    return f"""You are a biomedical question analysis expert. Your task is to preprocess the input question, classify its type, and extract structured three-dimensional information.
+    return f"""[Role] Biomedical question analysis expert.
 
-Input Question:
+[Input]
 {user_input}
 
-Please perform the following tasks:
-1. Clean the input text: Remove redundant descriptions, normalize formatting, extract core question content
-2. Classify question type: Determine if this is a Multiple Choice question, Text Matching question, Mechanism Explanation question, Numerical Calculation question, Logical Calculation question, or Professional Algorithm question
-   - **CRITICAL**: If question asks for "minimum number" based on grouping/logical rules (e.g., "minimum [reagents] to distinguish [entities]"), classify as "Logical Calculation", NOT "Numerical Calculation"
-   - **CRITICAL: True/False Question Detection**: If the question options are ONLY "True" and "False" (or "true" and "false"), you MUST classify it as "Text Matching" (NOT "Multiple Choice"). This is a True/False judgment question, not a multiple choice question. The answer format should be "Short Text" and the answer must be "True" or "False", not option letters like "A" or "B".
+[Tasks]
+1. Clean text → extract core question
+2. Classify type: Multiple Choice|Text Matching|Mechanism Explanation|Numerical Calculation|Logical Calculation|Professional Algorithm
+3. Extract options (if MCQ)
+4. Determine answer format: Single Choice|Multi-Select|Numeric|Short Text|Sequence|Formula|List|Procedure|Code-Command
+5. Assess completeness: Complete|Partial Missing|Severe Missing|Incomplete-MissingCoreEntity
 
-**CRITICAL: Standardized Question Category Classification - MANDATORY**
-You MUST classify the question into one of three standardized categories and assign category-specific constraints:
+[Category Classification] Choose ONE:
+- Calculation-[sub]: numerical computation → constraints: ["must complete numerical derivation"]
+- ClinicalDecision-[sub]: clinical guidelines → constraints: ["follow latest guidelines", "exclude contraindications"]
+- ProfessionalKnowledge-[sub]: domain knowledge → constraints: ["match authoritative sources"]
 
-1. **Calculation-[subcategory]**: Questions requiring numerical computation, formula application, or statistical tests
-   - Subcategories: ChiSquare, SurfaceArea, Concentration, MolecularWeight, etc.
-   - Category-specific constraints: ["Must complete numerical derivation", "Conclusion based on calculated values, not subjective judgment", "Must verify calculation results against critical/reference values"]
-   - Examples: Chi-square tests, lipid surface area calculations, concentration calculations
+[Structured 3D Info - MANDATORY]
+- Subject: {{type, attribute}}
+- Condition: {{type, key_features, hard_constraints}}
+- Goal: {{type, constraint, intent: ask_defect|ask_cause|ask_advantage|ask_mechanism|ask_example|ask_definition|ask_comparison|ask_procedure|neutral}}
 
-2. **ClinicalDecision-[subcategory]**: Questions requiring clinical guideline application, medication selection, or treatment recommendations
-   - Subcategories: Hypertension, Diabetes, Cardiology, etc.
-   - Category-specific constraints: ["Must follow latest clinical guidelines", "Exclude all contraindications", "Plan must comply with diagnostic and treatment principles", "Must verify drug compatibility"]
-   - Examples: Hypertension medication recommendations, treatment protocol selection
+[Extraction Rules]
+- Values: MUST match exactly (e.g., "55uM" not "50uM")
+- Entity names: MUST match exactly (e.g., "G1-6" not "G1 to G6")
+- Missing core data → data_completeness_label="Incomplete-MissingCoreEntity"
 
-3. **ProfessionalKnowledge-[subcategory]**: Questions requiring domain-specific knowledge matching, causal logic derivation, or conceptual understanding
-   - Subcategories: LipidBiophysics, Genetics, Immunology, Biochemistry, etc.
-   - Category-specific constraints: ["Conclusion must match authoritative textbooks/industry standards", "Logic chain based on causal facts", "Must verify knowledge fact consistency"]
-   - Examples: Lipid membrane biophysics, genetic inheritance patterns, molecular mechanisms
+[Special Cases]
+- True/False only options → answer_format_label="Short Text" (answer: "True"/"False")
+- "Identify X from data" → answer_format_label="Short Text" (entity name, not data)
+- "minimum number to distinguish" → question_type_label="Logical Calculation"
 
-**Output Format**: Add to JSON response:
-- "question_category_standard": "Calculation-[subcategory]|ClinicalDecision-[subcategory]|ProfessionalKnowledge-[subcategory]" - MANDATORY: Standardized category with subcategory
-- "category_specific_constraints": [list of constraints matching the category]
-3. Extract answer options: If options are provided (e.g., A/B/C choices), extract them in order as plain text (no labels). Otherwise return an empty list
-4. Determine expected answer format: Choose one of Single Choice, Multi-Select, Numeric, Short Text, Long Text, Sequence, Formula, List, Procedure, Code-Command
-5. Assess data completeness: Evaluate if the question contains all necessary information (Complete/Partial Missing/Severe Missing)
-   - **CRITICAL**: If question mentions "DNA sequence provided" but no actual sequence text is in the input, mark as "Incomplete-MissingCoreEntity" with missing_core_entities: ["DNA sequence text"]
+[Keywords] Extract:
+- core_keywords: ["kw1", "kw2", ...]
+- option_features: {{"A": "feature1", "B": "feature2", ...}}
+- synonyms: normalized terms for retrieval
+- tool_intent: {{"query_go_term": "YES|NO", "query_knowledge_graph": "YES|NO"}}
 
-**CRITICAL: Experimental Data Structured Extraction - ENHANCEMENT**
-If the question contains experimental data (numbers, conditions, comparisons, tables, results), you MUST extract structured experimental data:
-
-**Experimental Data Detection Patterns:**
-- Numerical data with units (e.g., "3:8 ratio", "55uM", "300kDa")
-- Experimental groups/conditions (e.g., "CA biotypes", "MA biotypes", "treatment A vs B")
-- Performance/outcome measures (e.g., "did well", "decreased activity", "higher levels")
-- Comparisons (e.g., "A performed better than B", "X increased while Y decreased")
-
-**Structured Experimental Data Format - Add to JSON response:**
-- "experimental_data": {{
-    "has_experimental_data": true|false,
-    "groups": [
-        {{"name": "group1", "description": "description of group1"}},
-        {{"name": "group2", "description": "description of group2"}}
-    ],
-    "conditions": [
-        {{"name": "condition1", "values": "values or description"}},
-        ...
-    ],
-    "outcomes": [
-        {{"group": "group_name", "condition": "condition_name", "outcome": "result description"}},
-        ...
-    ],
-    "comparisons": [
-        {{"type": "better/worse/higher/lower", "entity1": "name", "entity2": "name", "context": "context"}},
-        ...
-    ],
-    "key_numbers": [
-        {{"value": "3:8", "context": "sucrose:raffinose ratio for CA biotypes"}},
-        ...
-    ]
-  }}
-
-**IMPORTANT**: This experimental data extraction is MANDATORY for data-rich questions. The extracted data will be used for downstream reasoning instead of relying solely on general knowledge.
-
-**CRITICAL: Extract Structured Three-Dimensional Information - MANDATORY**
-You MUST extract structured information in three dimensions. This is REQUIRED, not optional. Missing any dimension or sub-field will result in "data_completeness_label" being marked as "Severe Missing".
-
-**YOU MUST OUTPUT ALL THREE DIMENSIONS IN THE JSON RESPONSE:**
-
-**Dimension 1: Subject - REQUIRED**
-- type: Subject type (e.g., individual/biological entity, cell, molecule, experimental system, substance) - describe the type, not domain-specific
-- attribute: Subject attributes (e.g., type/fragment/state) - describe properties relevant to the question, not domain-specific characteristics
-- Example: {{"type": "molecule", "attribute": "protein-protein interaction complex"}}
-
-**Dimension 2: Condition - REQUIRED**
-- type: Condition type (e.g., abnormal phenomenon, experimental treatment, observation result, calculation premise) - describe the type, not domain-specific
-- key_features: Key features (quantitative/qualitative details) - ONLY include numbers that are relevant to the result (e.g., "4/95 low efficiency" is kept, but "95 samples" alone is meaningless and should be filtered out)
-  - **CRITICAL: Implicit Contradiction Extraction**: You MUST identify and extract implicit contradictions or conflicts in the question text:
-    * Pattern 1 (Capture mechanism mismatch): If question mentions a capture method targeting one region (e.g., 3' end) but the target is in a different region (e.g., 5' end) → Add to key_features: "implicit contradiction: capture method targets [region A], but target located at [region B]"
-    * Pattern 2 (Experimental logic): If question involves distinguishing entities using reagents (e.g., antibodies, primers) → Add to key_features: "experimental logic: reagents can target shared/common regions or entity-specific regions"
-    * Pattern 3 (Minimal set calculation): If question asks for "minimum number" to distinguish multiple entities → Add to key_features: "logical constraint: grouping-based minimal set calculation (not simple count)"
-- hard_constraints: Hard constraints (MANDATORY if present) - List of conditions that MUST NOT be violated (e.g., "contraindicated XX", "exclude XX", "must not use XX", "prohibited XX"). These are absolute prohibitions that the answer must strictly avoid.
-- Example: {{"type": "experimental treatment", "key_features": "SEC-MALS detected 300kDa and 210kDa peaks after mixing, implicit contradiction: capture method targets region A, but target located at region B", "hard_constraints": ["contraindicated drug A", "exclude plan B"]}}
-
-**Dimension 3: Goal - REQUIRED**
-- type: Goal type (e.g., cause analysis, mechanism derivation, conclusion judgment, calculation result, structure identification) - describe what needs to be determined
-- constraint: Goal constraint (e.g., "most likely", "incorrect is", "must match XX") - capture implicit requirements in the question stem
-- intent: Goal intent direction (MANDATORY) - the directional intent of the question, choose ONE:
-  * "ask_defect" - asking for limitations, drawbacks, disadvantages, assumptions, simplifications, errors
-  * "ask_cause" - asking for causes, reasons, why something happens
-  * "ask_advantage" - asking for advantages, benefits, strengths
-  * "ask_mechanism" - asking for mechanisms, how something works
-  * "ask_example" - asking for examples, instances, cases
-  * "ask_definition" - asking for definitions, what something is
-  * "ask_comparison" - asking for comparisons, differences, similarities
-  * "ask_procedure" - asking for procedures, steps, methods
-  * "neutral" - neutral question without clear directional intent
-- Example: {{"type": "conclusion judgment", "constraint": "most correct answer", "intent": "ask_defect"}}
-
-**IMPORTANT RULES:**
-1. Numbers should ONLY be placed in "condition.key_features", and only keep "core numbers relevant to the result"
-2. DO NOT mix information from "subject, condition, goal" - each dimension must be structured separately
-3. Each sub-field describes "information attributes" only, not domain-specific terms (e.g., "subject.type=cell", "subject.type=molecule", "subject.type=experimental system" are all valid)
-4. If any dimension or sub-field is missing, mark "data_completeness_label" as "Severe Missing"
-5. **YOU MUST INCLUDE structured_subject, structured_condition, and structured_goal in your JSON response - they are MANDATORY fields**
-
-**CRITICAL: Information Validation & Precision Rules - MANDATORY**
-
-**Hard Rule 1: Precise Value/Entity Extraction**
-- structured_condition.key_features MUST strictly match numerical values and entity names from the question text.
-- FORBIDDEN: rewriting, paraphrasing, or copying errors (e.g., if question says "55uM", you MUST write "55uM", NOT "50uM" or "55 μM").
-- FORBIDDEN: changing entity names (e.g., if question says "G1-6", you MUST write "G1-6", NOT "G1 to G6" or "G1-G6 mutants").
-- You MUST verify extracted values/entities against the original question text before outputting.
-
-**Hard Rule 2: Missing Information Marking - ENHANCED**
-- If the question is missing core entities (e.g., mutation types for G1-6, specific parameters, key experimental conditions), you MUST:
-  - Set "data_completeness_label" to "Incomplete-MissingCoreEntity"
-  - Add a field "missing_core_entities": ["entity1", "entity2", ...] listing what is missing
-- **CRITICAL**: If question mentions "DNA sequence provided" or "sequence is shown below" but no actual sequence text appears in the input, you MUST:
-  - Set "data_completeness_label" to "Incomplete-MissingCoreEntity"
-  - Add "missing_core_entities": ["DNA sequence text"]
-- DO NOT proceed with extraction if core entities are missing - mark them explicitly.
-
-**Hard Rule 3: Error Interception**
-- If you detect extraction errors (wrong numerical values, incorrect entity names, mismatched information), you MUST:
-  - Set "data_completeness_label" to "Invalid-ExtractError"
-  - Add a field "extraction_errors": ["error1", "error2", ...] describing the errors
-  - Add a field "correction_hint": "hint for correction"
-- This will terminate subsequent reasoning and return correction prompts.
-
-Answer format guidance:
-- Single Choice: one option is correct (for multiple choice questions with 3+ options)
-- Multi-Select: multiple options are correct (e.g., "select all that apply")
-- Short Text: for True/False questions (answer must be "True" or "False") or short text matching
-- Numeric: a numerical value is required (with units if specified)
-- Sequence: DNA/RNA/protein/oligo sequence output is required
-- Formula: a mathematical expression is required
-- List: multiple items (e.g., drugs, genes, steps) are required
-- Procedure: stepwise method or protocol is required
-- Code-Command: command line or code snippet is required
-
-**CRITICAL: Entity Identification Question Detection - MANDATORY**
-When determining answer_format_label, you MUST distinguish between:
-1. **Entity Identification Questions**: Questions that ask to "identify/determine what [entity]" from given data (e.g., "What protein does this sequence represent?", "Identify the molecule from this spectrum", "Which gene is encoded by this DNA sequence?")
-   - For these questions, the answer should be the **ENTITY NAME** (e.g., "rhodopsin", "BRCA1", "glucose"), NOT the data format
-   - **MUST use "Short Text" as answer_format_label**, even if the question mentions sequences, structures, or other data formats
-   - Examples:
-     * "What protein does this amino acid sequence represent?" → answer_format_label: "Short Text" (answer: protein name)
-     * "Identify the gene from this DNA sequence" → answer_format_label: "Short Text" (answer: gene name)
-     * "Which molecule is this structure?" → answer_format_label: "Short Text" (answer: molecule name)
-
-2. **Data Format Questions**: Questions that ask to "provide/give/show the [data format]" (e.g., "What is the sequence?", "Provide the DNA sequence", "Give me the structure")
-   - For these questions, use the appropriate format label (e.g., "Sequence", "Procedure")
-   - Examples:
-     * "What is the amino acid sequence?" → answer_format_label: "Sequence" (answer: the sequence itself)
-     * "Provide the DNA sequence" → answer_format_label: "Sequence" (answer: the sequence itself)
-
-**Key Distinction**: 
-- If question asks "What [entity] is this [data]?" or "Identify [entity] from [data]" → Use "Short Text" (answer is entity name)
-- If question asks "What is the [data]?" or "Provide the [data]" → Use appropriate format label (answer is the data itself)
-
-**CRITICAL: True/False Question Format**
-- If question options are ONLY "True" and "False", use "Short Text" as answer_format_label
-- The answer must be the word "True" or "False", NOT option letters (A, B, etc.)
-
-**CRITICAL: Core Keywords Extraction - MANDATORY**
-- You MUST extract and mark core keywords that are essential for answering the question:
-  * Pattern: Identify key concepts, methods, entities mentioned in the question
-  * Add a field "core_keywords": ["keyword1", "keyword2", ...] listing these essential terms
-  * These keywords will guide knowledge retrieval and option matching in downstream nodes
-
-**CRITICAL: Option Feature Extraction - MANDATORY for Multiple Choice**
-- For multiple-choice questions, you MUST extract core features from EACH option:
-  * Pattern: For each option, identify its key entity/concept
-  * Add a field "option_features": {{"A": "feature1", "B": "feature2", ...}} mapping each option to its core feature
-  * This enables precise option matching in downstream inference
-
-**CRITICAL: Retrieval Keyword Normalization - MANDATORY**
-- You MUST extract and normalize retrieval keywords for knowledge retrieval:
-  * Extract key biological terms from the question
-  * Create a "synonyms" field: synonyms = [standard_term1, standard_term2, ...]
-  * This ensures comprehensive knowledge retrieval across terminology variations
-
-**CRITICAL: Tool Intent Marking - MANDATORY**
-- You MUST determine if tool usage is required for this question:
-  * Add a field "tool_intent": {{"query_go_term": "YES|NO", "query_knowledge_graph": "YES|NO"}}
-  * Rules:
-    - If question asks about "molecular function", "mechanism", "modification", "protein function" → query_go_term: "YES", query_knowledge_graph: "YES"
-    - If question involves "epigenetics", "chromatin", "protein function", "molecular mechanism" → query_go_term: "YES", query_knowledge_graph: "YES"
-  * This ensures mandatory tool calls for molecular function/mechanism questions
-
-Output your response in JSON format:
+[JSON Output]
 {{
-    "cleaned_text": "cleaned question text",
-    "question_type_label": "Multiple Choice|Text Matching|Mechanism Explanation|Numerical Calculation|Logical Calculation|Professional Algorithm",
-    "question_category_standard": "Calculation-[subcategory]|ClinicalDecision-[subcategory]|ProfessionalKnowledge-[subcategory]",
-    "data_completeness_label": "Complete|Partial Missing|Severe Missing|Incomplete-MissingCoreEntity|Invalid-ExtractError",
-    "core_keywords": ["keyword1", "keyword2", ...],
-    "option_features": {{"A": "feature1", "B": "feature2", ...}},
-    "synonyms": ["standard_term1", "standard_term2", ...],
-    "tool_intent": {{"query_go_term": "YES|NO", "query_knowledge_graph": "YES|NO"}},
-    "missing_core_entities": ["entity1", "entity2", ...] if data_completeness_label == "Incomplete-MissingCoreEntity",
-    "extraction_errors": ["error1", "error2", ...] if data_completeness_label == "Invalid-ExtractError",
-    "correction_hint": "hint for correction" if data_completeness_label == "Invalid-ExtractError",
-    "key_constraints": ["constraint1", "constraint2", ...] if present,
-    "negative_constraints": ["constraint1", "constraint2", ...] if present,
-    "exclusive_constraints": ["constraint1", "constraint2", ...] if present,
-    "strong_restrictions": ["restriction1", "restriction2", ...] if present,
-    "question_options": ["option text 1", "option text 2", ...],
-    "answer_format_label": "Single Choice|Multi-Select|Numeric|Short Text|Long Text|Sequence|Formula|List|Procedure|Code-Command",
-    "structured_subject": {{
-        "type": "subject type",
-        "attribute": "subject attributes relevant to the question"
-    }},
-    "structured_condition": {{
-        "type": "condition type",
-        "key_features": "key features with only core numbers relevant to the result",
-        "hard_constraints": ["constraint1", "constraint2", ...] if any absolute prohibitions exist
-    }},
-    "structured_goal": {{
-        "type": "goal type",
-        "constraint": "goal constraint",
-        "intent": "ask_defect|ask_cause|ask_advantage|ask_mechanism|ask_example|ask_definition|ask_comparison|ask_procedure|neutral"
-    }},
-    "reasoning": "brief explanation of your classification and structured extraction"
+    "cleaned_text": "cleaned question",
+    "question_type_label": "Multiple Choice|Text Matching|...",
+    "question_category_standard": "Calculation-[sub]|ClinicalDecision-[sub]|ProfessionalKnowledge-[sub]",
+    "category_specific_constraints": [...],
+    "data_completeness_label": "Complete|Partial Missing|...",
+    "core_keywords": [...],
+    "option_features": {{...}},
+    "synonyms": [...],
+    "tool_intent": {{...}},
+    "question_options": [...],
+    "answer_format_label": "Single Choice|...",
+    "structured_subject": {{"type": "...", "attribute": "..."}},
+    "structured_condition": {{"type": "...", "key_features": "...", "hard_constraints": [...]}},
+    "structured_goal": {{"type": "...", "constraint": "...", "intent": "..."}},
+    "key_constraints": [...],
+    "missing_core_entities": [...] // if incomplete
 }}
 """
 
@@ -330,150 +151,53 @@ def get_base_question_decomposition_prompt(
     question_category_standard: str = None,
     category_specific_constraints: List[str] = None
 ) -> str:
-    """Base template for N1: Question Decomposition"""
-    # Build structured information context
-    # CRITICAL: Handle both dict and list formats for structured fields
+    """Base template for N1: Question Decomposition (OPTIMIZED)"""
+    # Build compact structured context
     subject_info = ""
     condition_info = ""
     goal_info = ""
     
-    if structured_subject:
-        if isinstance(structured_subject, dict):
-            subject_type = structured_subject.get("type", "N/A")
-            subject_attr = structured_subject.get("attribute", "N/A")
-            subject_info = f"Subject: type={subject_type}, attribute={subject_attr}"
-        else:
-            subject_info = f"Subject: {structured_subject}"
+    if structured_subject and isinstance(structured_subject, dict):
+        subject_info = f"S:{structured_subject.get('type', '?')}|{structured_subject.get('attribute', '?')}"
+    if structured_condition and isinstance(structured_condition, dict):
+        condition_info = f"C:{structured_condition.get('type', '?')}|{str(structured_condition.get('key_features', '?'))[:50]}"
+    if structured_goal and isinstance(structured_goal, dict):
+        goal_info = f"G:{structured_goal.get('type', '?')}|{structured_goal.get('intent', 'neutral')}"
     
-    if structured_condition:
-        if isinstance(structured_condition, dict):
-            condition_type = structured_condition.get("type", "N/A")
-            condition_features = structured_condition.get("key_features", "N/A")
-            condition_info = f"Condition: type={condition_type}, key_features={condition_features}"
-        else:
-            condition_info = f"Condition: {structured_condition}"
+    structured_context = f"[N0 Context] {subject_info} || {condition_info} || {goal_info}" if (subject_info or condition_info or goal_info) else ""
     
-    if structured_goal:
-        if isinstance(structured_goal, dict):
-            goal_type = structured_goal.get("type", "N/A")
-            goal_constraint = structured_goal.get("constraint", "N/A")
-            goal_info = f"Goal: type={goal_type}, constraint={goal_constraint}"
-        else:
-            goal_info = f"Goal: {structured_goal}"
-    
-    structured_context = ""
-    if subject_info or condition_info or goal_info:
-        structured_context = f"""
-**Structured Three-Dimensional Information from N0:**
-{subject_info}
-{condition_info}
-{goal_info}
-"""
-    
-    return f"""You are a biomedical question analysis expert. Your task is to decompose the question and identify its core domain, based on the structured three-dimensional information from N0.
+    return f"""[Role] Biomedical question decomposition expert.
 
-Question (cleaned):
-{cleaned_text}
-
-Question Type: {question_type_label}
-Question Category: {question_category_standard if question_category_standard else "Not classified"}
-Category-Specific Constraints: {", ".join(category_specific_constraints) if category_specific_constraints else "None"}
+[Input]
+Question: {cleaned_text}
+Type: {question_type_label} | Category: {question_category_standard or "N/A"}
+Constraints: {", ".join(category_specific_constraints) if category_specific_constraints else "None"}
 {structured_context}
 
-**CRITICAL REQUIREMENTS (based on structured information from N0):**
+[Objective Format]
+"Determine [goal.type] based on [subject.attribute] with [condition.key_features]"
+- Include category-specific steps: Calculation→derive/compare, Clinical→filter/verify, Knowledge→associate/derive
 
-**Hard Rule 4: Constraint Anchoring**
-- research_objective MUST place the question's strong constraints (e.g., "necessarily true", "most correct", "significant difference", "must be", "only") as the CORE judgment criterion in the FIRST sentence.
-- Format: "Determine which option is [strong constraint] based on [subject.attribute] and [condition.key_features]"
-- Example: If question asks "which is necessarily true", research_objective MUST start with "Determine which option is necessarily true..."
+[Entity Rules]
+- ONLY extract EXPLICITLY mentioned entities
+- DO NOT extract from examples, context, or sequences
+- Example: "What is CD47?" → ["CD47"]; "What protein is this sequence?" → ["amino acid sequence"]
 
-**Hard Rule 5: Missing Information Propagation**
-- If N0's data_completeness_label is "Incomplete-MissingCoreEntity" or "Invalid-ExtractError", you MUST:
-  - Set "research_objective" to "Cannot proceed: missing core entities or extraction errors"
-  - DO NOT proceed to knowledge retrieval
-  - Return immediately with error status
+[Domain Mapping] Identify test-point level domains:
+- Population Genetics → genetics
+- T cell/MHC/antibody → immunology
+- Drug/treatment → clinical_medicine
+- Transcription/pathway → molecular_biology
+- Enzyme/metabolism → biochemistry
 
-1. **Core Research Objective - ENHANCED**: 
-   MUST be explicitly bound to N0's structured information using this fixed format (all-domain universal):
-   → English format: "Combining the characteristics of [subject.attribute], based on the key features of [condition.key_features], complete [goal.type] (satisfying [goal.constraint])"
-   - **CRITICAL: Bind Category-Specific Solution Steps**: You MUST include category-specific solution steps in research_objective, and these steps MUST match the question's actual solving paradigm, NOT reuse steps from other question types:
-     * For Calculation questions: "Follow calculation steps to derive [calculated value], compare with critical value to determine [conclusion]"
-     * For ClinicalDecision questions: "Follow clinical guideline steps to filter options, verify compatibility, output recommendations"
-     * For ProfessionalKnowledge questions: "Associate core knowledge, derive causal logic, verify fact consistency, draw conclusion"
-     * For LogicalCalculation questions: "Follow logical derivation steps, group entities, define distinguishing rules, derive minimal set"
-   - **CRITICAL: Decompose into Executable Sub-Objectives**: For complex questions, you MUST break down research_objective into specific sub-objectives that match the question's actual solving paradigm
-   → **If question has strong constraints (necessarily true/most correct), place them in the FIRST sentence as the core judgment criterion**
-   → **FORBIDDEN**: Generic descriptions without category-specific steps
-
-2. **Key Entities (key_entities) - CRITICAL EXTRACTION RULES**: 
-   MUST include N0's "subject core information + condition key features", do not omit or add irrelevant entities.
-   
-   **CRITICAL: Entity Extraction Rules (实体提取规则) - MANDATORY:**
-   - **ONLY extract entities EXPLICITLY mentioned in the question text**
-   - **DO NOT extract entities from:**
-     * Examples or sample data in the question
-     * Context or background information
-     * Unrelated parts of the question
-     * Sequence data itself (for sequence identification questions)
-   - **For sequence identification questions** (answer_format_label == "Sequence"):
-     * DO NOT extract protein/gene names from the sequence or question context
-     * DO NOT extract entities like "CD47", "macrophage engulfment" unless they are EXPLICITLY mentioned in the question text
-     * Focus on sequence-related entities: "amino acid sequence", "protein sequence", "DNA sequence", etc.
-   - **For protein identification questions** (NOT sequence-based):
-     * Only extract protein/gene names that are DIRECTLY mentioned in the question text
-     * Do NOT extract entities from examples or unrelated context
-   
-   **Examples:**
-   - ✅ CORRECT: Question "What is the function of CD47?" → Extract: ["CD47"]
-   - ❌ WRONG: Question "What protein does this sequence represent? MAEQVALSRT..." → Do NOT extract: ["CD47", "macrophage engulfment"] (these are not mentioned)
-   - ✅ CORRECT: Sequence question → Extract: ["amino acid sequence", "protein sequence"]
-
-3. **Structured Conditions (structured_conditions)**: 
-   For experimental questions, supplement "experimental operations" (put into condition.key_features).
-   For clinical questions, supplement "diagnostic/treatment related" (put into condition.key_features).
-   No need to add separate fields (keep universal).
-
-Please perform the following tasks:
-1. Extract structured conditions: Identify objective conditions, experimental settings, constraints mentioned in the question
-2. Identify core domains: Determine which biomedical domain(s) this question belongs to (e.g., Genetics, Immunology, Cell Biology, Biochemistry, Clinical Medicine, etc.)
-   - **CRITICAL: Domain Precision - ENHANCED**: You MUST identify domains at the TEST POINT level, NOT just broad categories:
-     * Instead of "Genetics", use "Population Genetics, Fst Analysis, Hybrid Zone Dynamics"
-     * Instead of "Immunology", use "T Cell Engineering, Antigen Presentation, Receptor Function"
-     * Use precise domain names that reflect the specific test point
-
-   **CRITICAL: Domain-to-Prompt-Module Mapping - MANDATORY**
-   You MUST identify domains that can be mapped to available prompt modules. Use these mappings:
-   
-   | Fine-Grained Domain | Maps to Module |
-   |---------------------|----------------|
-   | Population Genetics, HWE, Fst, linkage, GWAS, variant | genetics |
-   | T cell, B cell, TCR, BCR, MHC, antigen, antibody | immunology |
-   | Drug, medication, hypertension, diabetes, treatment | clinical_medicine |
-   | Gene expression, transcription, translation, pathway | molecular_biology |
-   | Enzyme, metabolism, concentration, binding, kinetics | biochemistry |
-   | Sequence analysis, alignment, variant calling | bioinformatics |
-   | Cell signaling, receptor, membrane, lipid | biophysics |
-   | Hematopoiesis, stem cell, differentiation | cell_biology |
-   | Virus, bacteria, pathogen, infection | microbiology |
-   | Aphid, insect, plant-herbivore, host adaptation | entomology |
-   | Sugar metabolism, carbohydrate, raffinose | biochemistry |
-   
-   **IMPORTANT**: 
-   - If domain doesn't fit existing modules, map to closest related module
-   - For cross-domain questions, list ALL relevant modules
-   - Example: "Insect Physiology, Sugar Metabolism" → ["biochemistry", "entomology_cross"]
-
-Output your response in JSON format:
+[JSON Output]
 {{
-    "research_objective": "core research objective with category-specific steps",
-    "key_entities": ["entity1", "entity2", ...],
-    "core_domains": ["domain1", "domain2", ...],
-    "prompt_modules": ["module1", "module2", ...],  // MANDATORY: Maps to available prompt modules
-    "structured_conditions": {{
-        "experimental_conditions": "experimental settings if applicable",
-        "clinical_conditions": "diagnostic/treatment conditions if applicable"
-    }},
-    "reasoning": "brief explanation of decomposition and domain identification"
+    "research_objective": "Determine [goal] based on [subject] with [condition]",
+    "key_entities": ["entity1", ...],
+    "core_domains": ["domain1", ...],
+    "prompt_modules": ["module1", ...],
+    "structured_conditions": {{}},
+    "reasoning": "..."
 }}
 """
 
@@ -568,45 +292,13 @@ def get_base_knowledge_retrieval_prompt(
         
         if has_experimental_data:
             data_analysis_instruction = """
-**CRITICAL: DATA-FIRST ANALYSIS - EXPERIMENTAL DATA DETECTED**
 
-This question contains experimental data with numerical values, conditions, and results. You MUST:
-
-**STEP 1: EXTRACT ALL DATA (MANDATORY)**
-Create a structured data table from the question text:
-- Groups/Conditions: List all experimental groups (e.g., "CA biotype on diet X", "MA biotype on diet Y")
-- Variables: Identify independent variables (treatments, conditions) and dependent variables (outcomes, measurements)
-- Values: Extract ALL numerical values with units
-- Comparisons: Note which groups are being compared
-
-**STEP 2: ANALYZE DATA PATTERNS (MANDATORY)**
-- Trend Analysis: What patterns exist in the data? (e.g., "X increased in condition A vs B")
-- Significant Differences: Which comparisons show meaningful differences?
-- Anomalies: Are there any unexpected or contradictory findings?
-
-**STEP 3: DERIVE DATA-BASED CONCLUSIONS (MANDATORY)**
-What conclusions can be drawn DIRECTLY from the data, WITHOUT needing external knowledge?
-
-**STEP 4: KNOWLEDGE RETRIEVAL (SECONDARY)**
-Only retrieve knowledge to:
-- Explain WHY the observed patterns occurred (mechanism)
-- Verify if the data patterns align with known biology
-- Interpret technical terms or concepts
-
-**CRITICAL WARNING**:
-- DO NOT use general knowledge to OVERRIDE or IGNORE experimental data
-- If data shows "X performed well on Y", the observation is FACT
-- Knowledge should EXPLAIN, not CONTRADICT the data
-- If option A claims something that contradicts the data → Option A is likely FALSE
-- If option B claims something that matches the data → Option B is likely TRUE
-
-**Example**:
-- Data shows: "CA did well on raffinose-rich diet (3:8 ratio)"
-- Option A claims: "CA has enhanced RFO metabolism" 
-- Knowledge says: "Cotton (CA's host) has low RFO, CA has low α-galactosidase"
-- Analysis: Data shows good performance, but knowledge says CA shouldn't digest raffinose well
-- Resolution: Either (1) CA uses alternative mechanism, or (2) the data interpretation needs care
-- For "which is NOT true": The option claiming "enhanced metabolism" WITHOUT evidence from data → likely FALSE
+[Data Mode] Experimental data detected:
+1. EXTRACT: groups, conditions, values, comparisons
+2. ANALYZE: patterns, significant differences, anomalies
+3. CONCLUDE: from data FIRST, then verify with knowledge
+4. WARN: Don't override experimental data with general knowledge
+5. If data contradicts knowledge → note CONFLICT explicitly
 """
 
     return f"""You are a biomedical knowledge retrieval expert. Your task is to retrieve relevant knowledge from multiple domains with PRECISE retrieval based on structured information.
@@ -864,125 +556,42 @@ def get_base_complete_inference_prompt(
         goal_intent = "neutral"
         goal_constraint = ""
     
-    # ENHANCEMENT: Systematic option analysis instruction for multiple choice questions
+    # OPTIMIZED: Compact option analysis instruction (reduced from ~120 lines to ~40 lines)
+    # Uses prompt_utils templates for common patterns
     option_analysis_instruction = ""
     if question_options and len(question_options) > 0:
         option_labels = [chr(65+i) for i in range(len(question_options))]
         
-        # CRITICAL: Detect multi-statement questions (I, II, III, IV pattern)
+        # Multi-statement handling (compact version)
         multi_statement_instruction = ""
         if cleaned_text and any(marker in cleaned_text for marker in ["I.", "II.", "III.", "IV.", "V.", "VI.", "I,", "II,", "III,"]):
             multi_statement_instruction = """
-**CRITICAL: MULTI-STATEMENT QUESTION DETECTED - SPECIAL HANDLING REQUIRED**
-
-This question contains multiple statements (I, II, III, IV, V, etc.) and asks which statements are TRUE/FALSE.
-
-**MANDATORY VERIFICATION PROCEDURE:**
-
-**Step 1: List ALL individual statements from the question**
-- Extract each statement: I, II, III, IV, V, etc.
-- Quote each statement EXACTLY as it appears
-
-**Step 2: Verify EACH statement against domain knowledge (INDEPENDENTLY)**
-For each statement:
-- Statement I: "[exact text]" → Knowledge Check: [What does domain knowledge say?] → Verdict: TRUE/FALSE/UNCERTAIN
-- Statement II: "[exact text]" → Knowledge Check: [What does domain knowledge say?] → Verdict: TRUE/FALSE/UNCERTAIN
-- Statement III: "[exact text]" → Knowledge Check: [What does domain knowledge say?] → Verdict: TRUE/FALSE/UNCERTAIN
-- Continue for ALL statements...
-
-**Step 3: Match verified statements to answer options**
-- Check each option to see which statements it combines
-- Mark option as MATCH if ALL its statements are TRUE (for "which are true" questions)
-- Mark option as MATCH if ALL its statements are FALSE (for "which are NOT true" questions)
-
-**Step 4: Cross-verify with option analysis**
-- Re-check that the selected option matches the statement-level verdicts
-- If there's a conflict, the statement-level analysis takes precedence
-
-**CRITICAL WARNING - AVOID STATEMENT MISCLASSIFICATION:**
-- DO NOT assume a statement is TRUE without domain knowledge verification
-- DO NOT skip any statement - analyze ALL of them
-- DO NOT let option patterns influence your statement-level analysis
-- Common errors:
-  * Assuming "glycerol supports swarming" when it actually doesn't
-  * Assuming "metal chelators inhibit motility" without verifying mechanism
-  * Confusing "can" vs "typically does" vs "always does"
-
-**Example:**
-- Question: "Which statements about P. aeruginosa are TRUE?"
-- Statement I: "Twitching motility is typically initiated by stab inoculation" → TRUE (standard lab protocol)
-- Statement II: "10-cm twitching plates typically contain about 25 ml agar" → TRUE (standard protocol)
-- Statement III: "It can swarm with glycerol as carbon source" → VERIFY: Does P. aeruginosa swarm on glycerol? → FALSE (requires specific carbon sources)
-- Statement IV: "Metal chelators can inhibit swarming motility" → TRUE (chelators bind metals needed for flagellar function)
-- Statement V: "After washing and concentrating, culture appears blue-green" → TRUE (pyocyanin pigment)
-- If goal asks for TRUE statements: Option combining I, II, IV is correct
-- If goal asks for FALSE statements: Option containing only III is correct
+[Multi-Statement Mode] Statements I,II,III... detected:
+1. Extract each statement → quote EXACTLY
+2. Verify independently: Statement I → knowledge check → TRUE/FALSE/UNCERTAIN
+3. Match to options: all TRUE statements → correct option (or all FALSE for "not true" questions)
+4. WARN: Don't assume TRUE without verification; analyze ALL statements
 """
 
         option_analysis_instruction = f"""
-{multi_statement_instruction}
-**CRITICAL: SYSTEMATIC OPTION ANALYSIS - MANDATORY FOR MULTIPLE CHOICE QUESTIONS**
+{multi_statement_instruction}[Option Analysis] For each option {', '.join(option_labels)}:
+- Content: [exact text]
+- Knowledge Check: [what domain knowledge says]
+- Fact: TRUE/FALSE/UNCERTAIN
+- Constraint Check: [violates any?]
+- Verdict: MATCH/EXCLUDE/UNCERTAIN
 
-You MUST analyze EACH option systematically. DO NOT skip any option. Follow this EXACT format:
+[Goal Intent Handling]
+- ask_defect → select FALSE option
+- ask_advantage → select advantage option
+- ask_cause → select causal explanation
+- "not true"/"incorrect" → select FALSE option
 
-For each option {', '.join(option_labels)}:
-- **Option Analysis Step N**: Analyze option [LABEL]
-  - Option Content: [exact option text]
-  - Knowledge Verification: [What domain knowledge says about this statement]
-  - Fact Check: Is this statement TRUE, FALSE, or UNCERTAIN based on available knowledge?
-  - Constraint Check: Does this option violate any constraints from the question?
-  - Verdict: [MATCH / EXCLUDE / UNCERTAIN] with reasoning
-
-**MANDATORY OUTPUT REQUIREMENT**: 
-- You MUST include analysis for ALL {len(question_options)} options
-- Missing any option analysis will result in INVALID response
-- The verdict for each option must be explicit (MATCH/EXCLUDE/UNCERTAIN)
-
-**Special Handling for Goal Intent:**
-- If goal_intent is "ask_defect" (寻找错误/缺陷): The answer should be the option that is FALSE/INCORRECT
-- If goal_intent is "ask_advantage" (寻找优势): The answer should be the option describing advantages
-- If goal_intent is "ask_cause" (寻找原因): The answer should be the option explaining causation
-- If goal_constraint contains "not true", "incorrect", "false": Answer should be the FALSE option
-
-**CRITICAL: AVOID LOGICAL LEAP ERRORS (避免逻辑跳跃错误) - MANDATORY**
-
-1. **Observation ≠ Causation (观察≠因果)**:
-   - If data shows "X performed well on Y diet" → This is an OBSERVATION, not a causal explanation
-   - DO NOT conclude "X is adapted to Y" without supporting knowledge
-   - Example: "CA did well on raffinose diet" does NOT mean "CA has enhanced raffinose metabolism"
-   - The observation might be due to: experimental error, alternative mechanisms, or misleading data
-
-2. **Experimental Data vs Domain Knowledge (实验数据vs领域知识)**:
-   - If experimental data contradicts domain knowledge, explicitly note the CONFLICT
-   - DO NOT override domain knowledge with single experimental observation
-   - Consider: Is this a known phenomenon or an unusual result?
-
-3. **Correlation ≠ Causation (相关≠因果)**:
-   - "A happened, then B happened" does NOT mean "A caused B"
-   - Always verify causal claims against known mechanisms
-   - If option claims causation (e.g., "due to", "owing to"), verify the mechanism is correct
-
-4. **Data Interpretation Rules (数据解读规则)**:
-   - "did well" means good PERFORMANCE, not necessarily PREFERENCE or ADAPTATION
-   - "performed better" requires comparing against a baseline
-   - Numerical data (e.g., "3:8 ratio") should be interpreted with biological context
-
-5. **Mechanism Verification (机制验证)**:
-   - If option mentions a mechanism (e.g., "galactosidase activity"), verify:
-     * Is this enzyme relevant to the organism/condition?
-     * Is the direction of change (increase/decrease) consistent with the cause?
-     * Is the stated cause actually correct?
-
-**Example of Correct Reasoning**:
-- Question: "CA did well on diet with sucrose:raffinose (3:8). Which is NOT true?"
-- Option A: "CA has enhanced ability to metabolize RFOs than MA"
-- Analysis: 
-  * Data shows: CA did well on high-raffinose diet (observation)
-  * Knowledge says: CA is cotton-adapted, cotton has low RFOs, CA has low α-galactosidase
-  * Conflict: Observation contradicts knowledge
-  * Resolution: Either (1) data is anomalous, or (2) CA uses alternative mechanism
-  * Option claim: "CA has enhanced RFO metabolism" - This VIOLATES domain knowledge
-  * Verdict: EXCLUDE (this is the FALSE statement if goal is "not true")
+[Logic Rules - MANDATORY]
+1. Observation ≠ Causation: "X did well on Y" ≠ "X adapted to Y"
+2. Data First: Don't override experimental data with general knowledge
+3. Correlation ≠ Causation: A before B ≠ A caused B
+4. Mechanism Verify: Check enzyme relevance, direction consistency
 """
     
     return f"""You are a biomedical inference expert. Your task is to perform complete logical inference to derive the final conclusion.
@@ -1091,6 +700,16 @@ Goal Intent: {goal_intent}
 - **Procedure** → MUST output step-by-step procedure (UNLESS this is an entity identification question - then output entity name)
 - **Code-Command** → MUST output code/command snippet
 - **Short Text** → MUST output concise text answer (e.g., entity name, True/False, short phrase)
+
+**CRITICAL: Enumeration/Format Questions with Numbered Options**
+If the question asks you to "Express your answer as" a specific format like "(1,2,3), (4,5,6)" or mentions numbered options (1), (2), (3), etc.:
+- You MUST output the answer in EXACTLY the requested numbered format
+- Do NOT output prose descriptions like "Bi-allelic recombination..." 
+- Do NOT output scientific explanations in the final_answer field
+- Example: If asked "Which mechanisms contribute? Answer as (X,Y,Z)" where X,Y,Z are numbers from (1)-(6):
+  - Your final_answer MUST be "(1,4,5), (1,3,4,5,6)" or similar number format
+  - NOT "receptor editing, cell doublets, etc."
+- The final_answer field should contain ONLY the formatted answer, no explanations
 
 Please generate the answer according to question type:
 

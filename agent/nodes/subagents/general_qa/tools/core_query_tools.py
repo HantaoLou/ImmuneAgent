@@ -63,6 +63,7 @@ class KGNodeType(str, Enum):
     molecular_function = "molecular_function"
     effect = "effect/phenotype"
     exposure = "exposure"
+    metabolite = "metabolite"  # Added metabolite type for metabolic pathway queries
 
 
 class KnowledgeGraphQuery(BaseModel):

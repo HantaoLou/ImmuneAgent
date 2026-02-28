@@ -22,7 +22,10 @@
 9. 每个任务的执行汇总（execution_summary）
 10. 汇总的结果
 
-运行方式：pytest tests/test_full_workflow_detailed.py::test_full_workflow_detailed -v -s
+运行方式：
+- 批量测试所有问题: pytest tests/test_full_workflow_detailed.py -v -s
+- 测试单个问题: pytest tests/test_full_workflow_detailed.py::test_flu_benchmark -v -s -k "Q01"
+- 测试特定类型: pytest tests/test_full_workflow_detailed.py -v -s -k "simple"
 """
 
 import os
@@ -31,14 +34,378 @@ import json
 import time
 from pathlib import Path
 from dotenv import load_dotenv
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TypedDict
+
+
+# ==================== 测试问题定义 ====================
+
+class BenchmarkCase(TypedDict):
+    """测试用例定义"""
+    id: str
+    name: str
+    difficulty: str  # simple, complex
+    prompt: str
+    services: List[str]
+    parameters: Dict[str, str]
+    expected_output: str
+    primary_metric: str
+
+
+# Flu Benchmark 测试问题
+FLU_BENCHMARK_CASES: List[BenchmarkCase] = [
+    # Q01: Which antibodies bind H1N1 Michigan?
+    {
+        "id": "Q01",
+        "name": "H1N1 Michigan 结合抗体预测",
+        "difficulty": "simple",
+        "prompt": """Given the single-cell RNA-seq data and antibody sequences for 100 flu-specific monoclonal antibodies, predict which antibodies bind to H1N1 A/Michigan/45/2015 hemagglutinin. For each antibody (identified by `mAb`), output a binary prediction: 1 = binds, 0 = does not bind.
+
+Expected output format:
+- CSV with columns: `mAb`, `prediction` (0 or 1), optionally `probability` (0.0-1.0)
+- One row per antibody (up to 100 rows)
+
+Ground truth summary:
+- 98 antibodies tested (2 are NaN)
+- 82 positive (83.7%), 16 negative
+
+Primary metric: F1""",
+        "services": ["igblast", "metabcr", "r_data_integration", "bioinformatics"],
+        "parameters": {
+            "meta_csv_file": "/data/benchmark_data/flu_benchmark/260129_flu_metadata.csv",
+            "antigen_file": "/data/benchmark_data/flu_benchmark/flu_antig_seq.csv",
+            "meta_rds_file": "/data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds"
+        },
+        "expected_output": "CSV with mAb, prediction columns",
+        "primary_metric": "F1"
+    },
+    
+    # Q05: Which antibodies neutralize H1N1 California?
+    {
+        "id": "Q05",
+        "name": "H1N1 California 中和抗体预测",
+        "difficulty": "simple",
+        "prompt": """Given the single-cell RNA-seq data and antibody sequences, predict which antibodies neutralize H1N1 A/California/07/2009. For each antibody, output a binary prediction: 1 = neutralizes, 0 = does not neutralize.
+
+Note: Neutralization is a stronger functional readout than binding.
+
+Expected output format:
+- CSV with columns: `mAb`, `prediction` (0 or 1)
+
+Ground truth summary:
+- 56 antibodies tested (44 are NaN -- not tested for neutralization)
+- 17 positive (30.4%), 39 negative
+
+Primary metric: F1""",
+        "services": ["igblast", "metabcr", "r_data_integration", "bioinformatics"],
+        "parameters": {
+            "meta_csv_file": "/data/benchmark_data/flu_benchmark/260129_flu_metadata.csv",
+            "antigen_file": "/data/benchmark_data/flu_benchmark/flu_antig_seq.csv",
+            "meta_rds_file": "/data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds"
+        },
+        "expected_output": "CSV with mAb, prediction columns",
+        "primary_metric": "F1"
+    },
+    
+    # Q09: Which B cells broadly neutralize H1N1 variants?
+    {
+        "id": "Q09",
+        "name": "H1N1 广谱中和抗体预测",
+        "difficulty": "complex",
+        "prompt": """Identify which antibodies are broadly neutralizing against H1N1 influenza variants. An antibody is broadly neutralizing if it neutralizes at least 60% of the H1N1 strains tested (California, Fort Monmouth, Jiangsu, Michigan, Puerto Rico). For antibodies with missing data for some strains, compute breadth over the non-missing strains only. Output a binary prediction per antibody.
+
+Expected output format:
+- CSV with columns: `mAb`, `prediction` (0 or 1)
+
+Ground truth summary:
+- 100 antibodies tested
+- 33 broadly neutralizing (33.0%), 67 not
+
+Primary metric: F1""",
+        "services": ["igblast", "metabcr", "r_data_integration", "bioinformatics"],
+        "parameters": {
+            "meta_csv_file": "/data/benchmark_data/flu_benchmark/260129_flu_metadata.csv",
+            "antigen_file": "/data/benchmark_data/flu_benchmark/flu_antig_seq.csv",
+            "meta_rds_file": "/data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds"
+        },
+        "expected_output": "CSV with mAb, prediction columns",
+        "primary_metric": "F1"
+    },
+    
+    # Q11: Which antibodies cross-react with both H1N1 and H3N2?
+    {
+        "id": "Q11",
+        "name": "H1N1/H3N2 交叉反应抗体预测",
+        "difficulty": "complex",
+        "prompt": """Identify which antibodies are cross-reactive, meaning they bind at least one H1N1 strain AND at least one H3N2 strain. The H1N1 binding columns are Michigan, Puerto Rico, Victoria, and Wisconsin. The H3N2 binding columns are Hong Kong and Singapore. Output a binary prediction per antibody.
+
+Expected output format:
+- CSV with columns: `mAb`, `prediction` (0 or 1)
+
+Ground truth summary:
+- 100 antibodies tested
+- 68 cross-reactive (68.0%), 32 not
+
+Primary metric: F1""",
+        "services": ["igblast", "metabcr", "r_data_integration", "bioinformatics"],
+        "parameters": {
+            "meta_csv_file": "/data/benchmark_data/flu_benchmark/260129_flu_metadata.csv",
+            "antigen_file": "/data/benchmark_data/flu_benchmark/flu_antig_seq.csv",
+            "meta_rds_file": "/data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds"
+        },
+        "expected_output": "CSV with mAb, prediction columns",
+        "primary_metric": "F1"
+    },
+    
+    # Q19: Which BCR isotypes are associated with flu neutralization?
+    {
+        "id": "Q19",
+        "name": "BCR 同种型与流感中和关联分析",
+        "difficulty": "complex",
+        "prompt": """Analyze the relationship between BCR heavy chain isotype (IGH_isotype) and H1N1 neutralization capacity. Determine which isotypes (IGHA1, IGHA2, IGHD, IGHG1, IGHG2, IGHG3, IGHM) are statistically enriched among antibodies that neutralize at least one H1N1 strain (California, Fort Monmouth, Jiangsu, Michigan, Puerto Rico). Report the enriched isotype names.
+
+Expected output format:
+- List of isotype names enriched among neutralizers (e.g., "IGHG1", "IGHA1")
+
+Primary metric: Entity recall (fraction of true enriched isotypes identified)""",
+        "services": ["igblast", "metabcr", "r_data_integration", "bioinformatics"],
+        "parameters": {
+            "meta_csv_file": "/data/benchmark_data/flu_benchmark/260129_flu_metadata.csv",
+            "antigen_file": "/data/benchmark_data/flu_benchmark/flu_antig_seq.csv",
+            "meta_rds_file": "/data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds"
+        },
+        "expected_output": "List of enriched isotype names",
+        "primary_metric": "Entity recall"
+    },
+    
+    # Q20: Which flu antibodies are polyreactive?
+    {
+        "id": "Q20",
+        "name": "多反应性抗体预测",
+        "difficulty": "simple",
+        "prompt": """Predict which antibodies are polyreactive. An antibody is polyreactive if it binds to LPS (lipopolysaccharide) OR dsDNA (double-stranded DNA) as non-specific self-antigens. Output a binary prediction per antibody.
+
+Note: Polyreactivity is a sequence-intrinsic property related to hydrophobicity and charge.
+
+Expected output format:
+- CSV with columns: `mAb`, `prediction` (0 or 1)
+
+Ground truth summary:
+- 35 antibodies tested (65 are NaN)
+- 14 polyreactive (40.0%), 21 not
+
+Primary metric: F1""",
+        "services": ["igblast", "metabcr", "r_data_integration", "bioinformatics"],
+        "parameters": {
+            "meta_csv_file": "/data/benchmark_data/flu_benchmark/260129_flu_metadata.csv",
+            "antigen_file": "/data/benchmark_data/flu_benchmark/flu_antig_seq.csv",
+            "meta_rds_file": "/data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds"
+        },
+        "expected_output": "CSV with mAb, prediction columns",
+        "primary_metric": "F1"
+    },
+    
+    # Q24: What B cell subtypes are enriched among flu binders?
+    {
+        "id": "Q24",
+        "name": "流感结合抗体的B细胞亚型富集分析",
+        "difficulty": "complex",
+        "prompt": """Analyze which B cell subtypes (celltype annotation) are statistically enriched among antibodies that bind any flu hemagglutinin strain (H1N1 Michigan, Puerto Rico, Victoria, Wisconsin; H3N2 Hong Kong, Singapore). Use the single-cell RNA-seq data to characterize B cell phenotypes and determine enrichment. Report the enriched cell type names.
+
+Expected output format:
+- List of enriched B cell subtype names (e.g., "B.07.Bgc_DZ-like")
+
+Primary metric: Entity recall""",
+        "services": ["igblast", "metabcr", "r_data_integration", "bioinformatics"],
+        "parameters": {
+            "meta_csv_file": "/data/benchmark_data/flu_benchmark/260129_flu_metadata.csv",
+            "antigen_file": "/data/benchmark_data/flu_benchmark/flu_antig_seq.csv",
+            "meta_rds_file": "/data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds"
+        },
+        "expected_output": "List of enriched B cell subtype names",
+        "primary_metric": "Entity recall"
+    },
+    
+    # Q25: Which B cell subtypes produce multi-strain flu neutralizers?
+    {
+        "id": "Q25",
+        "name": "多株中和抗体相关的B细胞亚型分析",
+        "difficulty": "complex",
+        "prompt": """Identify which B cell subtypes are enriched among broadly neutralizing antibodies (breadth >= 60% across H1N1 neutralization strains: California, Fort Monmouth, Jiangsu, Michigan, Puerto Rico). Determine which cell types disproportionately produce multi-strain neutralizers. Report the enriched cell type names.
+
+Expected output format:
+- List of enriched B cell subtype names
+
+Primary metric: Entity recall""",
+        "services": ["igblast", "metabcr", "r_data_integration", "bioinformatics"],
+        "parameters": {
+            "meta_csv_file": "/data/benchmark_data/flu_benchmark/260129_flu_metadata.csv",
+            "antigen_file": "/data/benchmark_data/flu_benchmark/flu_antig_seq.csv",
+            "meta_rds_file": "/data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds"
+        },
+        "expected_output": "List of enriched B cell subtype names",
+        "primary_metric": "Entity recall"
+    },
+    
+    # Q26: What structural features distinguish broadly neutralizing antibodies?
+    {
+        "id": "Q26",
+        "name": "广谱中和抗体结构特征分析",
+        "difficulty": "complex",
+        "prompt": """Compare the antibody sequences of broadly neutralizing vs. non-neutralizing antibodies across both the flu and SARS-CoV-2 datasets. Identify structural features that distinguish broadly neutralizing antibodies (bnAbs). Consider CDR-H3 length, V-gene usage, somatic hypermutation (SHM) rate, light chain pairing, and other sequence-derived features. Provide a text summary of the distinguishing features.
+
+Expected output format:
+- Text description listing structural features (e.g., "CDR-H3 length", "IGHV1-69 usage", "high SHM rate")
+
+Primary metric: Entity recall (fraction of known distinguishing features mentioned)""",
+        "services": ["igblast", "metabcr", "r_data_integration", "bioinformatics"],
+        "parameters": {
+            "meta_csv_file": "/data/benchmark_data/flu_benchmark/260129_flu_metadata.csv",
+            "antigen_file": "/data/benchmark_data/flu_benchmark/flu_antig_seq.csv",
+            "meta_rds_file": "/data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds"
+        },
+        "expected_output": "Text description of distinguishing features",
+        "primary_metric": "Entity recall"
+    },
+]
+
+
+# TCR ICON Benchmark 测试问题
+TCR_ICON_BENCHMARK_CASES: List[BenchmarkCase] = [
+    # Q13: Which T cells bind MART-1 cancer epitope?
+    {
+        "id": "Q13",
+        "name": "MART-1癌症表位TCR结合预测",
+        "difficulty": "simple",
+        "prompt": """Given 2080 T cell receptors with paired CDR3 alpha (CDR3a) and CDR3 beta (CDR3b) sequences, predict which TCRs bind the MART-1 cancer epitope (peptide: ELAGIGILTV, presented by HLA-A*02:01). MART-1 is a melanoma-associated antigen. For each TCR (identified by `main_name`), output a binary prediction: True = binder, False = non-binder.
+
+What to use:
+- CDR3a and CDR3b amino acid sequences for each TCR
+- Target peptide: ELAGIGILTV
+- HLA restriction: A*02:01
+- TCR V/J gene usage annotations
+- TCR-epitope binding prediction tools (e.g., NetTCR-2.0)
+
+Expected output format:
+- CSV with columns: `main_name`, `prediction` (True or False), optionally `probability` (0.0-1.0)
+- 2080 rows (one per TCR)
+
+Ground truth summary:
+- 2080 TCRs tested
+- 60 positive (2.9%), 2020 negative
+- Highly imbalanced -- only ~3% are MART-1 binders
+
+Primary metric: F1""",
+        "services": ["igblast", "nettcr", "tcell"],
+        "parameters": {
+            "h5ad_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_benchmark.h5ad",
+            "meta_csv_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_metadata.csv",
+            "meta_rds_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_benchmark.rds"
+        },
+        "expected_output": "CSV with main_name, prediction columns",
+        "primary_metric": "F1"
+    },
+    
+    # Q14: Which T cells bind influenza Flu-MP epitope?
+    {
+        "id": "Q14",
+        "name": "流感Flu-MP表位TCR结合预测",
+        "difficulty": "simple",
+        "prompt": """Predict which TCRs bind the influenza matrix protein epitope Flu-MP (peptide: GILGFVFTL, presented by HLA-A*02:01). GILGFVFTL is the immunodominant influenza matrix protein epitope and one of the best-characterized TCR targets. Output a binary prediction per TCR.
+
+What to use:
+- CDR3a and CDR3b sequences
+- Target peptide: GILGFVFTL
+- HLA restriction: A*02:01
+- TCR-epitope binding prediction tools (e.g., NetTCR-2.0)
+
+Expected output format:
+- CSV with columns: `main_name`, `prediction` (True or False)
+- 2080 rows (one per TCR)
+
+Ground truth summary:
+- 2080 TCRs tested
+- 60 positive (2.9%), 2020 negative
+
+Primary metric: F1""",
+        "services": ["igblast", "nettcr", "tcell"],
+        "parameters": {
+            "h5ad_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_benchmark.h5ad",
+            "meta_csv_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_metadata.csv",
+            "meta_rds_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_benchmark.rds"
+        },
+        "expected_output": "CSV with main_name, prediction columns",
+        "primary_metric": "F1"
+    },
+    
+    # Q15: Which T cells bind EBV epitopes?
+    {
+        "id": "Q15",
+        "name": "EBV表位TCR结合预测",
+        "difficulty": "medium",
+        "prompt": """Predict which TCRs bind any Epstein-Barr virus (EBV) epitope. There are 5 EBV epitopes in this dataset presented by different HLA alleles:
+
+1. LLDFVRFMGV (EBNA-3B, HLA-A*02:01)
+2. RLRAEAQVK (EMNA-3A, HLA-A*03:01)
+3. IVTDFSVIK (EBNA-3B, HLA-A*11:01)
+4. AVFDRKSDAK (EBNA-3B, HLA-A*11:01)
+5. RAKFKQLL (BZLF1, HLA-B*08:01)
+
+A TCR is EBV-reactive if it binds ANY of these 5 epitopes (OR logic). Output a binary prediction per TCR.
+
+What to use:
+- CDR3a and CDR3b sequences
+- All 5 EBV peptide sequences with their HLA restrictions
+- OR logic: positive if any of the 5 predictions is True
+- TCR-epitope binding prediction tools (e.g., NetTCR-2.0)
+
+Expected output format:
+- CSV with columns: `main_name`, `prediction` (True or False)
+- 2080 rows (one per TCR)
+
+Ground truth summary:
+- 2080 TCRs tested
+- 300 positive (14.4%), 1780 negative
+- Covers 3 EBV antigens (EBNA-3A, EBNA-3B, BZLF1) across 3 HLA alleles
+
+Primary metric: F1""",
+        "services": ["igblast", "nettcr", "tcell"],
+        "parameters": {
+            "h5ad_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_benchmark.h5ad",
+            "meta_csv_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_metadata.csv",
+            "meta_rds_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_benchmark.rds"
+        },
+        "expected_output": "CSV with main_name, prediction columns",
+        "primary_metric": "F1"
+    },
+]
+
+
+def build_user_input(test_case: BenchmarkCase) -> str:
+    """根据测试用例构建用户输入"""
+    services_str = "\n".join([f"    - {s}" for s in test_case["services"]])
+    params_str = "\n".join([f"    - {k}: {v}" for k, v in test_case["parameters"].items()])
+    
+    return f"""{test_case['prompt']}
+
+Only use the following MCP services:
+{services_str}
+
+Parameters:
+{params_str}
+
+Note:
+- All tools provided by bioinformatics service must be used.
+"""
 
 # 加载环境变量
 load_dotenv()
 
-# 添加agent目录到路径
+# 添加项目根目录到路径
 import sys
-agent_dir = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent  # bio-agent 目录
+agent_dir = Path(__file__).parent.parent  # bio-agent/agent 目录
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
@@ -70,6 +437,12 @@ from nodes.subagents.executor.graph import (
     resume_executor_after_interrupt,
     ExecutorTaskStatus
 )
+from nodes.subagents.result_evaluator.graph import (
+    build_result_evaluator_subgraph,
+    result_evaluator_input_mapper,
+    result_evaluator_output_mapper
+)
+from nodes.subagents.result_evaluator.state import ResultEvaluatorState
 from utils.hitl_interaction import handle_hitl_interrupt
 
 # 导入测试日志记录器
@@ -218,167 +591,55 @@ def setup_global_logger():
     save_global_logger()
 
 
-def test_full_workflow_detailed(request=None, test_case_logger=None):
+def run_single_test_case(
+    test_case: BenchmarkCase,
+    test_dir: Path,
+    logger: Any,
+    use_react_supervisor: bool = False,
+    use_react_executor: bool = False,
+    react_max_steps: int = 3
+) -> Dict[str, Any]:
     """
-    测试完整工作流并详细记录所有中间过程
+    执行单个测试用例的完整工作流
     
-    流程：
-    1. Supervisor: 分类用户任务
-    2. Immunity: 生成执行计划
-    3. Task Decomposition: 分解任务
-    4. Executor: 推断参数、执行任务（支持并发执行和优先级策略）、汇总结果
+    Args:
+        test_case: 测试用例定义
+        test_dir: 测试目录
+        logger: 日志记录器
+        use_react_supervisor: 是否使用 ReAct Supervisor
+        use_react_executor: 是否使用 ReAct Executor
+        react_max_steps: ReAct 最大步数
+        
+    Returns:
+        测试结果字典
     """
-    # 获取日志记录器
-    logger = test_case_logger
-    if logger is None:
-        global_logger = get_global_logger()
-        if global_logger:
-            test_case_name = request.node.name if request else "test_full_workflow_detailed"
-            logger = global_logger.get_test_case_logger(test_case_name)
+    # 构建用户输入
+    user_input = build_user_input(test_case)
+    execution_plan = None
     
-    # 创建测试目录
-    test_dir = Path("./sandbox/full_workflow_detailed_test")
-    test_dir.mkdir(parents=True, exist_ok=True)
-    
-    # ==================== 步骤 1: 准备用户输入 ====================
-    
-        # 3. invoke lineage_analysis service's all tools
-        # 4. invoke r_data_integration service's all tools
-        # 4. invoke bioinformatics service's all tools
-        # 5. invoke alphafold3
-    # 问题1
-    # user_input = '''
-    #     please design a computational method to identifiy broadly neutralizing antibodies against H5N1.
-    
-    #     only use the following mcp services:
-    #     - igblast
-    #     - metabcr
-    #     - r_data_integration
-    #     - bioinformatics
-
-    #     parameters:
-    #     - meta csv file: /data/benchmark_data/flu_benchmark/260129_flu_metadata.csv
-    #     - antigen file: /data/benchmark_data/flu_benchmark/flu_antig_seq.csv
-    #     - meta RDS file: /data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds
-
-    #     NOTE:
-    #     - All tools provided by bioinformatics service must be used.
-    # '''
-
-    # 问题2
-    user_input = '''
-        Analyze the antigen binding prediction for flu antibodies.
-
-        only use the following mcp services:
-        - igblast
-        - metabcr
-        - r_data_integration
-        - bioinformatics
-
-        parameters:
-        - meta csv file: /data/benchmark_data/flu_benchmark/260129_flu_metadata.csv
-        - antigen file: /data/benchmark_data/flu_benchmark/flu_antig_seq.csv
-        - meta RDS file: /data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds
-
-        note:
-        - all tools provided by bioinformatics service must be used.
-    '''
-
-    # 问题3
-    # user_input = '''
-    #     What structural features differentiate broadly neutralizing antibodies from those with narrow specificity?
-
-    #     only use the following mcp services:
-    #     - igblast
-    #     - metabcr
-    #     - r_data_integration
-    #     - bioinformatics
-
-    #     parameters:
-    #     - meta csv file: /data/benchmark_data/flu_benchmark/260129_flu_metadata.csv
-    #     - antigen file: /data/benchmark_data/flu_benchmark/flu_antig_seq.csv
-    #     - meta RDS file: /data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds
-
-    #     note:
-    #     - all tools provided by bioinformatics service must be used.
-    # '''
-
-    # 问题4
-    # user_input = '''
-    #     Optimize the fitness and thermodynamic stability of the influenza virus NA protein, and generate the optimized protein sequence.
-
-    #     parameters:
-    #     - NA fasta: /data_new/py/project_result/fitness_stab_design/stru_project/01_input/BV_NA_pro.fasta
-    #     - NA pdb: /data_new/py/project_result/fitness_stab_design/stru_project/01_input/lws_1v _pdb/na_tet_bv.pdb
-    # '''
-    
-    # 问题5
-    # user_input = '''
-    #     Generate an optimized, complete mRNA sequence based on the amino acid sequence of NA.
-
-    #     provide the following files:
-    #     - NA fasta: /data_new/py/project_result/fitness_stab_design/stru_project/01_input/BV_NA_pro.fasta
-    # '''
-
-    # 问题6
-    # user_input = '''
-    #     Please screen the table for antibodies that bind to H5N1 and attempt to enhance the antibody's breadth and optimize it toward H3N2 subtypes.
-
-    #     provide the following files:
-    #     - raw data file: /data/benchmark_data/FDG_benchmark/FDG_raw_data.csv
-    #     - antigen file: /data/benchmark_data/FDG_benchmark/flu_antig_seq.csv
-    # '''
-
-    # 问题7
-    # user_input = '''
-    #     Screen the table for SARS-CoV-2-binding antibody sequences.
-
-    #     provide the following files:
-    #     - raw data file:/data/benchmark_data/CoVAbDab_benchmark/CoV-AbDab_raw.csv
-    #     - antigen file: /data/benchmark_data/CoVAbDab_benchmark/sars_antig_seq.csv
-    # '''
-
-    # 问题8
-    # user_input = '''
-    #     Please scan the table and predict the changes in binding affinity of the proteins upon mutation.
-
-    #     provide the following files:
-    #     - raw data file: /data/benchmark_data/Skempi_benchmark/skempi_v2_raw.csv
-    # '''
-
-    execution_plan = None  # 可以在这里提供执行计划
-    use_react_supervisor = False
-    use_react_executor = False
-    react_max_steps = 3
-    
-    # 启用 OpenSandbox（优先使用远程沙盒进行文件分析）
+    # 启用 OpenSandbox
     os.environ["OPENSANDBOX_ENABLED"] = "true"
-    os.environ["CODEACT_SANDBOX_PROVIDER"] = "opensandbox"  # 关键：指定使用 OpenSandbox 执行代码
+    os.environ["CODEACT_SANDBOX_PROVIDER"] = "opensandbox"
     os.environ["OPENSANDBOX_SKIP_MCP_INSTALL"] = "true"
     
-    # 配置持久化共享卷：所有沙盒共享同一个会话目录
-    # 这确保文件在沙盒销毁后仍然存在，可被后续沙盒和 MCP 服务访问
-    # 格式: "/host/path:/container/path" - 将服务器上的目录挂载到容器的 /tmp/sessions
     if not os.environ.get("OPENSANDBOX_VOLUME_BINDINGS"):
-        # 使用服务器默认的持久化目录
         os.environ["OPENSANDBOX_VOLUME_BINDINGS"] = "/data/sessions:/tmp/sessions,/data:/data:ro"
-        print(f"  [Config] 已配置持久化共享卷: /data/sessions -> /tmp/sessions")
     
     print(f"\n{'='*80}")
-    print(f"【完整工作流详细测试】")
+    print(f"【测试用例 {test_case['id']}: {test_case['name']}】")
+    print(f"难度: {test_case['difficulty']}")
     print(f"{'='*80}")
-    print(f"OpenSandbox: {'启用' if os.environ.get('OPENSANDBOX_ENABLED') == 'true' else '禁用'}")
-    print(f"用户输入: {user_input}")
-    if execution_plan:
-        print(f"执行计划: {execution_plan}")
-    print(f"测试目录: {test_dir.absolute()}")
-    print(f"{'='*80}\n")
     
     # 记录用户原始输入
     if logger:
         logger.log_initial_state({
-            "user_input": user_input
-        }, "用户输入")
+            "test_case_id": test_case["id"],
+            "test_case_name": test_case["name"],
+            "difficulty": test_case["difficulty"],
+            "user_input": user_input,
+            "expected_output": test_case["expected_output"],
+            "primary_metric": test_case["primary_metric"]
+        }, "测试用例输入")
     
     # 创建初始全局状态
     global_state = GlobalState(
@@ -471,7 +732,6 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     # ==================== 步骤 3: Immunity 生成执行计划（已跳过以加快测试）====================
     # NOTE: Immunity 子图暂时跳过，直接进入任务分解
     # 如需恢复，取消下面的注释
-    """
     immunity_subgraph = build_immunity_subgraph()
     immunity_input = immunity_input_mapper(global_state)
     try:
@@ -515,8 +775,7 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
                 {"error": str(e)},
                 "执行计划失败"
             )
-    """
-    print("  [Skip] Immunity 子图已跳过以加快测试速度")
+    # print("  [Skip] Immunity 子图已跳过以加快测试速度")
     
     # ==================== 步骤 4: Task Decomposition ====================
     print(f"\n{'='*80}")
@@ -609,10 +868,25 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     print()
     
     # 检查是否有任务需要执行
-    all_tasks = global_state.subtasks + [
-        task for group in global_state.parallel_task_groups.values()
-        for task in group.subtasks
-    ]
+    # Note: Executor merges parallel task groups into subtasks, so we should use
+    # the same logic to avoid counting tasks twice
+    all_tasks = list(global_state.subtasks)
+    seen_task_ids = {task.task_id for task in all_tasks}
+    
+    # Add tasks from parallel groups that are not already in subtasks
+    for group in global_state.parallel_task_groups.values():
+        if hasattr(group, 'subtasks'):
+            for task in group.subtasks:
+                if task.task_id not in seen_task_ids:
+                    all_tasks.append(task)
+                    seen_task_ids.add(task.task_id)
+        elif isinstance(group, dict):
+            group_subtasks = group.get('subtasks', [])
+            for task in group_subtasks:
+                task_id = task.task_id if hasattr(task, 'task_id') else task.get('task_id')
+                if task_id and task_id not in seen_task_ids:
+                    all_tasks.append(task)
+                    seen_task_ids.add(task_id)
     
     if not all_tasks:
         print("⚠ 没有任务需要执行")
@@ -746,9 +1020,99 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     
     # 映射回全局状态
     global_state = executor_output_mapper(final_state, global_state)
-    
+
+    # ==================== 步骤 5: Result Evaluator 总结 ====================
     print(f"\n{'='*80}")
-    print(f"【步骤 5/5】结果汇总中...")
+    print(f"【步骤 5/6】结果评估与总结中...")
+    print(f"{'='*80}")
+    print(f"  → 正在收集所有任务执行结果...")
+    print(f"  → 结合执行计划生成总结报告...")
+    start_time = time.time()
+
+    try:
+        result_evaluator_subgraph = build_result_evaluator_subgraph()
+        result_evaluator_input = result_evaluator_input_mapper(global_state)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            result_evaluator_output = result_evaluator_subgraph.invoke(result_evaluator_input)
+
+        # 处理输出（可能是 dict 或 ResultEvaluatorState）
+        if isinstance(result_evaluator_output, dict):
+            result_evaluator_output = ResultEvaluatorState(**result_evaluator_output)
+
+        global_state = result_evaluator_output_mapper(result_evaluator_output, global_state)
+
+        elapsed = time.time() - start_time
+        print(f"  ✓ 结果评估完成 (耗时: {elapsed:.2f}秒)")
+
+        # 打印总结报告
+        print(f"\n{'='*80}")
+        print(f"【5. 总结报告】")
+        print(f"{'='*80}")
+
+        summary_report = result_evaluator_output.summary_report
+        if summary_report:
+            print(f"\n{summary_report}")
+
+        key_findings = result_evaluator_output.key_findings
+        if key_findings:
+            print(f"\n关键发现:")
+            for i, finding in enumerate(key_findings, 1):
+                print(f"  {i}. {finding}")
+
+        recommendations = result_evaluator_output.recommendations
+        if recommendations:
+            print(f"\n建议:")
+            for i, rec in enumerate(recommendations, 1):
+                print(f"  {i}. {rec}")
+
+        output_files = result_evaluator_output.output_files
+        if output_files:
+            print(f"\n输出文件:")
+            for f in output_files[:10]:
+                print(f"  - {f}")
+            if len(output_files) > 10:
+                print(f"  ... 还有 {len(output_files) - 10} 个文件")
+
+        if result_evaluator_output.report_path:
+            print(f"\n完整报告路径: {result_evaluator_output.report_path}")
+
+        # 记录到日志
+        if logger:
+            logger.log_node_execution(
+                "result_evaluator_subgraph",
+                {"user_input": user_input, "execution_plan": global_state.execution_plan},
+                {
+                    "summary_report": summary_report,
+                    "key_findings": key_findings,
+                    "recommendations": recommendations,
+                    "output_files": output_files,
+                    "report_path": result_evaluator_output.report_path,
+                    "statistics": {
+                        "total_tasks": result_evaluator_output.total_tasks,
+                        "completed_tasks": result_evaluator_output.completed_tasks,
+                        "failed_tasks": result_evaluator_output.failed_tasks,
+                        "success_rate": result_evaluator_output.success_rate
+                    }
+                },
+                "结果评估与总结"
+            )
+
+    except Exception as e:
+        import traceback
+        error_traceback = traceback.format_exc()
+        print(f"⚠ Result Evaluator 执行失败: {e}")
+        print(f"错误堆栈:\n{error_traceback}")
+        if logger:
+            logger.log_node_execution(
+                "result_evaluator_subgraph",
+                {"user_input": user_input},
+                {"error": str(e), "error_traceback": error_traceback},
+                "结果评估失败"
+            )
+
+    print(f"\n{'='*80}")
+    print(f"【步骤 6/6】结果汇总中...")
     print(f"{'='*80}")
     
     # 只打印关键信息：每个任务的结果
@@ -910,8 +1274,19 @@ def test_full_workflow_detailed(request=None, test_case_logger=None):
     assert final_state.total_tasks == len(all_tasks), f"任务数不匹配: {final_state.total_tasks} != {len(all_tasks)}"
     assert final_state.completed_count + final_state.failed_count <= final_state.total_tasks, "完成+失败数不应超过总任务数"
     
-    print(f"✓ 完整工作流详细测试完成")
+    # 返回测试结果
+    return {
+        "test_case_id": test_case["id"],
+        "test_case_name": test_case["name"],
+        "difficulty": test_case["difficulty"],
+        "total_tasks": final_state.total_tasks,
+        "completed": final_state.completed_count,
+        "failed": final_state.failed_count,
+        "success": final_state.failed_count == 0
+    }
 
+
+# ==================== pytest 参数化测试 ====================
 
 @pytest.fixture(autouse=True)
 def test_case_logger(request):
@@ -926,11 +1301,211 @@ def test_case_logger(request):
         yield None
 
 
-# 主函数，支持直接运行
+# 生成 pytest 参数
+def get_flu_test_ids():
+    """获取 Flu Benchmark 测试 ID 列表"""
+    return [case["id"] for case in FLU_BENCHMARK_CASES]
+
+
+def get_flu_test_cases():
+    """获取 Flu Benchmark 测试用例列表"""
+    return FLU_BENCHMARK_CASES
+
+
+def get_tcr_icon_test_ids():
+    """获取 TCR ICON Benchmark 测试 ID 列表"""
+    return [case["id"] for case in TCR_ICON_BENCHMARK_CASES]
+
+
+def get_tcr_icon_test_cases():
+    """获取 TCR ICON Benchmark 测试用例列表"""
+    return TCR_ICON_BENCHMARK_CASES
+
+
+# Flu Benchmark 参数化测试
+@pytest.mark.parametrize("test_case", get_flu_test_cases(), ids=get_flu_test_ids())
+def test_flu_benchmark(test_case: BenchmarkCase, request, test_case_logger):
+    """
+    测试 Flu Benchmark 系列问题
+    
+    运行方式:
+    - 测试所有问题: pytest tests/test_full_workflow_detailed.py::test_flu_benchmark -v -s
+    - 测试单个问题: pytest tests/test_full_workflow_detailed.py::test_flu_benchmark -v -s -k "Q01"
+    - 测试简单问题: pytest tests/test_full_workflow_detailed.py::test_flu_benchmark -v -s -k "simple"
+    - 测试复杂问题: pytest tests/test_full_workflow_detailed.py::test_flu_benchmark -v -s -k "complex"
+    """
+    # 创建测试目录
+    test_dir = Path(f"./sandbox/flu_benchmark_{test_case['id']}")
+    test_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 获取日志记录器
+    logger = test_case_logger
+    if logger is None:
+        global_logger = get_global_logger()
+        if global_logger:
+            logger = global_logger.get_test_case_logger(f"flu_{test_case['id']}")
+    
+    # 执行测试
+    result = run_single_test_case(
+        test_case=test_case,
+        test_dir=test_dir,
+        logger=logger
+    )
+    
+    # 验证结果
+    assert result is not None, f"测试用例 {test_case['id']} 返回空结果"
+    assert result["total_tasks"] > 0, f"测试用例 {test_case['id']} 没有生成任务"
+
+
+# TCR ICON Benchmark 参数化测试
+@pytest.mark.parametrize("test_case", get_tcr_icon_test_cases(), ids=get_tcr_icon_test_ids())
+def test_tcr_icon_benchmark(test_case: BenchmarkCase, request, test_case_logger):
+    """
+    测试 TCR ICON Benchmark 系列问题
+    
+    运行方式:
+    - 测试所有问题: pytest tests/test_full_workflow_detailed.py::test_tcr_icon_benchmark -v -s
+    - 测试单个问题: pytest tests/test_full_workflow_detailed.py::test_tcr_icon_benchmark -v -s -k "Q13"
+    - 测试简单问题: pytest tests/test_full_workflow_detailed.py::test_tcr_icon_benchmark -v -s -k "simple"
+    - 测试复杂问题: pytest tests/test_full_workflow_detailed.py::test_tcr_icon_benchmark -v -s -k "complex"
+    """
+    # 创建测试目录
+    test_dir = Path(f"./sandbox/tcr_icon_benchmark_{test_case['id']}")
+    test_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 获取日志记录器
+    logger = test_case_logger
+    if logger is None:
+        global_logger = get_global_logger()
+        if global_logger:
+            logger = global_logger.get_test_case_logger(f"tcr_icon_{test_case['id']}")
+    
+    # 执行测试
+    result = run_single_test_case(
+        test_case=test_case,
+        test_dir=test_dir,
+        logger=logger
+    )
+    
+    # 验证结果
+    assert result is not None, f"测试用例 {test_case['id']} 返回空结果"
+    assert result["total_tasks"] > 0, f"测试用例 {test_case['id']} 没有生成任务"
+
+
+# ==================== 批量运行测试 ====================
+
+def test_run_all_simple_cases(request, test_case_logger):
+    """批量运行所有简单难度的测试用例"""
+    simple_cases = [case for case in FLU_BENCHMARK_CASES if case["difficulty"] == "simple"]
+    
+    results = []
+    for test_case in simple_cases:
+        test_dir = Path(f"./sandbox/flu_benchmark_{test_case['id']}")
+        test_dir.mkdir(parents=True, exist_ok=True)
+        
+        logger = test_case_logger
+        if logger is None:
+            global_logger = get_global_logger()
+            if global_logger:
+                logger = global_logger.get_test_case_logger(f"batch_{test_case['id']}")
+        
+        try:
+            result = run_single_test_case(
+                test_case=test_case,
+                test_dir=test_dir,
+                logger=logger
+            )
+            results.append(result)
+        except Exception as e:
+            results.append({
+                "test_case_id": test_case["id"],
+                "test_case_name": test_case["name"],
+                "error": str(e),
+                "success": False
+            })
+    
+    # 打印汇总结果
+    print(f"\n{'='*80}")
+    print(f"【批量测试汇总】")
+    print(f"{'='*80}")
+    for result in results:
+        status = "✓" if result.get("success", False) else "✗"
+        print(f"  {status} {result['test_case_id']}: {result['test_case_name']}")
+        if not result.get("success", False) and "error" in result:
+            print(f"     错误: {result['error'][:100]}...")
+    
+    success_count = sum(1 for r in results if r.get("success", False))
+    print(f"\n  通过: {success_count}/{len(results)}")
+    print(f"{'='*80}\n")
+
+
+def test_run_all_complex_cases(request, test_case_logger):
+    """批量运行所有复杂难度的测试用例"""
+    complex_cases = [case for case in FLU_BENCHMARK_CASES if case["difficulty"] == "complex"]
+    
+    results = []
+    for test_case in complex_cases:
+        test_dir = Path(f"./sandbox/flu_benchmark_{test_case['id']}")
+        test_dir.mkdir(parents=True, exist_ok=True)
+        
+        logger = test_case_logger
+        if logger is None:
+            global_logger = get_global_logger()
+            if global_logger:
+                logger = global_logger.get_test_case_logger(f"batch_{test_case['id']}")
+        
+        try:
+            result = run_single_test_case(
+                test_case=test_case,
+                test_dir=test_dir,
+                logger=logger
+            )
+            results.append(result)
+        except Exception as e:
+            results.append({
+                "test_case_id": test_case["id"],
+                "test_case_name": test_case["name"],
+                "error": str(e),
+                "success": False
+            })
+    
+    # 打印汇总结果
+    print(f"\n{'='*80}")
+    print(f"【批量测试汇总 - 复杂问题】")
+    print(f"{'='*80}")
+    for result in results:
+        status = "✓" if result.get("success", False) else "✗"
+        print(f"  {status} {result['test_case_id']}: {result['test_case_name']}")
+        if not result.get("success", False) and "error" in result:
+            print(f"     错误: {result['error'][:100]}...")
+    
+    success_count = sum(1 for r in results if r.get("success", False))
+    print(f"\n  通过: {success_count}/{len(results)}")
+    print(f"{'='*80}\n")
+
+
+# ==================== 主函数，支持直接运行 ====================
+
 if __name__ == "__main__":
+    import argparse
+    
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="运行 Benchmark 测试")
+    parser.add_argument("--case", "-c", type=str, default=None,
+                       help="指定测试用例 ID (如 Q01, Q13, Q15)")
+    parser.add_argument("--difficulty", "-d", type=str, default=None,
+                       choices=["simple", "medium", "complex"],
+                       help="指定测试难度")
+    parser.add_argument("--all", "-a", action="store_true",
+                       help="运行所有测试用例")
+    parser.add_argument("--benchmark", "-b", type=str, default="flu",
+                       choices=["flu", "tcr_icon", "all"],
+                       help="指定 benchmark 类型: flu (默认), tcr_icon, all")
+    args = parser.parse_args()
+    
     # 启用 OpenSandbox
     os.environ["OPENSANDBOX_ENABLED"] = "true"
-    os.environ["CODEACT_SANDBOX_PROVIDER"] = "opensandbox"  # 关键：指定使用 OpenSandbox 执行代码
+    os.environ["CODEACT_SANDBOX_PROVIDER"] = "opensandbox"
     os.environ["OPENSANDBOX_SKIP_MCP_INSTALL"] = "true"
     
     # 初始化日志
@@ -938,8 +1513,89 @@ if __name__ == "__main__":
     init_global_logger(test_file_name)
     
     try:
+        # 合并所有测试用例
+        all_cases = []
+        if args.benchmark in ["flu", "all"]:
+            all_cases.extend(FLU_BENCHMARK_CASES)
+        if args.benchmark in ["tcr_icon", "all"]:
+            all_cases.extend(TCR_ICON_BENCHMARK_CASES)
+        
+        # 筛选测试用例
+        if args.case:
+            cases_to_run = [c for c in all_cases if c["id"] == args.case]
+        elif args.difficulty:
+            cases_to_run = [c for c in all_cases if c["difficulty"] == args.difficulty]
+        elif args.all:
+            cases_to_run = all_cases
+        else:
+            # 默认运行第一个简单用例作为演示
+            cases_to_run = [c for c in all_cases if c["difficulty"] == "simple"][:1]
+        
+        if not cases_to_run:
+            print("未找到匹配的测试用例")
+            exit(1)
+        
+        print(f"\n{'='*80}")
+        print(f"【即将运行 {len(cases_to_run)} 个测试用例】")
+        print(f"{'='*80}")
+        for case in cases_to_run:
+            print(f"  - {case['id']}: {case['name']} ({case['difficulty']})")
+        print(f"{'='*80}\n")
+        
         # 运行测试
-        test_full_workflow_detailed()
+        global_logger = get_global_logger()
+        results = []
+        
+        for test_case in cases_to_run:
+            # 根据测试用例 ID 确定所属 benchmark
+            if test_case["id"] in [c["id"] for c in TCR_ICON_BENCHMARK_CASES]:
+                benchmark_name = "tcr_icon_benchmark"
+            else:
+                benchmark_name = "flu_benchmark"
+            test_dir = Path(f"./sandbox/{benchmark_name}_{test_case['id']}")
+            test_dir.mkdir(parents=True, exist_ok=True)
+            
+            logger = None
+            if global_logger:
+                logger = global_logger.get_test_case_logger(f"{benchmark_name}_{test_case['id']}")
+            
+            try:
+                result = run_single_test_case(
+                    test_case=test_case,
+                    test_dir=test_dir,
+                    logger=logger
+                )
+                results.append(result)
+            except Exception as e:
+                import traceback
+                print(f"\n✗ 测试失败: {test_case['id']}")
+                print(f"   错误: {e}")
+                traceback.print_exc()
+                results.append({
+                    "test_case_id": test_case["id"],
+                    "test_case_name": test_case["name"],
+                    "error": str(e),
+                    "success": False
+                })
+            
+            if global_logger:
+                global_logger.finish_test_case(f"flu_{test_case['id']}")
+        
+        # 打印最终汇总
+        print(f"\n{'='*80}")
+        print(f"【测试汇总】")
+        print(f"{'='*80}")
+        for result in results:
+            status = "✓" if result.get("success", False) else "✗"
+            print(f"  {status} {result['test_case_id']}: {result['test_case_name']}")
+            if result.get("total_tasks"):
+                print(f"     任务: {result['total_tasks']} | 完成: {result['completed']} | 失败: {result['failed']}")
+            if not result.get("success", False) and "error" in result:
+                print(f"     错误: {result['error'][:100]}...")
+        
+        success_count = sum(1 for r in results if r.get("success", False))
+        print(f"\n  总计: {success_count}/{len(results)} 通过")
+        print(f"{'='*80}\n")
         
     finally:
         # 保存日志

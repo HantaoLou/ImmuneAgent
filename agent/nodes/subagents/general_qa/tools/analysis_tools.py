@@ -10,10 +10,11 @@ Specialized tools for complex reasoning tasks:
 LangChain/LangGraph 1.0 compatible tools using @tool decorator
 """
 
-from typing import List, Dict, Any, Optional, Annotated
-from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Optional, Annotated, Union
+from pydantic import BaseModel, Field, field_validator
 from langchain_core.tools import tool, InjectedToolArg
 from typing_extensions import TypedDict
+import json
 
 
 # ============================================================
@@ -134,7 +135,7 @@ class MultiStatementInput(BaseModel):
     question_text: str = Field(
         description="The full question text containing multiple statements to verify"
     )
-    statements: List[str] = Field(
+    statements: Union[List[str], str] = Field(
         default_factory=list,
         description="List of individual statements to verify (e.g., ['I. Twitching motility is...', 'II. 10-cm plates contain...'])"
     )
@@ -142,6 +143,22 @@ class MultiStatementInput(BaseModel):
         default="which_are_true",
         description="'which_are_true' or 'which_are_false' or 'which_are_not_true'"
     )
+    
+    @field_validator('statements', mode='before')
+    @classmethod
+    def parse_statements(cls, v):
+        """Parse statements from JSON string if needed"""
+        if v is None:
+            return []
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+                return [v]
+            except (json.JSONDecodeError, ValueError):
+                return [v]
+        return v
 
 
 class ModificationInput(BaseModel):
@@ -176,10 +193,26 @@ class SgRNAAnalysisInput(BaseModel):
         default=None,
         description="Gene region being targeted (e.g., 'exon2', 'promoter')"
     )
-    options_to_evaluate: Optional[List[str]] = Field(
+    options_to_evaluate: Optional[Union[List[str], str]] = Field(
         default=None,
         description="List of candidate sgRNA sequences to evaluate (e.g., ['ACGTTGCGAGGACAGAGTCA(AGG)', '...'])"
     )
+    
+    @field_validator('options_to_evaluate', mode='before')
+    @classmethod
+    def parse_options(cls, v):
+        """Parse options from JSON string if needed"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+                return [v]
+            except (json.JSONDecodeError, ValueError):
+                return [v]
+        return v
 
 
 class ExperimentalDataInput(BaseModel):
@@ -191,14 +224,32 @@ class ExperimentalDataInput(BaseModel):
         default="which_is_true",
         description="Type of question being asked: 'which_is_true', 'which_is_false', 'interpret_results'"
     )
-    groups: Optional[List[str]] = Field(
+    groups: Optional[Union[List[str], str]] = Field(
         default=None,
-        description="Experimental groups (e.g., ['wild type', 'mutant A', 'mutant B'])"
+        description="Experimental groups (e.g., ['wild type', 'mutant A', 'mutant B'] or JSON string)"
     )
     outcome_variable: Optional[str] = Field(
         default=None,
         description="What was measured (e.g., 'bacteria count', 'survival rate')"
     )
+    
+    @field_validator('groups', mode='before')
+    @classmethod
+    def parse_groups(cls, v):
+        """Parse groups from JSON string if needed"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # Try to parse as JSON string
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+                return [v]  # Single string as list
+            except (json.JSONDecodeError, ValueError):
+                # Not valid JSON, treat as single group
+                return [v]
+        return v
 
 
 # ============================================================
@@ -208,7 +259,7 @@ class ExperimentalDataInput(BaseModel):
 @tool
 def verify_multi_statement(
     question_text: str,
-    statements: List[str],
+    statements: Union[List[str], str],
     goal_type: str = "which_are_true"
 ) -> Dict[str, Any]:
     """
@@ -222,7 +273,7 @@ def verify_multi_statement(
     
     Args:
         question_text: The full question text containing multiple statements
-        statements: List of individual statements to verify
+        statements: List of individual statements to verify (or JSON string of list)
         goal_type: 'which_are_true' or 'which_are_false' or 'which_are_not_true'
     
     Returns:
@@ -235,6 +286,15 @@ def verify_multi_statement(
         ...     goal_type="which_are_true"
         ... )
     """
+    # Parse statements if provided as JSON string
+    if isinstance(statements, str):
+        try:
+            statements = json.loads(statements)
+            if not isinstance(statements, list):
+                statements = [statements]
+        except (json.JSONDecodeError, ValueError):
+            statements = [statements]
+    
     results = []
     
     for i, statement in enumerate(statements):
@@ -396,7 +456,7 @@ def analyze_sgrna(
     target_sequence: str,
     pam_sequence: str = "NGG",
     gene_region: Optional[str] = None,
-    options_to_evaluate: Optional[List[str]] = None
+    options_to_evaluate: Optional[Union[List[str], str]] = None
 ) -> Dict[str, Any]:
     """
     Analyze CRISPR sgRNA candidates for quality and off-target potential.
@@ -415,7 +475,7 @@ def analyze_sgrna(
         target_sequence: Target DNA sequence or gene name
         pam_sequence: PAM sequence (default: NGG for SpCas9)
         gene_region: Gene region being targeted (e.g., 'exon2')
-        options_to_evaluate: List of candidate sgRNA sequences to evaluate
+        options_to_evaluate: List of candidate sgRNA sequences to evaluate (or JSON string)
     
     Returns:
         Dictionary with sgRNA evaluations and recommendations
@@ -429,6 +489,15 @@ def analyze_sgrna(
         ...     ]
         ... )
     """
+    # Parse options if provided as JSON string
+    if isinstance(options_to_evaluate, str):
+        try:
+            options_to_evaluate = json.loads(options_to_evaluate)
+            if not isinstance(options_to_evaluate, list):
+                options_to_evaluate = [options_to_evaluate]
+        except (json.JSONDecodeError, ValueError):
+            options_to_evaluate = [options_to_evaluate]
+    
     results = {
         "query": {
             "target_sequence": target_sequence,
@@ -515,7 +584,7 @@ def analyze_sgrna(
 def analyze_experimental_data(
     data_description: str,
     question_type: str = "which_is_true",
-    groups: Optional[List[str]] = None,
+    groups: Optional[Union[List[str], str]] = None,
     outcome_variable: Optional[str] = None
 ) -> Dict[str, Any]:
     """
@@ -532,7 +601,7 @@ def analyze_experimental_data(
     Args:
         data_description: Description of the experimental data
         question_type: Type of question: 'which_is_true', 'which_is_false', 'interpret_results'
-        groups: Experimental groups (e.g., ['wild type', 'mutant A'])
+        groups: Experimental groups (e.g., ['wild type', 'mutant A']) or JSON string
         outcome_variable: What was measured (e.g., 'bacteria count')
     
     Returns:
@@ -545,6 +614,15 @@ def analyze_experimental_data(
         ...     outcome_variable="bacteria count in liver"
         ... )
     """
+    # Parse groups if provided as JSON string
+    if isinstance(groups, str):
+        try:
+            groups = json.loads(groups)
+            if not isinstance(groups, list):
+                groups = [groups]
+        except (json.JSONDecodeError, ValueError):
+            groups = [groups]
+    
     result = {
         "query": {
             "data_description": data_description,

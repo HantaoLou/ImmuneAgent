@@ -135,6 +135,12 @@ I have access to an interactive coding environment where I can write and execute
 - Check if the proposed answers are consistent with known facts and constraints
 - Look for edge cases or assumptions that the original solvers may have missed
 
+IMPORTANT - Handling Unavailable External Resources:
+- If web_search returns "[Search Unavailable]" or empty results, STOP trying to search
+- If read_webpage fails repeatedly, STOP trying to read webpages
+- When external resources are unavailable, use your internal knowledge and the provided context
+- DO NOT keep trying the same failing tool - proceed to your best answer using available information
+
 CRITICAL: I should not simply agree with the majority — my value is in finding the correct answer by verifying each claim. When all solvers agree, I must be especially skeptical: they may all share the same blind spot (e.g., relying on textbook-level generalizations when a specialized mechanism is at play). I MUST use read_webpage(url) to read the actual content of relevant papers rather than guessing from titles or snippets.
 
 Let me start by comparing the solutions and identifying where they agree and disagree, then verify the disputed points.
@@ -176,14 +182,32 @@ class RewriterAgent(CodeActAgent):
             ],
             "next_step": "generate",
         }
-        config = {"recursion_limit": 500, "configurable": {"thread_id": 42}}
+        # OPTIMIZATION: Reduced recursion limit to fail fast when external resources unavailable
+        config = {"recursion_limit": 100, "configurable": {"thread_id": 42}}
         self.log = []
+        
+        # Track consecutive empty observations to detect stuck states
+        empty_observation_count = 0
+        MAX_EMPTY_OBSERVATIONS = 5
 
         final_state = None
         step = 0
         for s in self.app.stream(inputs, stream_mode="values", config=config):
             message = s["messages"][-1]
             step += 1
+            
+            # Detect empty observations (stuck state detection)
+            if isinstance(message, AIMessage) and "<observation></observation>" in message.content:
+                empty_observation_count += 1
+                if empty_observation_count >= MAX_EMPTY_OBSERVATIONS:
+                    print(f"  ⚠ Detected {empty_observation_count} consecutive empty observations")
+                    print(f"  → External resources unavailable, forcing early termination")
+            elif isinstance(message, AIMessage) and "<observation>" in message.content:
+                if "</observation>" in message.content:
+                    obs_content = message.content.split("<observation>")[1].split("</observation>")[0]
+                    if obs_content.strip():
+                        empty_observation_count = 0
+            
             out = self._pretty_print(message)
             self.log.append(out)
             self._verbose_log(step, message)

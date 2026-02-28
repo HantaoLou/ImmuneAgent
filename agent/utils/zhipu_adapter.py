@@ -4,12 +4,15 @@ ZhipuAI OpenAI 兼容适配器
 将 ZhipuAI SDK 的调用方式适配为 OpenAI 兼容的接口，使其可以与 LangChain 无缝集成。
 """
 
-from typing import Optional, Any, List, Dict, Iterator, Type, Union
+from typing import Optional, Any, List, Dict, Iterator, Type, Union, Callable, Sequence, ClassVar
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.language_models import LanguageModelInput
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
+from langchain_core.runnables import Runnable
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 import os
 import json
@@ -22,18 +25,38 @@ class ZhipuAIAdapter(BaseChatModel):
     
     将 ZhipuAI SDK 的调用方式适配为 LangChain 兼容的接口。
     使用方式与 OpenAI 的 ChatOpenAI 完全一致。
+    
+    支持超时后自动切换到备用模型（fallback models）。
     """
     
     model: str = "chatglm3-6b-1001"
     temperature: float = 0.7
     api_key: Optional[str] = None
     zhipu_client: Optional[Any] = None
+    timeout: int = 120  # Default timeout in seconds
+    max_retries: int = 3  # Maximum number of retries for timeout errors
+    retry_delay: float = 2.0  # Delay between retries in seconds
+    fallback_models: Optional[List[str]] = None  # 备用模型列表，超时后依次切换
+    auto_fallback: bool = True  # 是否启用自动备用模型切换
+    
+    # 默认的备用模型映射（主模型 -> 备用模型）
+    DEFAULT_FALLBACK_MAP: ClassVar[Dict[str, List[str]]] = {
+        "glm-4.5": ["glm-4.5-air", "glm-4-plus"],
+        "glm-4.5-air": ["glm-4-plus"],
+        "glm-4-plus": ["glm-4"],
+        "glm-4": ["glm-4-flash"],
+    }
     
     def __init__(
         self,
         model: str = "chatglm3-6b-1001",
         temperature: float = 0.7,
         api_key: Optional[str] = None,
+        timeout: int = 120,
+        max_retries: int = 3,
+        retry_delay: float = 2.0,
+        fallback_models: Optional[List[str]] = None,
+        auto_fallback: bool = True,
         **kwargs
     ):
         """
@@ -43,12 +66,30 @@ class ZhipuAIAdapter(BaseChatModel):
             model: 模型名称，默认为 "chatglm3-6b-1001"
             temperature: 温度参数，默认为 0.7
             api_key: API 密钥，如果不提供则从环境变量 ZHIPU_API_KEY 读取
+            timeout: 请求超时时间（秒），默认 120
+            max_retries: 超时错误的最大重试次数，默认 3
+            retry_delay: 重试之间的延迟时间（秒），默认 2.0
+            fallback_models: 备用模型列表，超时后依次切换。如果为 None 且 auto_fallback=True，
+                           则根据 DEFAULT_FALLBACK_MAP 自动选择备用模型
+            auto_fallback: 是否启用自动备用模型切换，默认 True
             **kwargs: 其他参数
         """
         super().__init__(**kwargs)
         
         self.model = model
         self.temperature = temperature
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.auto_fallback = auto_fallback
+        
+        # 设置备用模型列表
+        if fallback_models is not None:
+            self.fallback_models = fallback_models
+        elif auto_fallback and model in self.DEFAULT_FALLBACK_MAP:
+            self.fallback_models = self.DEFAULT_FALLBACK_MAP[model]
+        else:
+            self.fallback_models = []
         
         # 获取 API Key
         if api_key is None:
@@ -151,6 +192,33 @@ class ZhipuAIAdapter(BaseChatModel):
         
         return zhipu_messages
     
+    def _is_timeout_error(self, error: Exception) -> bool:
+        """
+        判断是否为超时错误
+        
+        Args:
+            error: 异常对象
+            
+        Returns:
+            是否为超时错误
+        """
+        error_type = type(error).__name__
+        error_msg = str(error).lower()
+        
+        # 检查常见的超时错误类型
+        timeout_types = ['timeout', 'timedout', 'apitimeouterror', 'timeouterror', 'readtimeout', 'connecttimeout']
+        timeout_keywords = ['timeout', 'timed out', 'time out', '请求超时']
+        
+        # 检查错误类型名
+        if any(tt in error_type.lower() for tt in timeout_types):
+            return True
+        
+        # 检查错误消息
+        if any(tk in error_msg for tk in timeout_keywords):
+            return True
+        
+        return False
+    
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -159,17 +227,21 @@ class ZhipuAIAdapter(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         """
-        生成回复（核心方法）
+        生成回复（核心方法，带超时重试和备用模型切换机制）
         
         Args:
             messages: 消息列表
             stop: 停止词列表
             run_manager: 回调管理器
-            **kwargs: 其他参数
+            **kwargs: 其他参数（包括 tools, tool_choice 等）
             
         Returns:
             ChatResult 对象
         """
+        import time
+        import platform
+        import signal
+        
         # 转换消息格式
         try:
             zhipu_messages = self._convert_messages_to_zhipu_format(messages)
@@ -180,12 +252,8 @@ class ZhipuAIAdapter(BaseChatModel):
         if not zhipu_messages:
             raise ValueError("转换后的消息列表为空")
         
-        # 调试：打印消息格式（仅在开发时使用）
-        # print(f"调试：ZhipuAI 消息格式: {zhipu_messages}")
-        
         # 准备请求参数
         request_params = {
-            "model": self.model,
             "messages": zhipu_messages,
             "temperature": self.temperature,
         }
@@ -196,41 +264,172 @@ class ZhipuAIAdapter(BaseChatModel):
         
         request_params.update(kwargs)
         
-        try:
-            # 调用 ZhipuAI SDK
-            response = self.zhipu_client.chat.completions.create(**request_params)
+        # 超时处理函数
+        def timeout_handler(signum, frame):
+            raise TimeoutError(f"ZhipuAI API 请求超时 ({self.timeout}秒)")
+        
+        # 构建要尝试的模型列表：主模型 + 备用模型
+        models_to_try = [self.model]
+        if self.fallback_models:
+            models_to_try.extend(self.fallback_models)
+        
+        last_error = None
+        
+        # 遍历所有模型（主模型 + 备用模型）
+        for model_idx, current_model in enumerate(models_to_try):
+            is_fallback = model_idx > 0
             
-            # 提取回复内容
-            if hasattr(response, 'choices') and len(response.choices) > 0:
-                content = response.choices[0].message.content
-            elif hasattr(response, 'data') and hasattr(response.data, 'choices'):
-                content = response.data.choices[0].message.content
-            else:
-                # 尝试直接获取 content
-                content = getattr(response, 'content', str(response))
+            if is_fallback:
+                print(f"🔄 主模型超时，切换到备用模型: {current_model}")
             
-            # 创建 ChatGeneration 对象
-            generation = ChatGeneration(
-                message=AIMessage(content=content),
-                generation_info={
-                    "model": self.model,
-                    "temperature": self.temperature,
-                }
-            )
+            # 对每个模型进行重试
+            for attempt in range(self.max_retries):
+                try:
+                    # 设置当前模型
+                    request_params["model"] = current_model
+                    
+                    # 调用 ZhipuAI SDK（仅限 Unix/Linux 系统）
+                    # Windows 不支持 signal.alarm，使用普通调用
+                    if platform.system() != 'Windows':
+                        # 设置超时
+                        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                        signal.alarm(self.timeout)
+                    
+                    response = self.zhipu_client.chat.completions.create(**request_params)
+                    
+                    if platform.system() != 'Windows':
+                        # 取消超时
+                        signal.alarm(0)
+                        signal.signal(signal.SIGALRM, old_handler)
+                    
+                    # 提取回复内容
+                    if hasattr(response, 'choices') and len(response.choices) > 0:
+                        choice = response.choices[0]
+                        message = choice.message
+                        content = message.content or ""
+                        
+                        # 处理工具调用
+                        tool_calls = []
+                        additional_kwargs = {}
+                        
+                        # 检查是否有工具调用
+                        if hasattr(message, 'tool_calls') and message.tool_calls:
+                            for tc in message.tool_calls:
+                                tool_calls.append({
+                                    "name": tc.function.name if hasattr(tc.function, 'name') else tc.get("function", {}).get("name"),
+                                    "args": json.loads(tc.function.arguments) if hasattr(tc.function, 'arguments') else json.loads(tc.get("function", {}).get("arguments", "{}")),
+                                    "id": tc.id if hasattr(tc, 'id') else tc.get("id"),
+                                })
+                            additional_kwargs["tool_calls"] = [
+                                {
+                                    "id": tc.id if hasattr(tc, 'id') else tc.get("id"),
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.function.name if hasattr(tc.function, 'name') else tc.get("function", {}).get("name"),
+                                        "arguments": tc.function.arguments if hasattr(tc.function, 'arguments') else tc.get("function", {}).get("arguments", "{}"),
+                                    }
+                                }
+                                for tc in message.tool_calls
+                            ]
+                        # 检查 legacy function_call
+                        elif hasattr(message, 'function_call') and message.function_call:
+                            additional_kwargs["function_call"] = {
+                                "name": message.function_call.name if hasattr(message.function_call, 'name') else message.function_call.get("name"),
+                                "arguments": message.function_call.arguments if hasattr(message.function_call, 'arguments') else message.function_call.get("arguments", "{}"),
+                            }
+                        
+                        # 创建 AIMessage
+                        ai_message = AIMessage(
+                            content=content,
+                            tool_calls=tool_calls,
+                            additional_kwargs=additional_kwargs
+                        )
+                        
+                    elif hasattr(response, 'data') and hasattr(response.data, 'choices'):
+                        content = response.data.choices[0].message.content
+                        ai_message = AIMessage(content=content or "")
+                    else:
+                        # 尝试直接获取 content
+                        content = getattr(response, 'content', str(response))
+                        ai_message = AIMessage(content=content)
+                    
+                    # 如果是备用模型成功，记录信息
+                    if is_fallback:
+                        print(f"✅ 备用模型 {current_model} 调用成功")
+                    
+                    # 创建 ChatGeneration 对象
+                    generation = ChatGeneration(
+                        message=ai_message,
+                        generation_info={
+                            "model": current_model,
+                            "temperature": self.temperature,
+                            "is_fallback": is_fallback,
+                        }
+                    )
+                    
+                    # 创建 ChatResult 对象
+                    return ChatResult(generations=[generation])
+                    
+                except Exception as e:
+                    last_error = e
+                    error_type = type(e).__name__
+                    error_msg = str(e)
+                    
+                    # 判断是否为超时错误
+                    is_timeout = self._is_timeout_error(e)
+                    
+                    if is_timeout:
+                        # 如果是超时错误且还有重试次数，则进行重试
+                        if attempt < self.max_retries - 1:
+                            retry_num = attempt + 2  # 显示为第几次尝试（从2开始）
+                            # 指数退避：延迟时间随重试次数增加
+                            delay = self.retry_delay * (2 ** attempt)
+                            print(f"⚠️ ZhipuAI 超时 ({current_model})，正在重试 ({retry_num}/{self.max_retries})，等待 {delay:.1f} 秒...")
+                            time.sleep(delay)
+                            continue
+                        else:
+                            # 当前模型重试次数用尽，打印提示并尝试下一个模型
+                            print(f"⚠️ 模型 {current_model} 超时重试次数用尽")
+                            # 如果还有备用模型，继续尝试下一个
+                            if model_idx < len(models_to_try) - 1:
+                                print(f"   → 准备切换到下一个备用模型...")
+                                break  # 跳出重试循环，进入下一个模型
+                            else:
+                                # 没有更多备用模型，退出
+                                break
+                    else:
+                        # 非超时错误，直接跳出重试（对于严重错误不重试）
+                        break
             
-            # 创建 ChatResult 对象
-            return ChatResult(generations=[generation])
-            
-        except Exception as e:
-            # 提供更详细的错误信息
-            error_msg = str(e)
-            if "messages" in error_msg.lower() or "参数非法" in error_msg:
-                # 打印消息格式以便调试
-                print(f"错误：ZhipuAI 消息格式问题")
-                print(f"消息数量: {len(zhipu_messages)}")
-                for i, msg in enumerate(zhipu_messages):
-                    print(f"  消息 {i+1}: role={msg.get('role')}, content长度={len(str(msg.get('content', '')))}")
-            raise RuntimeError(f"ZhipuAI 调用失败: {e}")
+            # 检查是否成功（非超时错误也会跳出外层循环）
+            if last_error is None or not self._is_timeout_error(last_error):
+                break
+        
+        # 所有模型和重试都失败，提供详细错误信息
+        error_type = type(last_error).__name__
+        error_msg = str(last_error)
+        
+        # 详细诊断错误原因
+        print(f"❌ ZhipuAI 调用失败详情:")
+        print(f"   - 错误类型: {error_type}")
+        print(f"   - 错误消息: {error_msg}")
+        print(f"   - 尝试的模型: {models_to_try}")
+        print(f"   - 消息数量: {len(zhipu_messages)}")
+        
+        if "messages" in error_msg.lower() or "参数非法" in error_msg:
+            # 打印消息格式以便调试
+            print(f"   - 可能是消息格式问题")
+            for i, msg in enumerate(zhipu_messages):
+                content_preview = str(msg.get('content', ''))[:100]
+                print(f"     消息 {i+1}: role={msg.get('role')}, content={content_preview}...")
+        elif self._is_timeout_error(last_error):
+            print(f"   - 网络超时或API响应超时（已尝试所有备用模型）")
+        elif "api" in error_msg.lower() or "key" in error_msg.lower():
+            print(f"   - 可能是API密钥或权限问题")
+        elif "rate" in error_msg.lower() or "limit" in error_msg.lower():
+            print(f"   - 可能是请求频率限制")
+        
+        raise RuntimeError(f"ZhipuAI 调用失败 ({error_type}): {last_error}")
     
     def _stream(
         self,
@@ -414,9 +613,98 @@ class ZhipuAIAdapter(BaseChatModel):
                 return ChatResult(generations=[generation])
         
         return StructuredOutputWrapper(structured_invoke, self)
-
-
-# ===================== 便捷函数 =====================
+    
+    def bind_tools(
+        self,
+        tools: Sequence[Union[Dict[str, Any], Type, Callable, BaseTool]],
+        *,
+        tool_choice: Optional[Union[str, Dict[str, Any], bool]] = None,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, AIMessage]:
+        """
+        将工具绑定到模型
+        
+        类似于 OpenAI 的 bind_tools 方法，将工具定义绑定到模型，
+        使模型能够决定何时以及如何调用这些工具。
+        
+        Args:
+            tools: 工具列表，支持多种格式：
+                - Dict: OpenAI 工具格式的字典
+                - Type: Pydantic BaseModel 类
+                - Callable: Python 函数（需要有类型注解）
+                - BaseTool: LangChain 工具实例
+            tool_choice: 工具选择策略：
+                - "auto": 自动选择（默认）
+                - "none": 不使用工具
+                - "required" 或 "any": 必须使用工具
+                - 特定工具名称: 强制使用该工具
+                - Dict: OpenAI 格式的 tool_choice
+            **kwargs: 其他传递给 bind 的参数
+            
+        Returns:
+            绑定工具后的 Runnable
+            
+        Examples:
+            >>> from pydantic import BaseModel, Field
+            >>> from agent.utils.zhipu_adapter import ZhipuAIAdapter
+            >>> 
+            >>> class GetWeather(BaseModel):
+            ...     '''获取指定城市的天气'''
+            ...     city: str = Field(description="城市名称")
+            >>> 
+            >>> llm = ZhipuAIAdapter(model="glm-4")
+            >>> llm_with_tools = llm.bind_tools([GetWeather])
+            >>> response = llm_with_tools.invoke("北京今天天气怎么样？")
+            >>> print(response.tool_calls)
+        """
+        from langchain_core.utils.function_calling import convert_to_openai_tool
+        
+        # 将所有工具转换为 OpenAI 格式
+        formatted_tools = []
+        for tool in tools:
+            try:
+                formatted_tools.append(convert_to_openai_tool(tool))
+            except Exception as e:
+                raise ValueError(f"无法转换工具 {tool}: {e}")
+        
+        # 提取工具名称
+        tool_names = []
+        for tool in formatted_tools:
+            if "function" in tool:
+                tool_names.append(tool["function"]["name"])
+            elif "name" in tool:
+                tool_names.append(tool["name"])
+        
+        # 处理 tool_choice 参数
+        if tool_choice:
+            if isinstance(tool_choice, str):
+                # 如果是工具名称，转换为正确格式
+                if tool_choice in tool_names:
+                    tool_choice = {
+                        "type": "function",
+                        "function": {"name": tool_choice}
+                    }
+                elif tool_choice in ("required", "any"):
+                    # 'any' 不是原生支持的，转换为 'required'
+                    tool_choice = "required"
+                # "auto" 和 "none" 直接使用
+            elif isinstance(tool_choice, bool):
+                tool_choice = "required" if tool_choice else None
+            elif isinstance(tool_choice, dict):
+                # 已经是正确格式，直接使用
+                pass
+            else:
+                raise ValueError(
+                    f"无法识别的 tool_choice 类型: {type(tool_choice)}. "
+                    "期望 str, bool 或 dict"
+                )
+            
+            if tool_choice:
+                kwargs["tool_choice"] = tool_choice
+        
+        # 使用父类的 bind 方法绑定工具
+        # 这会创建一个 RunnableBinding，在调用时自动注入 tools 参数
+        return super().bind(tools=formatted_tools, **kwargs)
 
 def create_zhipu_chat_model(
     model: str = "chatglm3-6b-1001",

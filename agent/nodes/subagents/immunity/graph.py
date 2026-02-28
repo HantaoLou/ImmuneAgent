@@ -13,6 +13,7 @@ import json
 import re
 import os
 import time
+import asyncio
 from datetime import datetime
 
 from langgraph.graph import StateGraph, START, END
@@ -26,6 +27,12 @@ from utils.llm_factory import (
 )
 from .state import ImmunityState
 from .prompts import ImmunityPrompts
+
+# Import deep_research subgraph
+from nodes.subagents.deep_research.deep_researcher import (
+    deep_researcher,
+    get_default_config as get_deep_research_config,
+)
 
 # Add agent directory to path
 import sys
@@ -288,193 +295,162 @@ Main Citations (Top 10):
     return state
 
 
-# ===================== Stage 3: Deep Research Node =====================
+# ===================== Stage 3: Deep Research Node (using deep_research subgraph) =====================
 
 def deep_research_node(state: ImmunityState) -> ImmunityState:
     """
     Stage 3: Deep Research Node
     
-    Conduct in-depth analysis of research questions and generate research results
-    Based on retrieved literature context for deep analysis
+    Uses the deep_research subgraph to conduct in-depth analysis of research questions.
+    The deep_research subgraph provides multi-step research with web search and synthesis.
     """
     print("\n" + "=" * 60)
-    print("🔬 STAGE 3: Deep Research Analysis")
+    print("🔬 STAGE 3: Deep Research Analysis (via deep_research subgraph)")
     print("=" * 60)
     
-    llm = create_bioinformatics_llm()
-    if not llm:
-        print("⚠️ LLM unavailable, skipping deep research")
+    if not state.original_question:
+        print("⚠️ No original question, skipping deep research")
         return state
     
     try:
-        from langchain_core.messages import SystemMessage, HumanMessage
-        from langchain_core.output_parsers import JsonOutputParser
+        # Prepare the research question combining original question and retrieval context
+        research_question = state.original_question
         
-        # Use reference project's RESEARCH_ANALYSIS_PROMPT
-        # Use literature context provided by retrieval node
-        context = state.context if state.context else ""
-        
-        # If no retrieval context, provide warning
-        if not context:
-            print("⚠️ Warning: No literature context retrieved, will analyze based on original question and optimized queries")
-        
-        # Format optimized queries
-        format_querys = []
-        for i, optimized_query in enumerate(state.optimized_questions, 1):
-            format_querys.append(f"""
-<sub_questions>
-    <q{i}>
-        {optimized_query}
-    </q{i}>
-</sub_questions>
-""")
-        optimized_queries = "\n\n".join(format_querys) if format_querys else "None"
-        
-        question = f"""
-<questions>
-    <question>
-        {state.original_question}
-    </question>
-</questions>
+        # Add retrieval context if available
+        if state.context:
+            research_question = f"""
+研究主题: {state.original_question}
+
+已检索的背景资料:
+{state.context[:4000]}
+
+请基于以上背景资料，深入研究并回答上述问题。
 """
         
-        # Use reference project's RESEARCH_ANALYSIS_PROMPT
-        research_analysis_prompt = ImmunityPrompts.RESEARCH_ANALYSIS_PROMPT.format(
-            context=context,
-            question=question,
-            optimized_queries=optimized_queries
+        # Add optimized queries if available
+        if state.optimized_questions:
+            sub_queries = "\n".join([f"- {q}" for q in state.optimized_questions[:5]])
+            research_question += f"\n\n重点关注以下子问题:\n{sub_queries}"
+        
+        print(f"  📋 Research question: {state.original_question[:100]}...")
+        print(f"  🔍 Using deep_research subgraph for multi-step analysis...")
+        
+        # Get deep_research subgraph configuration
+        dr_config = get_deep_research_config(
+            thread_id=f"immunity_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            max_researcher_iterations=3,  # Limit iterations for efficiency
+            max_concurrent_research_units=2,
+            max_react_tool_calls=6,
         )
         
-        # Use JSON parser (not using with_structured_output, as dict type is not supported)
-        output_parser = JsonOutputParser()
+        # Prepare input for deep_research subgraph
+        research_input = {
+            "messages": [{"role": "user", "content": research_question}]
+        }
         
-        # ZhipuAI requires at least one user message, so send prompt as user message
-        messages = [HumanMessage(content=research_analysis_prompt)]
+        # Run deep_research subgraph asynchronously
+        async def run_deep_research_async():
+            from langgraph.checkpoint.memory import MemorySaver
+            from nodes.subagents.deep_research.deep_researcher import deep_researcher_builder
+            
+            # Compile with memory checkpointing
+            graph = deep_researcher_builder.compile(checkpointer=MemorySaver())
+            return await graph.ainvoke(research_input, dr_config)
         
-        # Directly invoke LLM, then parse JSON
-        response = llm.invoke(messages)
-        response_content = response.content if hasattr(response, 'content') else str(response)
-        
-        # Use JsonOutputParser to parse response
+        # Execute async function
         try:
-            research_data = output_parser.parse(response_content)
-            if not isinstance(research_data, dict):
-                research_data = {}
-        except Exception as e:
-            print(f"⚠️ JSON parsing failed, attempting direct parsing: {e}")
-            # Try extracting JSON from response
-            import json
-            import re
-            # Try extracting JSON code block or direct parsing
-            json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
-            if json_match:
-                try:
-                    research_data = json.loads(json_match.group())
-                except:
-                    research_data = {}
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're already in an async context, create a new event loop
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, run_deep_research_async())
+                    result = future.result(timeout=300)  # 5 minute timeout
             else:
-                research_data = {}
+                result = loop.run_until_complete(run_deep_research_async())
+        except RuntimeError:
+            # No event loop, create one
+            result = asyncio.run(run_deep_research_async())
         
-        if research_data:
-            # Process structured evidence
-            key_insights = []
-            evidence = []
-            evidenced_claims = []
-            
-            # Extract key insights
-            if "key_insights" in research_data:
-                for insight in research_data["key_insights"]:
-                    if isinstance(insight, dict):
-                        key_insights.append(insight.get("claim", ""))
-                        evidenced_claims.append(insight)
-                    else:
-                        key_insights.append(str(insight))
-            
-            # Extract evidence
-            if "evidence" in research_data:
-                for ev in research_data["evidence"]:
-                    if isinstance(ev, dict):
-                        evidence.append(ev.get("claim", ""))
-                        evidenced_claims.append(ev)
-                    else:
-                        evidence.append(str(ev))
-            
-            # Extract gaps and recommendations
-            gaps = []
-            if "gaps" in research_data:
-                for gap in research_data["gaps"]:
-                    if isinstance(gap, dict):
-                        gaps.append(gap.get("gap", ""))
-                    else:
-                        gaps.append(str(gap))
-            
-            recommendations = []
-            if "recommendations" in research_data:
-                for rec in research_data["recommendations"]:
-                    if isinstance(rec, dict):
-                        recommendations.append(rec.get("recommendation", ""))
-                    else:
-                        recommendations.append(str(rec))
-            
-            # Store research results
-            state.deep_research_findings = research_data
-            state.research_confidence = float(research_data.get("overall_confidence", 70.0))
-            state.research_insights = key_insights
-            state.research_evidence = evidence
-            state.research_gaps = gaps
-            state.research_recommendations = recommendations
-            
-            # Generate research summary (reference project format)
-            context_summary = f"""
-Research Topic: {research_data.get('topic', 'Not specified')}
-
-Sub-questions from decomposition:
-{chr(10).join([f"- {q}" for q in state.optimized_questions[:5]])}
-
-Key research insights (Confidence: {state.research_confidence:.1f}%):
-{chr(10).join([f"- {insight}" for insight in state.research_insights[:5]])}
-
-Supporting evidence:
-{chr(10).join([f"- {evidence}" for evidence in state.research_evidence[:5]])}
-
-Research findings summary:
-{research_data.get('summary', 'None')}
-
-Structured evidence claims:
-{chr(10).join([f"- {claim.get('claim', '')} (Confidence: {claim.get('confidence', 0):.1f}%)" for claim in evidenced_claims[:5]])}
-
-Knowledge gaps identified:
-{chr(10).join([f"- {gap}" for gap in state.research_gaps[:5]])}
-
-Research recommendations:
-{chr(10).join([f"- {rec}" for rec in state.research_recommendations[:5]])}
-
-Confidence breakdown:
-{chr(10).join([f"- {aspect}: {conf:.1f}%" for aspect, conf in research_data.get('confidence_breakdown', {}).items()])}
-"""
-            
+        # Extract results from deep_research subgraph
+        final_report = result.get("final_report", "")
+        research_brief = result.get("research_brief", "")
+        notes = result.get("notes", [])
+        
+        # Map results back to ImmunityState
+        if final_report:
             state.research_summary = f"""
 <research_findings>
     <research_finding>
-        {context_summary}
+        {final_report}
     </research_finding>
 </research_findings>
 """
+            state.deep_research_findings = {
+                "final_report": final_report,
+                "research_brief": research_brief,
+                "notes": notes,
+                "topic": state.original_question,
+            }
+            
+            # Extract insights from notes
+            state.research_insights = []
+            state.research_evidence = []
+            for note in notes[:10]:
+                if isinstance(note, str):
+                    state.research_insights.append(note[:500])  # Truncate long notes
+            
+            # Set confidence based on results
+            state.research_confidence = 80.0 if final_report else 50.0
             
             print(f"✅ Deep research completed")
-            print(f"  - Research topic: {research_data.get('topic', 'Not specified')}")
+            print(f"  - Final report length: {len(final_report)} characters")
+            print(f"  - Research brief length: {len(research_brief)} characters")
+            print(f"  - Notes count: {len(notes)}")
             print(f"  - Confidence: {state.research_confidence:.1f}%")
-            print(f"  - Key insights count: {len(state.research_insights)}")
             
             # Save research report
             report_path = _save_report(state.research_summary, "deep_research", state.sandbox_dir)
         else:
-            print("⚠️ Unable to parse research results")
+            print("⚠️ Deep research returned no results, using fallback")
+            # Fallback to simple context-based research
+            state.research_summary = f"""
+<research_findings>
+    <research_finding>
+        Research Topic: {state.original_question}
+        
+        Based on retrieval context:
+        {state.context[:2000] if state.context else 'No context available'}
+        
+        Optimized queries:
+        {chr(10).join([f"- {q}" for q in state.optimized_questions[:5]])}
+    </research_finding>
+</research_findings>
+"""
+            state.research_confidence = 50.0
     
     except Exception as e:
         print(f"⚠️ Deep research failed: {e}")
         import traceback
         traceback.print_exc()
+        
+        # Fallback: create research summary from available context
+        state.research_summary = f"""
+<research_findings>
+    <research_finding>
+        Research Topic: {state.original_question}
+        
+        Note: Deep research subgraph encountered an error. Using available context.
+        
+        Context from retrieval:
+        {state.context[:2000] if state.context else 'No context available'}
+        
+        Optimized queries:
+        {chr(10).join([f"- {q}" for q in state.optimized_questions[:5]])}
+    </research_finding>
+</research_findings>
+"""
+        state.research_confidence = 40.0
     
     return state
 

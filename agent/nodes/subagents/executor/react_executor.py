@@ -17,7 +17,7 @@ def execute_with_react(
     result: Any,
     base_execution_mode: Any,
     parameters: Dict[str, Any],
-    run_codeact: Callable[[Any, Dict[str, Any], Optional[str], Optional[str], Optional[str]], Any],
+    run_codeact: Callable[[Any, Dict[str, Any], Optional[str], Optional[str], Optional[str], Optional[Any], int], Any],
     handle_streaming: Callable[[Any, Any], Optional[Dict[str, Any]]],
     classify_error: Callable[[str, str], Any],
     analyze_failure: Callable[[str, str, Any], str],
@@ -49,6 +49,7 @@ def execute_with_react(
     previous_code: Optional[str] = None
     previous_error: Optional[str] = None
     error_category_value: Optional[str] = None
+    revision_plan: Optional[Any] = None  # Track revision_plan across iterations
     current_mode = base_execution_mode
 
     termination_reason: Optional[str] = None
@@ -58,12 +59,17 @@ def execute_with_react(
             content=f"step={step + 1}; execution_mode={current_mode.value}"
         ))
 
+        # Get revision_iteration from previous iteration to maintain state
+        revision_iteration = result.revision_iteration if hasattr(result, 'revision_iteration') else 0
+
         exec_result, codeact_state = run_codeact(
             current_mode,
             parameters,
             previous_code,
             previous_error,
-            error_category_value
+            error_category_value,
+            revision_plan,  # Pass revision_plan to CodeAct
+            revision_iteration  # Pass revision_iteration to maintain state
         )
 
         result.code = exec_result.get("code")
@@ -131,8 +137,38 @@ def execute_with_react(
             if hasattr(result.error_category, "value")
             else str(result.error_category)
         )
-
-        if result.error_category == error_category_enum.PARAMETER_ERROR:
+        
+        # Get revision_plan from codeact_state for next iteration
+        if hasattr(codeact_state, 'revision_plan') and codeact_state.revision_plan:
+            revision_plan = codeact_state.revision_plan
+        elif isinstance(codeact_state, dict) and codeact_state.get('revision_plan'):
+            revision_plan = codeact_state.get('revision_plan')
+        elif hasattr(codeact_state, 'suggested_transform_tool') and codeact_state.suggested_transform_tool:
+            # If revision_plan was created but not properly returned, reconstruct it
+            from nodes.subagents.code_act.revision import RevisionPlan, RevisionStrategy
+            revision_plan = RevisionPlan(
+                strategy=RevisionStrategy.DATA_TRANSFORM,
+                root_cause=f"Data format mismatch: {previous_error}",
+                action_items=["Use data transformation tool to convert input format"],
+                expected_outcome="Transform input data to match expected format",
+                confidence=0.85,
+                orthogonal=True,
+                suggested_tool=codeact_state.suggested_transform_tool
+            )
+        
+        # Check if Revision suggests data transformation - keep original mode for data transform
+        use_data_transform = (
+            revision_plan and 
+            hasattr(revision_plan, 'strategy') and 
+            str(revision_plan.strategy.value) == 'data_transform'
+        )
+        
+        if use_data_transform:
+            # For data transformation, keep the original MCP_TOOL mode
+            # The RevisionExecutor will generate code that first transforms data, then calls the tool
+            current_mode = base_execution_mode
+            print(f"  🔄 Keeping original mode for DATA_TRANSFORM strategy: {current_mode.value}")
+        elif result.error_category == error_category_enum.PARAMETER_ERROR:
             current_mode = fix_parameter_mode
         else:
             current_mode = fix_code_mode

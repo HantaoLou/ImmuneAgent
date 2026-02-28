@@ -438,6 +438,69 @@ except Exception as e:
 register_pre_call_hook(_csv_to_fasta_hook)
 
 
+# ==================== MCP Output Parsing ====================
+
+def _parse_mcp_tool_output(output: Any) -> tuple[Any, Optional[str], Optional[str]]:
+    """
+    Parse MCP tool output to extract inner status/error information.
+    
+    MCP tools return responses in format:
+    [{"type": "text", "text": "{\"status\": \"error\", \"error\": \"...\"}"}]
+    
+    This function extracts the inner status/error from the nested payload.
+    
+    Args:
+        output: Raw output from MCP tool (usually a list of content blocks)
+        
+    Returns:
+        Tuple of (parsed_output, error_message, error_type)
+        - parsed_output: Extracted data or original output
+        - error_message: Error message if tool execution failed, None otherwise
+        - error_type: Error type if available, None otherwise
+    """
+    import json
+    
+    if not isinstance(output, list):
+        return output, None, None
+    
+    # Extract text content from MCP response
+    text_content = None
+    for item in output:
+        if isinstance(item, dict) and item.get("type") == "text":
+            text_content = item.get("text", "")
+            break
+    
+    if not text_content:
+        return output, None, None
+    
+    # Try to parse as JSON
+    try:
+        parsed = json.loads(text_content)
+        
+        # Check for tool-level error
+        if isinstance(parsed, dict):
+            inner_status = parsed.get("status", "")
+            inner_error = parsed.get("error")
+            inner_error_type = parsed.get("error_type")
+            
+            if inner_status == "error" or inner_error:
+                error_msg = inner_error or parsed.get("message", "Tool execution failed")
+                return parsed, error_msg, inner_error_type
+            
+            # Check for streaming_task response (task submitted successfully)
+            if parsed.get("type") == "streaming_task":
+                return parsed, None, None
+            
+            # Normal success response
+            return parsed, None, None
+        
+        return parsed, None, None
+        
+    except json.JSONDecodeError:
+        # Not JSON, return as-is
+        return text_content, None, None
+
+
 # ==================== Main Tool Call Function ====================
 
 def call_tool(
@@ -471,6 +534,20 @@ def call_tool(
         output = result.get("output")
         error = result.get("error")
         error_type = result.get("error_type")
+        
+        # CRITICAL: Parse nested MCP tool response to detect tool-level errors
+        # MCP returns: [{"type": "text", "text": "{\"status\": \"error\", \"error\": \"...\"}"}]
+        # We need to extract the inner status/error from the payload
+        if status == "success" and output is not None:
+            parsed_output, inner_error, inner_error_type = _parse_mcp_tool_output(output)
+            if inner_error:
+                # Tool communication succeeded but tool execution failed
+                status = "failed"
+                error = inner_error
+                error_type = inner_error_type or "ToolExecutionError"
+                output = parsed_output
+                print(f"  [ToolInterface] MCP tool {tool_name} execution failed: {error[:200]}...")
+        
         if status != "success" and not error_type:
             error_type = "ToolError"
     except Exception as exc:

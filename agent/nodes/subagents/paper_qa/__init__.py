@@ -1,6 +1,6 @@
-"""Literature search subagent: Tavily + Qdrant discovery, optional paper-qa evidence.
+"""Literature search subagent: Unified multi-provider + Qdrant discovery, optional paper-qa evidence.
 
-Primary source: Tavily web search (academic domain filtering)
+Primary source: Unified web search (Tavily -> SerpAPI -> DuckDuckGo fallback)
 Secondary source: Qdrant vector database (local immunology knowledge base)
 Optional enhancement: paper-qa Docs for LLM-scored evidence gathering
 
@@ -17,6 +17,7 @@ Usage:
 from .paper_retrieval import (
     safe_paper_pipeline,
     discover_papers,
+    search_unified,
     search_tavily,
     search_qdrant,
     format_evidence_for_knowledge_activation,
@@ -28,6 +29,7 @@ from .paperqa_cache import DocsCache
 __all__ = [
     "safe_paper_pipeline",
     "discover_papers",
+    "search_unified",
     "search_tavily",
     "search_qdrant",
     "format_evidence_for_knowledge_activation",

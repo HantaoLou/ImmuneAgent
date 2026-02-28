@@ -75,12 +75,18 @@ class CodeActState(BaseModel):
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Task parameters (parsed)")
     execution_mode: CodeActExecutionMode = Field(description="Execution mode")
     
+    # All available tools for data transformation suggestions (from reference service)
+    all_available_tools: List[Dict[str, Any]] = Field(default_factory=list, description="All available tools for potential data transformation")
+    
     # Fix related
     previous_code: Optional[str] = Field(default=None, description="Previous code (for fixing)")
     previous_error: Optional[str] = Field(default=None, description="Previous error message (for fixing)")
     error_category: Optional[str] = Field(default=None, description="Error category")
     revision_plan: Optional[Any] = Field(default=None, description="Revision plan (for intelligent fixing)")
     revision_iteration: int = Field(default=0, description="Revision iteration count")
+    
+    # Suggested data transformation tool (from Revision analysis)
+    suggested_transform_tool: Optional[Dict[str, Any]] = Field(default=None, description="Suggested tool for data transformation")
     
     # Code generation and execution results
     generated_code: Optional[str] = Field(default=None, description="Generated code")
@@ -672,17 +678,33 @@ def codeact_generate_code_node(state: CodeActState) -> CodeActState:
             tool_name = tool.get("tool_name") or tool.get("name", "unknown_tool")
             tool_description = tool.get("description", "")
             
-            # Use LLM to generate code
-            user_prompt = get_mcp_tool_code_user_prompt(
-                tool_name=tool_name,
-                tool_description=tool_description,
-                parameters=parameters,
-                task_description=state.task_description
-            )
-            
-            # Fallback code
-            params_str = ", ".join([f"{k}={repr(v)}" for k, v in parameters.items()])
-            fallback_code = f"""
+            # Check if there's a revision plan with data transformation strategy
+            # This happens after a failure when Revision mechanism suggests a data transformation
+            if state.revision_plan and state.revision_plan.strategy == RevisionStrategy.DATA_TRANSFORM:
+                print(f"  🔄 Using Revision plan for MCP tool with data transformation")
+                print(f"     Strategy: {state.revision_plan.strategy.value}")
+                print(f"     Suggested tool: {state.revision_plan.suggested_tool.get('tool_name', 'N/A') if state.revision_plan.suggested_tool else 'N/A'}")
+                
+                # Use RevisionExecutor to generate code with data transformation
+                generated_code = execute_revision_plan(
+                    revision_plan=state.revision_plan,
+                    original_code=state.previous_code or "",
+                    original_error=state.previous_error or "",
+                    task_description=state.task_description,
+                    parameters=parameters
+                )
+            else:
+                # Normal path: Use LLM to generate code
+                user_prompt = get_mcp_tool_code_user_prompt(
+                    tool_name=tool_name,
+                    tool_description=tool_description,
+                    parameters=parameters,
+                    task_description=state.task_description
+                )
+                
+                # Fallback code
+                params_str = ", ".join([f"{k}={repr(v)}" for k, v in parameters.items()])
+                fallback_code = f"""
 # Call MCP tool: {tool_name}
 # Parameters: {params_str}
 from core.tool_interface import call_tool
@@ -697,12 +719,12 @@ if tool_result["status"] == "success":
 else:
     result = {{"status": "failed", "error": tool_result["error"], "error_type": tool_result.get("error_type")}}
 """
-            
-            generated_code = _generate_code_with_llm(
-                system_prompt=MCP_TOOL_CODE_SYSTEM_PROMPT,
-                user_prompt=user_prompt,
-                fallback_code=fallback_code
-            )
+                
+                generated_code = _generate_code_with_llm(
+                    system_prompt=MCP_TOOL_CODE_SYSTEM_PROMPT,
+                    user_prompt=user_prompt,
+                    fallback_code=fallback_code
+                )
             
             # Ensure code is executable (especially when no sandbox environment)
             state.generated_code = _ensure_code_executable(
@@ -1253,11 +1275,23 @@ def codeact_revision_node(state: CodeActState) -> CodeActState:
     state.previous_error = latest_failed.error_message or str(latest_failed.error_type)
     state.error_category = latest_failed.error_category
     
+    # Store suggested tool if available
+    if revision_plan.suggested_tool:
+        state.suggested_transform_tool = revision_plan.suggested_tool
+    
     print(f"  ✓ Revision plan generated successfully")
     print(f"     Strategy: {revision_plan.strategy.value}")
     print(f"     Root cause: {revision_plan.root_cause[:150]}...")
     print(f"     Confidence: {revision_plan.confidence:.2f}")
     print(f"     Iteration count: {state.revision_iteration}")
+    
+    # Show suggested transformation tool if available
+    if revision_plan.suggested_tool:
+        tool_info = revision_plan.suggested_tool
+        print(f"  💡 SUGGESTED DATA TRANSFORMATION TOOL:")
+        print(f"     Tool: {tool_info.get('tool_name', 'unknown')}")
+        print(f"     Service: {tool_info.get('service', 'unknown')}")
+        print(f"     Description: {tool_info.get('description', 'No description')[:100]}...")
     
     return state
 

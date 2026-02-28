@@ -390,7 +390,9 @@ In each response, you must include EITHER <execute> or <solution> tag. Not both 
         self.user_task = prompt
 
         inputs = {"messages": [HumanMessage(content=prompt)], "next_step": None}
-        config = {"recursion_limit": 500, "configurable": {"thread_id": 42}}
+        # Recursion limit - balanced to allow reasonable exploration but fail fast on errors
+        # Lower value helps fail faster when external resources (search) are unavailable
+        config = {"recursion_limit": 50, "configurable": {"thread_id": 42}}
         self.log = []
 
         # Store the final conversation state

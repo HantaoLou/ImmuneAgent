@@ -70,7 +70,46 @@ def extract_search_queries(question: str) -> list[str]:
     return queries[:3]
 
 
-# ==================== Tavily Search (PRIMARY) ====================
+# ==================== Unified Search (Multi-provider with fallback) ====================
+
+
+async def search_unified(
+    query: str, max_results: int = 8
+) -> list[dict[str, Any]]:
+    """Search via unified multi-provider API with automatic fallback.
+
+    Tries providers in order: Tavily -> SerpAPI -> DuckDuckGo
+    Falls back automatically when quota exceeded or errors occur.
+
+    Returns results from scientific publishers, PubMed, ArXiv, etc.
+    """
+    try:
+        from agent.utils.unified_search import unified_search_async, get_search_status, SearchProvider
+        
+        # Log current search status
+        status = get_search_status()
+        available = [p for p, s in status.items() if s['enabled'] and s['has_api_key'] and not s['quota_exceeded']]
+        logger.info(f"Available search providers for paper_qa: {available}")
+        
+        # Use unified search with Tavily as preferred (for academic domains)
+        result = await unified_search_async(query, max_results, preferred_provider=SearchProvider.TAVILY.value)
+        
+        if result["success"]:
+            # Mark results as coming from tavily for compatibility
+            for r in result["results"]:
+                r["source"] = "tavily"  # For compatibility with existing code
+            logger.info(f"Unified search returned {len(result['results'])} results via {result['provider']}")
+            return result["results"]
+        else:
+            logger.warning(f"Unified search failed: {result['error']}")
+            return []
+            
+    except ImportError as e:
+        logger.warning(f"Unified search not available: {e}, falling back to Tavily-only")
+        return await search_tavily(query, max_results)
+    except Exception as e:
+        logger.warning(f"Unified search error: {e}")
+        return []
 
 
 async def search_tavily(
@@ -91,6 +130,26 @@ async def search_tavily(
     if not api_key:
         logger.warning("TAVILY_API_KEY not set, skipping Tavily search")
         return []
+
+    # CRITICAL FIX: Truncate query to 400 characters (Tavily limit)
+    if len(query) > 400:
+        # Try to truncate at a sentence boundary
+        truncated = query[:400]
+        last_period = truncated.rfind('.')
+        last_question = truncated.rfind('?')
+        last_exclaim = truncated.rfind('!')
+        last_sentence_end = max(last_period, last_question, last_exclaim)
+        
+        if last_sentence_end > 200:  # Keep at least 200 chars
+            truncated = truncated[:last_sentence_end + 1]
+        else:
+            # Just truncate at word boundary
+            last_space = truncated.rfind(' ')
+            if last_space > 200:
+                truncated = truncated[:last_space]
+        
+        logger.debug(f"Truncated Tavily query from {len(query)} to {len(truncated)} chars")
+        query = truncated
 
     try:
         client = AsyncTavilyClient(api_key=api_key)
@@ -120,7 +179,18 @@ async def search_tavily(
         logger.info(f"Tavily returned {len(results)} results for: {query[:60]}")
         return results
     except Exception as e:
-        logger.warning(f"Tavily search failed: {e}")
+        error_str = str(e)
+        # Check if this is a quota error
+        if "usage limit" in error_str.lower() or "plan" in error_str.lower():
+            logger.error(f"Tavily quota exceeded: {e}")
+            # Mark Tavily as quota exceeded for future calls
+            try:
+                from agent.utils.unified_search import _mark_provider_failure, SearchProvider
+                _mark_provider_failure(SearchProvider.TAVILY.value, error_str, is_quota_error=True)
+            except:
+                pass
+        else:
+            logger.warning(f"Tavily search failed: {e}")
         return []
 
 
@@ -246,26 +316,27 @@ def _deduplicate_results(
 async def discover_papers(
     question: str, max_per_source: int = 8
 ) -> list[dict[str, Any]]:
-    """Discover relevant content from Tavily and Qdrant in parallel.
+    """Discover relevant content from multiple sources in parallel.
 
-    Tavily is the primary source (academic web search).
+    Uses unified search (Tavily -> SerpAPI -> DuckDuckGo fallback) as primary.
     Qdrant is the secondary source (local knowledge base).
     Results are deduplicated and returned in a unified format.
     """
     queries = extract_search_queries(question)
     primary_query = queries[0]
 
-    tavily_results, qdrant_results = await asyncio.gather(
-        search_tavily(primary_query, max_results=max_per_source),
+    # Use unified search with fallback instead of Tavily-only
+    web_results, qdrant_results = await asyncio.gather(
+        search_unified(primary_query, max_results=max_per_source),
         search_qdrant(primary_query, max_results=max_per_source),
         return_exceptions=True,
     )
 
     all_results: list[dict[str, Any]] = []
-    if isinstance(tavily_results, list):
-        all_results.extend(tavily_results)
+    if isinstance(web_results, list):
+        all_results.extend(web_results)
     else:
-        logger.warning(f"Tavily search error: {tavily_results}")
+        logger.warning(f"Unified web search error: {web_results}")
     if isinstance(qdrant_results, list):
         all_results.extend(qdrant_results)
     else:

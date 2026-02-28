@@ -392,3 +392,6 @@ def get_global_cache() -> QueryCache:
         _global_cache = QueryCache()
     return _global_cache
 
+
+
+

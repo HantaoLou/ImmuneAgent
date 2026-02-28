@@ -157,6 +157,23 @@ Decompose the user's execution plan into a structured, serialized task list. Eac
      * task_005: bioinformatics analysis (input_file=integrated_2.rds)
    - Bioinformatics service tools (visualization, analysis) should use the FINAL integrated RDS file as input
 
+7. **Data Integration Rule (TCR/T-cell Analysis)**:
+   - **CRITICAL**: For TCR/T-cell analysis workflows, ALL tcell service analysis tools (except integrate_tcr_data_complete itself) MUST be preceded by integrate_tcr_data_complete
+   - The integrate_tcr_data_complete tool integrates CSV outputs from previous tasks with the RDS metadata file
+   - Other tcell tools (tcr_clonotype_analysis, tcr_binding_visualization, tcell_celltype_visualization, etc.) MUST use the integrated RDS as input
+   - Example workflow:
+     * task_001: predict_tcr_binding_fast -> produces predictions.csv
+     * task_002: integrate_tcr_data_complete (input_csv=predictions.csv, input_rds=meta.rds) -> produces integrated_1.rds
+     * task_003: tcr_clonotype_analysis (input_file=integrated_1.rds)
+     * task_004: tcr_binding_visualization (input_file=integrated_1.rds)
+
+8. **Execution Order Rule (Bioinformatics Analysis Services)**:
+   - **CRITICAL**: Tools from tcell, bcell, and immune services are for downstream bioinformatics analysis
+   - These tools MUST be executed AFTER all data generation/processing tasks are complete
+   - They should NOT be interleaved with data processing tasks
+   - Execution order: data processing tasks -> integration tasks -> bioinformatics analysis tasks
+   - Services with execution_order: "last" in their tool definition must run last
+
 # Tool Extraction Rules
 
 1. **Tool Matching**:

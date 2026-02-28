@@ -37,8 +37,21 @@ class GeneralQAState(BaseModel):
     # ========== Domain Enhancement (N0 optimization) ==========
     domain_enhancement: Optional[Dict[str, Any]] = Field(default=None, description="Domain enhancement data from N0 optimization including detected domains, key constraints, critical hints, etc.")
     
+    # ========== Phase 2 Optimizations (Multi-Step Reasoning) ==========
+    multi_step_recommended: Optional[bool] = Field(default=None, description="Whether multi-step reasoning is recommended for this question")
+    problem_type: Optional[str] = Field(default=None, description="Detected problem type for multi-step reasoning (e.g., genetics_calculation, clinical_diagnosis)")
+    
+    # ========== Metadata (for HLE optimizations and other modules) ==========
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Metadata storage for HLE optimizations and other modules (hle_domain_template, hle_pitfall_count, etc.)")
+    
     # ========== N1: Question Decomposition & Domain Localization ==========
     structured_conditions: Optional[Dict[str, Any]] = Field(default=None, description="Structured conditions dictionary extracted from question")
+
+    # ========== Semantic Condition Extraction (NEW: 条件语义结构化) ==========
+    semantic_conditions: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Semantic/formal representation of problem conditions for Critic verification. Contains: randomness (type: independent_per_sample/uniform), imputation (method: reference_genome, assumption: ancestral_allele), data_constraints (list of specific constraints), statistics_affected (which statistics are affected by conditions)"
+    )
     core_domains: Optional[List[str]] = Field(default=None, description="Core domain list identified from question")
     research_objective: Optional[str] = Field(default=None, description="Research objective/purpose extracted from question")
     key_entities: Optional[List[str]] = Field(default=None, description="Key biomedical entities or terms extracted from question")
@@ -110,6 +123,19 @@ class GeneralQAState(BaseModel):
     knowledge_gaps_identified: Optional[List[str]] = Field(default=None, description="Knowledge gaps identified during retrieval")
     follow_up_questions: Optional[List[str]] = Field(default=None, description="Follow-up questions generated for iterative retrieval")
     
+    # ========== Smart N3 Retry Mechanism ==========
+    n3_queried_terms: Optional[Dict[str, List[str]]] = Field(default=None, description="Terms already queried in N3, grouped by source (e.g., {'knowledge_graph': ['Watterson'], 'go_term': ['genetic diversity']})")
+    n3_empty_query_count: Optional[int] = Field(default=0, description="Count of consecutive empty query results in N3")
+    n3_skip_llm_tools: Optional[bool] = Field(default=False, description="Whether to skip LLM tool queries (when previous attempts returned empty)")
+    n3_use_deep_research_only: Optional[bool] = Field(default=False, description="Whether to rely only on Deep Research results (when knowledge base has no relevant content)")
+    
+    # ========== N3 Loop Optimization: Intelligent Query Strategy ==========
+    n3_failed_entities: Optional[Dict[str, List[str]]] = Field(default=None, description="Entities that returned empty results, grouped by entity_type (e.g., {'biological_process': ['Watterson estimator'], 'gene/protein': ['theta']}) - skip these in subsequent queries")
+    n3_confidence_history: Optional[List[float]] = Field(default=None, description="History of knowledge confidence values from each N3 visit - used to detect if confidence is improving")
+    n3_no_improvement_count: Optional[int] = Field(default=0, description="Count of consecutive N3 visits where confidence did not improve")
+    n3_domain_type: Optional[str] = Field(default=None, description="Detected domain type for tool selection: 'genetics', 'statistics', 'clinical', 'biochemistry', 'general'")
+    n3_skip_specific_tools: Optional[List[str]] = Field(default=None, description="Tools to skip based on domain type (e.g., ['query_knowledge_graph', 'query_go_term'] for statistics questions)")
+    
     # ========== Enhancement: Meta-Cognitive Monitoring ==========
     meta_cognitive_assessment: Optional[Dict[str, Any]] = Field(default=None, description="Meta-cognitive assessment: {goal_alignment, constraint_coverage, knowledge_gaps, reasoning_coherence, needs_backtracking}")
     needs_backtracking: Optional[bool] = Field(default=None, description="Whether the reasoning needs to backtrack to a previous node")
@@ -155,6 +181,25 @@ class GeneralQAState(BaseModel):
     
     # ========== Tool Usage Tracking ==========
     tool_calls_history: Optional[List[Dict[str, Any]]] = Field(default=None, description="History of all tool calls made by LLM across all nodes, including tool name, arguments, results, and node context")
+    
+    # ========== Answer Cache System ==========
+    # Cache hit status
+    cache_hit: Optional[bool] = Field(default=None, description="Whether a valid cache was found for this question")
+    cached_answer: Optional[str] = Field(default=None, description="Cached answer if cache hit")
+    cached_reasoning: Optional[List[str]] = Field(default=None, description="Cached reasoning path if cache hit")
+    cache_confidence_modifier: Optional[float] = Field(default=None, description="Confidence modifier from cache validity check")
+    
+    # Error cache utilization
+    error_cache_found: Optional[bool] = Field(default=None, description="Whether an error analysis cache was found")
+    error_warnings_from_cache: Optional[List[str]] = Field(default=None, description="Error warnings to inject from error cache")
+    missing_knowledge_from_cache: Optional[List[str]] = Field(default=None, description="Missing knowledge identified from error cache")
+    reasoning_trap_from_cache: Optional[str] = Field(default=None, description="Reasoning trap identified from error cache")
+    correct_direction_from_cache: Optional[str] = Field(default=None, description="Correct direction hint from error cache")
+    
+    # Cache trigger metadata
+    should_cache_result: Optional[bool] = Field(default=None, description="Whether this result should be cached")
+    cache_correctness_known: Optional[bool] = Field(default=None, description="Whether we know if the answer is correct (from test)")
+    ground_truth_answer: Optional[str] = Field(default=None, description="Ground truth answer for cache validation")
     
     # ========== Final Output ==========
     final_answer: Optional[str] = Field(default=None, description="Final answer to return to user")

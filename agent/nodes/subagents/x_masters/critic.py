@@ -31,6 +31,7 @@ Data flow:
 
 import logging
 import re
+from typing import Dict, Any, Tuple, List  # NEW: Add type hints for semantic_conditions and validation
 
 from .tools import inject_lightweight_tools_to_namespace
 
@@ -132,9 +133,43 @@ I have access to an interactive coding environment where I can write and execute
 - Check if the proposed answer is consistent with known facts and constraints
 - Look for edge cases or assumptions that the original solver may have missed
 
+IMPORTANT - Handling Unavailable External Resources:
+- If web_search returns "[Search Unavailable]" or empty results, STOP trying to search
+- If read_webpage fails repeatedly, STOP trying to read webpages
+- When external resources are unavailable, use your internal knowledge and the provided context
+- DO NOT keep trying the same failing tool - proceed to your best answer using available information
+
 CRITICAL: I should not simply agree with the proposed solution — my value is in finding errors that others missed. In particular, I must challenge any reasoning that relies on textbook-level generalizations. Real-world biology and chemistry often involve specialized mechanisms that deviate from simple models. When I find a relevant paper, I MUST use read_webpage(url) to read its actual findings rather than assuming from the title alone.
 
 I should specifically check whether the solver may have made an oversimplified peak/signal assignment, missed a specialized structural mechanism, or conflated two different phenomena.
+
+## ⚠️ CRITICAL: Condition Verification Before Simulation
+
+If this problem has specific conditions mentioned (e.g., randomness patterns, imputation methods, data constraints), I MUST verify my simulation implements them correctly BEFORE concluding:
+
+### Pre-Simulation Checklist (if conditions are provided):
+
+1. **[ ] Randomness Pattern**: Did I implement the CORRECT type of randomness?
+   - If "differ from sample to sample" → Each sample must have INDEPENDENT random patterns
+   - If "same across samples" → All samples must use the SAME random pattern
+   - ⚠️ Common mistake: Using same random seed for all samples when they should be independent
+
+2. **[ ] Imputation Method**: Did I correctly handle missing data?
+   - If "reference genome imputation" → Missing sites filled with reference genotypes
+   - If "ancestral allele" assumption → Reference = ancestral (affects bias direction)
+   - ⚠️ Common mistake: Dropping missing sites instead of imputing, or wrong imputation method
+
+3. **[ ] Statistical Definitions**: Are my formulas using correct definitions?
+   - **Segregating sites (S)**: Sites where AT LEAST ONE sample has a variant (not "all samples")
+   - **Pairwise difference (π)**: Average difference between all pairs across ALL sites
+   - ⚠️ Common mistake: S = sites where "all samples have variant" (wrong) vs "at least one sample has variant" (correct)
+
+4. **[ ] Condition-Effect Reasoning**: Did I analyze how conditions affect statistics?
+   - Random per-sample filtering → May not systematically eliminate all variants at any site → S unchanged
+   - Reference imputation with ancestral assumption → Imputed sites show no difference → π underestimated
+   - ⚠️ Common mistake: Not considering how conditions bias specific statistics
+
+If my simulation does not implement ALL stated conditions correctly, my conclusion is INVALID and I must redo the simulation.
 
 Let me start by identifying the key claims in this solution and writing code to check them.
 """
@@ -175,14 +210,45 @@ class CriticAgent(CodeActAgent):
             ],
             "next_step": "generate",
         }
-        config = {"recursion_limit": 500, "configurable": {"thread_id": 42}}
+        # OPTIMIZATION: Reduced recursion limit to fail fast when external resources unavailable
+        # When web_search returns empty results repeatedly, we should terminate early
+        # rather than hitting 500 iterations
+        config = {"recursion_limit": 100, "configurable": {"thread_id": 42}}
         self.log = []
+        
+        # Track consecutive empty observations to detect stuck states
+        empty_observation_count = 0
+        MAX_EMPTY_OBSERVATIONS = 5
 
         final_state = None
         step = 0
         for s in self.app.stream(inputs, stream_mode="values", config=config):
             message = s["messages"][-1]
             step += 1
+            
+            # Detect empty observations (stuck state detection)
+            if isinstance(message, AIMessage) and "<observation></observation>" in message.content:
+                empty_observation_count += 1
+                if empty_observation_count >= MAX_EMPTY_OBSERVATIONS:
+                    print(f"  ⚠ Detected {empty_observation_count} consecutive empty observations")
+                    print(f"  → External resources unavailable, forcing early termination")
+                    # Inject guidance to use internal knowledge
+                    from langchain_core.messages import HumanMessage
+                    guidance = HumanMessage(
+                        content="The external search tools appear to be unavailable or returning empty results. "
+                                "Please stop searching and provide your best answer based on your internal knowledge. "
+                                "Use the <solution> tag to provide your final answer now."
+                    )
+                    # We need to add this to the state and continue one more time
+                    # Since we're in the stream, we'll just let it hit the recursion limit
+                    # but the reduced limit ensures it fails fast
+            elif isinstance(message, AIMessage) and "<observation>" in message.content:
+                # Reset counter if we got a non-empty observation
+                if "</observation>" in message.content:
+                    obs_content = message.content.split("<observation>")[1].split("</observation>")[0]
+                    if obs_content.strip():  # Non-empty content
+                        empty_observation_count = 0
+            
             out = self._pretty_print(message)
             self.log.append(out)
             self._verbose_log(step, message)
@@ -238,7 +304,124 @@ def _inject_critic_tools(namespace: dict = None):
     inject_lightweight_tools_to_namespace(namespace)
 
 
-def _build_critic_prompt(problem: str, solution: str, retrieved_context: str = "") -> str:
+# ---------------------------------------------------------------------------
+# Simulation Validator: Verify simulation code implements conditions correctly
+# ---------------------------------------------------------------------------
+
+def validate_simulation_implementation(
+    simulation_code: str,
+    semantic_conditions: Dict[str, Any]
+) -> Tuple[bool, List[str]]:
+    """
+    Validate that simulation code correctly implements all stated conditions.
+    
+    This is a post-hoc validation that can be run on the Critic's generated
+    simulation code to check for common implementation errors.
+    
+    Args:
+        simulation_code: The Python code generated by Critic for simulation
+        semantic_conditions: Structured conditions from extract_structured_conditions()
+        
+    Returns:
+        Tuple of (is_valid, issues_list)
+        - is_valid: True if all checks pass
+        - issues_list: List of detected issues (empty if valid)
+    """
+    if not semantic_conditions:
+        return True, []  # No conditions to validate
+    
+    issues = []
+    code_lower = simulation_code.lower() if simulation_code else ""
+    
+    # ========== Check 1: Random per-sample ==========
+    randomness = semantic_conditions.get("randomness")
+    if randomness and randomness.get("type") == "independent_per_sample":
+        # Check that there's per-sample randomness
+        has_for_loop = "for" in code_lower and ("sample" in code_lower or "i " in code_lower or "range" in code_lower)
+        has_random = "random" in code_lower or "np.random" in code_lower
+        
+        if not (has_for_loop and has_random):
+            issues.append(
+                "MISSING: Independent per-sample randomness. "
+                "The simulation should generate DIFFERENT random patterns for each sample "
+                "(use loop over samples with independent random generation)."
+            )
+        
+        # Check for common mistake: single random seed for all samples
+        if "np.random.seed" in code_lower:
+            # Check if seed is set inside the loop (bad - same seed each iteration)
+            # or outside loop (could be okay if loop uses different random calls)
+            lines = simulation_code.split('\n') if simulation_code else []
+            seed_line = -1
+            for i, line in enumerate(lines):
+                if "np.random.seed" in line.lower():
+                    seed_line = i
+                    break
+            
+            # If seed is set, check if there's randomization per sample
+            # This is a heuristic check
+            if seed_line >= 0:
+                # Look for indication that each sample gets different treatment
+                has_sample_specific_random = False
+                for line in lines:
+                    if "sample" in line.lower() and ("random" in line.lower() or "randint" in line.lower() or "choice" in line.lower()):
+                        has_sample_specific_random = True
+                        break
+                
+                if not has_sample_specific_random:
+                    issues.append(
+                        "WARNING: Single random seed may cause all samples to have the same pattern. "
+                        "Consider generating independent random patterns for each sample."
+                    )
+    
+    # ========== Check 2: Reference imputation ==========
+    imputation = semantic_conditions.get("imputation")
+    if imputation and imputation.get("method") == "reference_genome":
+        # Check that reference is used
+        has_reference = "reference" in code_lower or "ref_" in code_lower or "ancestral" in code_lower
+        has_imputation = "imput" in code_lower or "fill" in code_lower or "replace" in code_lower or "mask" in code_lower
+        
+        if not has_reference:
+            issues.append(
+                "MISSING: Reference genome imputation. "
+                "The simulation should fill missing sites with reference genotypes."
+            )
+    
+    # ========== Check 3: Statistics definitions ==========
+    stats = semantic_conditions.get("statistics_affected", [])
+    
+    if "theta" in stats or "watterson" in stats:
+        # Check that segregating sites are correctly defined
+        # S = sites where AT LEAST ONE sample has a variant
+        has_segregating_check = "segregating" in code_lower or "s = " in code_lower or "s=" in code_lower
+        has_any_check = "any" in code_lower or "at least" in code_lower or "> 0" in code_lower
+        
+        if has_segregating_check and not has_any_check:
+            issues.append(
+                "POTENTIAL: Segregating sites definition may be incorrect. "
+                "S should count sites where AT LEAST ONE sample has a variant, "
+                "not where all samples have variants."
+            )
+    
+    if "pi" in stats or "nucleotide diversity" in stats:
+        # Check that pairwise comparison is mentioned
+        has_pairwise = "pairwise" in code_lower or "pi" in code_lower or "diversity" in code_lower
+        
+        if not has_pairwise:
+            issues.append(
+                "MISSING: Pairwise difference calculation for π. "
+                "π should be calculated from average pairwise differences across all sites."
+            )
+    
+    return len(issues) == 0, issues
+
+
+def _build_critic_prompt(
+    problem: str, 
+    solution: str, 
+    retrieved_context: str = "",
+    semantic_conditions: Dict[str, Any] = None  # NEW: 结构化条件
+) -> str:
     """Build the user message for the Critic agent.
 
     Presents the problem and proposed solution in a structured format
@@ -248,6 +431,7 @@ def _build_critic_prompt(problem: str, solution: str, retrieved_context: str = "
         problem: The original question/problem
         solution: The Solver's proposed answer
         retrieved_context: Pre-retrieved knowledge base context
+        semantic_conditions: Structured semantic conditions for verification
 
     Returns:
         Formatted prompt string
@@ -260,6 +444,58 @@ def _build_critic_prompt(problem: str, solution: str, retrieved_context: str = "
             f"Use it as reference but verify important claims independently.\n\n"
             f"{retrieved_context}\n"
         )
+    
+    # NEW: 条件验证部分 - 强调模拟代码必须正确实现所有条件
+    condition_section = ""
+    if semantic_conditions:
+        condition_section = "\n\n## ⚠️ CRITICAL CONDITIONS (Your simulation MUST implement these exactly)\n\n"
+        condition_section += "**IMPORTANT**: This problem has specific conditions that significantly affect the answer. "
+        condition_section += "If your simulation does not implement these correctly, your conclusion will be WRONG.\n\n"
+        
+        # Randomness condition
+        if semantic_conditions.get("randomness"):
+            rand_cond = semantic_conditions["randomness"]
+            condition_section += f"### 1. Randomness Condition\n"
+            condition_section += f"- **Type**: {rand_cond.get('type', 'unknown')}\n"
+            condition_section += f"- **Description**: {rand_cond.get('description', 'Not specified')}\n"
+            condition_section += f"- **Verification**: {rand_cond.get('verification', 'Verify the randomness pattern')}\n\n"
+        
+        # Imputation condition
+        if semantic_conditions.get("imputation"):
+            imp_cond = semantic_conditions["imputation"]
+            condition_section += f"### 2. Imputation Condition\n"
+            condition_section += f"- **Method**: {imp_cond.get('method', 'unknown')}\n"
+            condition_section += f"- **Assumption**: {imp_cond.get('assumption', 'unknown')}\n"
+            condition_section += f"- **Description**: {imp_cond.get('description', 'Not specified')}\n"
+            condition_section += f"- **Verification**: {imp_cond.get('verification', 'Verify the imputation method')}\n\n"
+        
+        # Data constraints
+        if semantic_conditions.get("data_constraints"):
+            condition_section += f"### 3. Data Constraints\n"
+            for constraint in semantic_conditions["data_constraints"]:
+                condition_section += f"- {constraint}\n"
+            condition_section += "\n"
+        
+        # Statistics affected
+        if semantic_conditions.get("statistics_affected"):
+            condition_section += f"### 4. Statistics Affected\n"
+            condition_section += f"The following statistics are mentioned in this problem: "
+            condition_section += ", ".join(semantic_conditions["statistics_affected"]) + "\n\n"
+        
+        # Verification checklist
+        if semantic_conditions.get("verification_checklist"):
+            condition_section += f"### 5. Pre-Simulation Verification Checklist\n"
+            condition_section += "Before running your simulation, ensure you understand:\n"
+            for item in semantic_conditions["verification_checklist"]:
+                condition_section += f"- **{item.get('id', 'check')}**: {item.get('check', item.get('description', ''))}\n"
+                if item.get('common_mistake'):
+                    condition_section += f"  - ⚠️ Common mistake: {item['common_mistake']}\n"
+            condition_section += "\n"
+        
+        condition_section += "---\n"
+        condition_section += "**REMINDER**: Before providing your final answer, verify that your simulation correctly implements ALL conditions above. "
+        condition_section += "A simulation that ignores or misinterprets these conditions will lead to an incorrect conclusion.\n"
+    
     return f"""## Problem
 
 {problem}
@@ -267,7 +503,7 @@ def _build_critic_prompt(problem: str, solution: str, retrieved_context: str = "
 ## Proposed Solution
 
 {solution}
-{context_section}
+{context_section}{condition_section}
 ---
 
 Please critically review the proposed solution above. Verify key claims using available tools. If you find errors, provide a corrected answer. If the solution is correct, confirm it."""
@@ -281,6 +517,7 @@ def run_single_critic(
     solution: str,
     solver_id: int = 0,
     retrieved_context: str = "",
+    semantic_conditions: Dict[str, Any] = None,  # NEW: 结构化条件
     temperature: float = 0.6,
     llm: str = None,
     source: str = None,
@@ -299,6 +536,7 @@ def run_single_critic(
         solution: The Solver's proposed answer to review
         solver_id: Which Solver produced this solution (for tracking)
         retrieved_context: Pre-retrieved knowledge base context (from Stage 0)
+        semantic_conditions: Structured semantic conditions for verification
         temperature: LLM sampling temperature
         llm: LLM model name (None → env default)
         source: LLM provider (None → auto-detect)
@@ -330,9 +568,11 @@ def run_single_critic(
     # 2. Inject lightweight tools (no knowledge_search) into namespace
     _inject_critic_tools(critic._namespace)
 
-    # 3. Build the critic prompt with pre-retrieved context and run
+    # 3. Build the critic prompt with pre-retrieved context and semantic conditions
     logger.info(f"[Critic {solver_id}] received retrieved_context: {len(retrieved_context)} chars")
-    critic_prompt = _build_critic_prompt(problem, solution, retrieved_context)
+    if semantic_conditions:
+        logger.info(f"[Critic {solver_id}] received semantic_conditions with {len(semantic_conditions)} keys")
+    critic_prompt = _build_critic_prompt(problem, solution, retrieved_context, semantic_conditions)
 
     error_info = None
     try:

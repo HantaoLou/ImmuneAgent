@@ -1172,18 +1172,33 @@ def _infer_single_parameter(
                                     reason=f"Parameter value will be obtained from dependency task {dep_task_id}'s output: {output} (semantic match: antibody)"
                                 )
                             
-                            # Special case: if parameter is input_file and output matches task description
-                            # This handles generic input_file parameters that should use dependency outputs
-                            if 'input' in param_lower and 'file' in param_lower:
-                                # If this is a file input parameter and there's a dependency output, use it
-                                # This is a fallback for cases where parameter name doesn't match output name
-                                return ParameterInferenceResult(
-                                    param_name=param_name,
-                                    source_type=ParameterSourceType.FROM_TASK,
-                                    source_task_id=dep_task_id,
-                                    source_output_key=output,
-                                    reason=f"Parameter value will be obtained from dependency task {dep_task_id}'s output: {output} (generic input file match)"
-                                )
+                            # Special case: if parameter is input_file, input_data, sequences, etc.
+                            # This handles generic input parameters that should use dependency outputs
+                            input_param_patterns = [
+                                ('input', 'file'),  # input_file, input_path
+                                ('input', 'data'),  # input_data
+                                ('sequences',),     # sequences
+                                ('data', 'path'),   # data_path
+                            ]
+                            for pattern in input_param_patterns:
+                                if len(pattern) == 2:
+                                    if pattern[0] in param_lower and pattern[1] in param_lower:
+                                        return ParameterInferenceResult(
+                                            param_name=param_name,
+                                            source_type=ParameterSourceType.FROM_TASK,
+                                            source_task_id=dep_task_id,
+                                            source_output_key=output,
+                                            reason=f"Parameter value will be obtained from dependency task {dep_task_id}'s output: {output} (pattern match: {pattern[0]}+{pattern[1]})"
+                                        )
+                                else:
+                                    if pattern[0] in param_lower:
+                                        return ParameterInferenceResult(
+                                            param_name=param_name,
+                                            source_type=ParameterSourceType.FROM_TASK,
+                                            source_task_id=dep_task_id,
+                                            source_output_key=output,
+                                            reason=f"Parameter value will be obtained from dependency task {dep_task_id}'s output: {output} (pattern match: {pattern[0]})"
+                                        )
     
     # Priority 2: Check extracted parameters from context (user input, execution plan, task description)
     # Only use context-extracted values if not available from dependency tasks
@@ -1240,7 +1255,25 @@ def _infer_single_parameter(
             reason=f"Using recommended value from tools parameters table: {param_deme}"
         )
     
-    # Priority 4: Use LLM to infer parameter values (if no LLM, mark as user required)
+    # Priority 4: CONSTRAINT - Input file parameters can ONLY come from:
+    # 1. User input (via preprocessing, already handled in extracted_params)
+    # 2. Dependency task outputs (already checked in Priority 1)
+    # If we reach here and it's an input file type, it MUST be user_required
+    # DO NOT allow LLM to guess/infer file paths - this caused errors like "/J"
+    is_output_param = any(keyword in param_name.lower() for keyword in ['output', 'result', 'save', 'export', 'out'])
+    if is_file_type and not is_output_param:
+        # This is an INPUT file parameter that wasn't found in:
+        # - extracted_params (user input/preprocessing)
+        # - dependency task outputs
+        # We MUST NOT let LLM guess a file path - mark as user required
+        return ParameterInferenceResult(
+            param_name=param_name,
+            source_type=ParameterSourceType.USER_REQUIRED,
+            user_prompt=f"Please provide the input file path for parameter '{param_name}'",
+            reason=f"Input file parameter '{param_name}' must be provided by user input or from a previous task output. LLM inference is not allowed for file paths."
+        )
+    
+    # Priority 5: Use LLM to infer parameter values (if no LLM, mark as user required)
     if not llm:
         return ParameterInferenceResult(
             param_name=param_name,

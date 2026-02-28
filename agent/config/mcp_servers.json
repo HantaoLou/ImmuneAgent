@@ -1,7 +1,14 @@
 {
-    "fdg": {
+    "igblast": {
         "transport": "sse",
-        "url": "http://117.148.176.36:8080/sse",
+        "url": "http://117.10.59.114:40001/mcp/8088/sse",
+        "timeout": 36000,
+        "sse_read_timeout": 36000,
+        "session_kwargs": {}
+    },
+    "flu": {
+        "transport": "sse",
+        "url": "http://117.10.59.114:40001/mcp/8109/sse",
         "timeout": 36000,
         "sse_read_timeout": 36000,
         "session_kwargs": {}
@@ -13,48 +20,6 @@
         "sse_read_timeout": 36000,
         "session_kwargs": {}
     },
-    "airr": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8083/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "af3": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:40001/mcp/8084/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "anarci": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8086/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "geo_iedb": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8087/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "igblast": {
-        "transport": "sse",
-        "url": "http://117.10.59.114:40001/mcp/8088/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "oas": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8089/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
     "bioinformatics": {
         "transport": "sse",
         "url": "http://117.10.59.114:40001/mcp/8090/sse",
@@ -62,172 +27,95 @@
         "sse_read_timeout": 36000,
         "session_kwargs": {}
     },
-    "r_annotation": {
+    "bcell": {
         "transport": "sse",
-        "url": "http://117.148.176.36:8091/sse",
+        "url": "http://117.10.59.114:40001/mcp/8092/sse",
         "timeout": 36000,
         "sse_read_timeout": 36000,
         "session_kwargs": {}
     },
-    "r_bcell": {
+    "tcell": {
         "transport": "sse",
-        "url": "http://117.148.176.36:8092/sse",
+        "url": "http://117.10.59.114:40001/mcp/8098/sse",
         "timeout": 36000,
         "sse_read_timeout": 36000,
         "session_kwargs": {}
     },
-    "r_communication": {
+    "immune": {
         "transport": "sse",
-        "url": "http://117.148.176.36:8093/sse",
+        "url": "http://117.10.59.114:40001/mcp/8097/sse",
         "timeout": 36000,
         "sse_read_timeout": 36000,
         "session_kwargs": {}
     },
-    "r_multimodal": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8094/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "r_scrna": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8095/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "sabdab": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8096/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "bindcraft": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8097/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "foldseek": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8098/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "mcpas": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8099/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "mixtcrpred": {
-        "transport": "sse",
-        "url": "http://117.10.59.114:40001/mcp/8100/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "mpnn": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8101/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "netmhcpan": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8102/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "nettcr": {
-        "transport": "sse",
-        "url": "http://117.10.59.114:40001/mcp/8103/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "tcrdist3": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8104/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "ribonn": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8105/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "gemorna": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8106/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "codontransformer": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8107/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "rinalmo": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8108/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "lineage_analysis": {
-        "transport": "sse",
-        "url": "http://117.10.59.114:40001/mcp/8109/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "file_utils": {
-        "transport": "sse",
-        "url": "http://117.148.176.36:8110/sse",
-        "timeout": 36000,
-        "sse_read_timeout": 36000,
-        "session_kwargs": {}
-    },
-    "r_data_integration": {
+    "data": {
         "transport": "sse",
         "url": "http://117.10.59.114:40001/mcp/18105/sse",
         "timeout": 36000,
         "sse_read_timeout": 36000,
         "session_kwargs": {}
     },
-    "mutatex": {
+    "mixtcrpred": {
         "transport": "sse",
-        "url": "http://117.148.176.36:8116/sse",
+        "url": "http://117.10.59.114:40001/mcp/8093/sse",
+        "timeout": 36000,
+        "sse_read_timeout": 36000,
+        "session_kwargs": {}
+    },
+    "nettcr": {
+        "transport": "sse",
+        "url": "http://117.10.59.114:40001/mcp/8094/sse",
+        "timeout": 36000,
+        "sse_read_timeout": 36000,
+        "session_kwargs": {}
+    },
+    "ribonn": {
+        "transport": "sse",
+        "url": "http://117.10.59.114:40001/mcp/8105/sse",
+        "timeout": 36000,
+        "sse_read_timeout": 36000,
+        "session_kwargs": {}
+    },
+    "gemorna": {
+        "transport": "sse",
+        "url": "http://117.10.59.114:40001/mcp/8106/sse",
+        "timeout": 36000,
+        "sse_read_timeout": 36000,
+        "session_kwargs": {}
+    },
+    "codontransformer": {
+        "transport": "sse",
+        "url": "http://117.10.59.114:40001/mcp/8107/sse",
+        "timeout": 36000,
+        "sse_read_timeout": 36000,
+        "session_kwargs": {}
+    },
+    "rinalmo": {
+        "transport": "sse",
+        "url": "http://117.10.59.114:40001/mcp/8108/sse",
         "timeout": 36000,
         "sse_read_timeout": 36000,
         "session_kwargs": {}
     },
     "spired_fitness": {
         "transport": "sse",
-        "url": "http://117.148.176.36:8115/sse",
+        "url": "http://117.10.59.114:40001/mcp/8115/sse",
         "timeout": 36000,
         "sse_read_timeout": 36000,
         "session_kwargs": {}
     },
-    "protein_energy_design": {
+    "foldx_saturation_scan": {
         "transport": "sse",
-        "url": "http://117.148.176.36:8117/sse",
-        "timeout": 60,
-        "sse_read_timeout": 60,
+        "url": "http://117.10.59.114:40001/mcp/8116/sse",
+        "timeout": 36000,
+        "sse_read_timeout": 36000,
+        "session_kwargs": {}
+    },
+    "combine_filter": {
+        "transport": "sse",
+        "url": "http://117.10.59.114:40001/mcp/8118/sse",
+        "timeout": 36000,
+        "sse_read_timeout": 36000,
         "session_kwargs": {}
     }
 }

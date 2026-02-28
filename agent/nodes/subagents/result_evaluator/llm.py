@@ -1,6 +1,8 @@
 """
 LLM Module
 Extracted from Biomni framework (biomni/llm.py)
+
+MODIFIED: 集成 llm_factory.py 的模型配置，支持 DashScope 和 Zhipu
 """
 
 import os
@@ -8,7 +10,8 @@ from typing import Literal, Optional
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-SourceType = Literal["OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom"]
+# 扩展支持 DashScope 和 Zhipu
+SourceType = Literal["OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom", "DashScope", "Zhipu"]
 ALLOWED_SOURCES: set[str] = set(SourceType.__args__)
 
 
@@ -19,19 +22,45 @@ def get_llm(
     source: SourceType | None = None,
     base_url: str | None = None,
     api_key: str | None = None,
+    purpose: str = "reasoning_advanced",  # 新增: 模型用途，默认使用高级推理模型
 ) -> BaseChatModel:
     """
     Get a language model instance based on the specified model name and source.
     This function supports models from OpenAI, Azure OpenAI, Anthropic, Ollama, Gemini, Bedrock, and custom model serving.
+    
+    MODIFIED: 始终优先使用 llm_factory.py 的配置
+    
     Args:
         model (str): The model name to use
         temperature (float): Temperature setting for generation
         stop_sequences (list): Sequences that will stop generation
-        source (str): Source provider: "OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", or "Custom"
+        source (str): Source provider: "OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom", "DashScope", "Zhipu"
                       If None, will attempt to auto-detect from model name
         base_url (str): The base URL for custom model serving (e.g., "http://localhost:8000/v1"), default is None
         api_key (str): The API key for the custom llm
+        purpose (str): Model purpose for llm_factory: "reasoning", "bioinformatics", "reasoning_advanced", "code"
     """
+    # ============================================================
+    # 始终优先使用 llm_factory.py 的配置（除非用户明确指定了所有参数）
+    # ============================================================
+    # 如果只指定了 source 但没有指定 model，说明用户想用 llm_factory 的配置
+    use_llm_factory = (model is None) or (model is None and source is None)
+    
+    if use_llm_factory:
+        try:
+            from agent.utils.llm_factory import create_llm
+            llm = create_llm(purpose=purpose, temperature=temperature)
+            if llm is not None:
+                print(f"[result_evaluator/llm] Using llm_factory config for purpose={purpose}")
+                # 如果需要 stop_sequences，需要重新包装
+                if stop_sequences and hasattr(llm, 'bind'):
+                    llm = llm.bind(stop=stop_sequences)
+                return llm
+        except ImportError as e:
+            print(f"[result_evaluator/llm] llm_factory not available: {e}")
+        except Exception as e:
+            print(f"[result_evaluator/llm] llm_factory failed: {e}")
+
     # Use defaults if not specified
     if model is None:
         model = "claude-3-5-sonnet-20241022"
@@ -60,6 +89,11 @@ def get_llm(
                 source = "Groq"
             elif base_url is not None:
                 source = "Custom"
+            # 新增: 检测 DashScope 和 Zhipu 模型
+            elif model.startswith(("qwen-", "qwen2-", "qwen2.5-", "deepseek-")):
+                source = "DashScope"
+            elif model.startswith(("glm-", "chatglm-")):
+                source = "Zhipu"
             elif "/" in model or any(
                 name in model.lower()
                 for name in [
@@ -220,7 +254,61 @@ def get_llm(
         )
         return llm
 
+    elif source == "DashScope":
+        # 阿里云 DashScope (Qwen 系列模型)
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError:
+            raise ImportError(  # noqa: B904
+                "langchain-openai package is required for DashScope models. Install with: pip install langchain-openai"
+            )
+        dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY")
+        if not dashscope_key:
+            raise ValueError("DASHSCOPE_API_KEY or QIANFAN_API_KEY is required for DashScope models")
+        return ChatOpenAI(
+            model=model,
+            temperature=temperature,
+            max_tokens=8192,
+            stop_sequences=stop_sequences,
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            api_key=dashscope_key,
+        )
+
+    elif source == "Zhipu":
+        # 智谱 AI (GLM 系列模型)
+        try:
+            from agent.utils.zhipu_adapter import ZhipuAIAdapter
+        except ImportError:
+            # Fallback to OpenAI-compatible API if adapter not available
+            try:
+                from langchain_openai import ChatOpenAI
+            except ImportError:
+                raise ImportError(  # noqa: B904
+                    "langchain-openai package is required for Zhipu models. Install with: pip install langchain-openai"
+                )
+            zhipu_key = os.getenv("ZHIPU_API_KEY")
+            if not zhipu_key:
+                raise ValueError("ZHIPU_API_KEY is required for Zhipu models")
+            # 使用智谱的 OpenAI 兼容接口
+            return ChatOpenAI(
+                model=model,
+                temperature=temperature,
+                max_tokens=8192,
+                stop_sequences=stop_sequences,
+                base_url="https://open.bigmodel.cn/api/paas/v4/",
+                api_key=zhipu_key,
+            )
+        zhipu_key = os.getenv("ZHIPU_API_KEY")
+        if not zhipu_key:
+            raise ValueError("ZHIPU_API_KEY is required for Zhipu models")
+        return ZhipuAIAdapter(
+            model=model,
+            temperature=temperature,
+            api_key=zhipu_key,
+            timeout=120,
+        )
+
     else:
         raise ValueError(
-            f"Invalid source: {source}. Valid options are 'OpenAI', 'AzureOpenAI', 'Anthropic', 'Gemini', 'Groq', 'Bedrock', or 'Ollama'"
+            f"Invalid source: {source}. Valid options are 'OpenAI', 'AzureOpenAI', 'Anthropic', 'Gemini', 'Groq', 'Bedrock', 'Ollama', 'DashScope', or 'Zhipu'"
         )

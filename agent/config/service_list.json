@@ -1,147 +1,70 @@
 [
   {
-    "service_id": "af3",
-    "description": "AlphaFold3 protein structure prediction service for antibody 3D structure prediction"
-  },
-  {
-    "service_id": "r_bcell",
-    "description": "B cell analysis R service including trajectory analysis, clonal analysis, isotype analysis, SHM analysis, diversity calculation, etc."
-  },
-  {
-    "service_id": "bindcraft",
-    "description": "BindCraft de novo protein binder design workflow, handling configuration, execution, monitoring, result analysis, and report generation"
-  },
-  {
-    "service_id": "r_communication",
-    "description": "Cell communication analysis R service including CellChat, NicheNet, and other communication network analyses"
-  },
-  {
     "service_id": "igblast",
-    "description": "IgBLAST V(D)J analysis service for antibody sequence recombination analysis and CDR3 extraction"
+    "description": "NCBI IgBLAST service for BCR/TCR V(D)J recombination analysis. Identifies germline V/D/J genes, annotates CDR1-CDR3 and framework regions (FR1-FR4), detects somatic hypermutations, and outputs AIRR-standard format. Provides 2 tools: analyze_vdj_batch, extract_cdr3_from_airr."
   },
   {
-    "service_id": "r_annotation",
-    "description": "Cell type annotation R service including marker gene annotation, SingleR automatic annotation, annotation validation."
-  },
-  {
-    "service_id": "bioinformatics",
-    "description": "Modular single-cell B-cell analysis platform wrapping R scripts for antigen binding prediction, trajectory inference, SHM analysis, and visualization."
-  },
-  {
-    "service_id": "mpnn",
-    "description": "MPNN protein sequence design service for antibody sequence optimization, design, and evaluation"
-  },
-  {
-    "service_id": "oas",
-    "description": "OAS (Observed Antibody Space) database service for antibody sequence data download, analysis, and search"
-  },
-  {
-    "service_id": "foldseek",
-    "description": "Foldseek-based structure search and clustering service, supporting sequence-to-structure queries complex analysis and database management"
-  },
-  {
-    "service_id": "nettcr",
-    "description": "NetTCR TCR binding prediction service for TCR-epitope binding prediction and validation"
-  },
-  {
-    "service_id": "airr",
-    "description": "AIRR library service for BCR sequence data download, search, and statistical analysis"
-  },
-  {
-    "service_id": "geo_iedb",
-    "description": "GEO and IEDB database service for gene expression data, epitope data, and antibody data download and search"
-  },
-  {
-    "service_id": "mcpas_tcr",
-    "description": "McPAS-TCR pathology-associated database service for TCR sequence data download, search, and statistical analysis"
-  },
-  {
-    "service_id": "sabdab",
-    "description": " SAbDab antibody structure database service for antibody PDB structure download, metadata query, and full dataset retrieval."
-  },
-  {
-    "service_id": "lineage_analysis",
-    "description": "Influenza BCR lineage analysis service for integrating experimental data, prediction results, and single-cell data"
-  },
-  {
-    "service_id": "foldx_ddg_gearbind ",
-    "description": "FoldX/DDG/GearBind analysis service for antibody stability analysis and energy calculation"
-  },
-  {
-    "service_id": "gemorna",
-    "description": "GeMoRNA mRNA design service for mRNA sequence generation, stability prediction, and UTR design"
-  },
-  {
-    "service_id": "r_data_integration",
-    "description": "Data integration R service for complete BCR data integration pipeline"
-  },
-  {
-    "service_id": "r_multimodal",
-    "description": "Multimodal data R service including ATAC-seq, ADT, WNN integration, etc."
-  },
-  {
-    "service_id": "netmhcpan",
-    "description": "NetMHCpan MHC binding prediction service for peptide-MHC binding prediction and epitope scanning"
+    "service_id": "flu",
+    "description": "Influenza BCR lineage analysis service integrating single-cell sequencing, experimental binding/neutralization data, and ML predictions. Supports UMAP metadata extraction, scBCR/bulk BCR integration, and comprehensive feature dataset generation. Provides 4 tools for data integration."
   },
   {
     "service_id": "metabcr",
-    "description": "MetaBCR deep learning model for antibody-antigen binding affinity prediction"
+    "description": "MetaBCR deep learning model for antibody-antigen binding affinity prediction. Supports flu, SARS, RSV, HIV antigens. Uses sequence-based neural networks to predict binding scores. Critical for antibody screening and therapeutic candidate prioritization."
+  },
+  {
+    "service_id": "bioinformatics",
+    "description": "Comprehensive single-cell B-cell analysis platform with 17 tools. Provides UMAP visualization, cell type distribution, marker gene expression, SHM analysis, pseudotime trajectory analysis, and differential gene expression. Integrates with MetaBCR for binding prediction visualization."
+  },
+  {
+    "service_id": "bcell",
+    "description": "B cell repertoire analysis service with 14 tools. Includes trajectory analysis (Monocle3), clonal expansion, isotype switching, SHM rate calculation, repertoire diversity (Shannon/Simpson/Hill), germinal center dynamics, plasma cell prediction, and CytoTRACE differentiation analysis."
+  },
+  {
+    "service_id": "tcell",
+    "description": "T cell repertoire analysis service with 6 tools for TCR sequencing data. Supports cell type visualization, marker dotplot, trajectory analysis, TCR binding visualization, clonotype expansion analysis, and complete TCR data integration pipeline."
+  },
+  {
+    "service_id": "immune",
+    "description": "Comprehensive immune system analysis service with 7 tools. Provides unified immune cell visualization, marker analysis, trajectory analysis, DEG analysis, CellChat cell-cell communication, cell isolation, and quick comprehensive analysis pipeline."
+  },
+  {
+    "service_id": "data",
+    "description": "BCR data integration pipeline service. Integrates AIRR-format V(D)J analysis results with Seurat single-cell objects. Supports format conversion, UMAP embedding, clustering, cell type annotation, and metadata merging."
   },
   {
     "service_id": "mixtcrpred",
-    "description": "MixTCRpred TCR prediction service for TCR-epitope binding prediction and model management"
+    "description": "MixTCRpred analysis service with 4 figure-generating tools for TCR-peptide binding studies. Provides single-cell DEG analysis (run_figure2), antigen binding visualization (run_figure3), trajectory analysis (run_figure4), and isotype/SHM analysis (run_figure5) for publication-ready figures."
   },
   {
-    "service_id": "anarci",
-    "description": "ANARCI antibody numbering service for standardized antibody sequence numbering"
+    "service_id": "nettcr",
+    "description": "NetTCR-2.2 TCR-peptide binding prediction service with 6 tools. Uses 20-model TFLite ensemble (5-fold CV x 4 splits) for prediction. Supports 26 pre-trained peptide-specific models with percentile rank rescaling, plus pan-specific fallback for unseen peptides. Auto-detects input format (native 7-CDR: peptide/A1-A3/B1-B3, or legacy: CDR3a/CDR3b/peptide/TRA/TRB_v_gene). Tools: predict_tcr_binding_fast, predict_tcr_binding_ensemble, predict_tcr_binding_complete, validate_tcr_input, check_peptide_support, list_available_peptides. Reference: Montemurro et al., Nucleic Acids Research, 2024."
+  },
+  {
+    "service_id": "ribonn",
+    "description": "RiboNN mRNA translation efficiency prediction service with 2 tools. Supports TE prediction with automatic CDS stop codon fixing and result sorting. Trained on ribosome profiling data for human/mouse species."
+  },
+  {
+    "service_id": "gemorna",
+    "description": "GeMoRNA mRNA design service with 5 tools (published in Science 2025). Generates optimized CDS, 5'UTR, 3'UTR, and complete mRNA sequences. Uses Transformer architecture for AI-powered sequence design with enhanced translation efficiency and stability."
   },
   {
     "service_id": "codontransformer",
-    "description": "Codon optimization service for protein sequence codon optimization"
+    "description": "CodonTransformer codon optimization service with 2 tools. Deep learning model for species-specific codon usage optimization. Supports batch and single sequence optimization with multiple output formats."
   },
   {
     "service_id": "rinalmo",
-    "description": "RiboNN ribosome loading rate prediction service for mRNA translation efficiency prediction"
-  },
-  {
-    "service_id": "ribonn",
-    "description": "RiboNN mRNA translation efficiency prediction service"
-  },
-  {
-    "service_id": "r_scrna",
-    "description": "Single-cell RNA-seq analysis R service including quality control, normalization, dimensionality reduction, clustering, differential analysis, etc."
-  },
-  {
-    "service_id": "tcrdist3",
-    "description": "TCRdist3 TCR repertoire analysis service for TCR distance calculation, clustering, and public TCR identification"
-  },
-  {
-    "service_id": "codeact",
-    "description": "Code execution service that uses code writing and execution to complete complex tasks when existing MCP tools cannot support the task"
-  },
-  {
-    "service_id": "mutatex",
-    "description": "MutateX/FoldX protein stability prediction service for protein structure repair, point mutation prediction, and saturation mutation scanning"
+    "description": "RiNALMo RNA language model service with 1 tool for ribosome loading rate prediction. Pre-trained on millions of RNA sequences. Supports 5'UTR, mRNA, CDS, and 3'UTR sequence analysis."
   },
   {
     "service_id": "spired_fitness",
-    "description": "SPIRED-Fitness protein fitness prediction service"
+    "description": "SPIRED-Fitness protein fitness prediction service. Deep learning model predicting protein stability and functional fitness from sequence. Supports saturation mutagenesis analysis and mutant screening."
   },
   {
-    "service_id": "protein_energy_design",
-    "description": "Protein energy design service for Fitness and FoldX data integration, screening, and mutant generation"
+    "service_id": "foldx_saturation_scan",
+    "description": "FoldX saturation mutation scanning service. Combines FoldX energy calculations with structure repair for stability prediction. Supports CIF/PDB input, automatic RepairPDB, and systematic saturation mutagenesis."
   },
   {
-    "service_id": "gemoRNA",
-    "description": "GeMoRNA mRNA design service for CDS generation, UTR design, and complete mRNA sequence generation"
-  },
-  {
-    "service_id": "ribonn",
-    "description": "RiboNN mRNA translation efficiency prediction service for mRNA translation efficiency prediction and result sorting"
-  },
-  {
-    "service_id": "rinalmo",
-    "description": "Rinalmo ribosome loading rate prediction service for predicting sequence ribosome loading rates"
+    "service_id": "combine_filter",
+    "description": "Multi-source data integration and filtering service. Merges results from FoldX and SPIRED-Fitness predictions. Applies customizable filtering criteria to prioritize optimal mutation candidates."
   }
 ]
-

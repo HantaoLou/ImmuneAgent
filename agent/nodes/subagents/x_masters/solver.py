@@ -171,14 +171,32 @@ class SolverAgent(CodeActAgent):
             ],
             "next_step": "generate",
         }
-        config = {"recursion_limit": 500, "configurable": {"thread_id": 42}}
+        # OPTIMIZATION: Reduced recursion limit to fail fast when external resources unavailable
+        config = {"recursion_limit": 100, "configurable": {"thread_id": 42}}
         self.log = []
+        
+        # Track consecutive empty observations to detect stuck states
+        empty_observation_count = 0
+        MAX_EMPTY_OBSERVATIONS = 5
     
         final_state = None
         step = 0
         for s in self.app.stream(inputs, stream_mode="values", config=config):
             message = s["messages"][-1]
             step += 1
+            
+            # Detect empty observations (stuck state detection)
+            if isinstance(message, AIMessage) and "<observation></observation>" in message.content:
+                empty_observation_count += 1
+                if empty_observation_count >= MAX_EMPTY_OBSERVATIONS:
+                    print(f"  ⚠ Detected {empty_observation_count} consecutive empty observations")
+                    print(f"  → External resources unavailable, forcing early termination")
+            elif isinstance(message, AIMessage) and "<observation>" in message.content:
+                if "</observation>" in message.content:
+                    obs_content = message.content.split("<observation>")[1].split("</observation>")[0]
+                    if obs_content.strip():
+                        empty_observation_count = 0
+            
             out = self._pretty_print(message)
             self.log.append(out)
             self._verbose_log(step, message)

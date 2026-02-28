@@ -65,25 +65,28 @@ class ModelPurpose(str, Enum):
 # ===================== Model Configuration Mapping =====================
 MODEL_CONFIGS: Dict[ModelPurpose, List[Tuple[str, str, float]]] = {
     ModelPurpose.REASONING: [
+        ("zhipu", "glm-4.5", 0.2),
         ("dashscope", "qwen-max", 0.2),  # Qwen Max - preferred
         ("dashscope", "qwen-turbo", 0.1),  # Qwen Turbo - preferred
-        ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.3),
     ],
     
     # Bioinformatics model: Prefer Qwen, then use models with good scientific literature understanding
     ModelPurpose.BIOINFORMATICS: [
+        ("zhipu", "glm-4.5", 0.2),
         ("dashscope", "qwen-max", 0.2),  # Qwen Max - preferred
         ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.2),
     ],
     
     # Advanced reasoning model: Prefer Qwen for complex reasoning tasks
     ModelPurpose.REASONING_ADVANCED: [
+        ("zhipu", "glm-4.5", 0.1),
         ("dashscope", "qwen-max", 0.1),
         ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.1),  # Zhipu AI
     ],
     
     # Code model: Prefer Qwen, then use models with strong code generation capabilities
     ModelPurpose.CODE: [
+        ("zhipu", "glm-4.5", 0.1),
         ("dashscope", "qwen-max", 0.1),  # Qwen Max - preferred
         ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.1),
     ],
@@ -153,14 +156,17 @@ def _create_zhipu_llm(
     if not api_key:
         return None
     
-    print(f"Creating Zhipu AI LLM instance: {model}, {temperature}")
+    # Get timeout setting (default 120 seconds)
+    timeout = int(os.getenv("LLM_TIMEOUT", "120"))
+    print(f"Creating Zhipu AI LLM instance: {model}, temperature={temperature}, timeout={timeout}")
     try:
         # Use adapter to create instance compatible with OpenAI interface
         from agent.utils.zhipu_adapter import ZhipuAIAdapter
         return ZhipuAIAdapter(
             model=model,
             temperature=temperature,
-            api_key=api_key
+            api_key=api_key,
+            timeout=timeout
         )
     except ImportError as e:
         print(f"Error: Failed to import ZhipuAI adapter: {e}")

@@ -378,3 +378,6 @@ if __name__ == "__main__":
     print(result['explanation'])
     print(f"\nAnswer: {result['protein_sequence']}")
 
+
+
+

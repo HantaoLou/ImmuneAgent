@@ -98,6 +98,8 @@ class CriticInput(TypedDict):
     solution: str
     solver_id: int
     retrieved_context: str
+    # NEW: Semantic conditions for verification
+    semantic_conditions: dict
     # LLM configuration (passed through from XMastersState)
     llm: str
     source: str
@@ -137,6 +139,8 @@ class XMastersState(TypedDict):
     # Knowledge context collected from Solver knowledge_search calls,
     # merged in solver_done and shared with downstream stages.
     retrieved_context: str
+    # NEW: Semantic conditions for Critic verification (from GeneralQA N1)
+    semantic_conditions: dict
     # LLM configuration
     llm: str
     source: str
@@ -256,6 +260,7 @@ def fan_out_to_critics(state: XMastersState) -> list[Send]:
             "solution": s["solution"],
             "solver_id": s["solver_id"],
             "retrieved_context": state.get("retrieved_context", ""),
+            "semantic_conditions": state.get("semantic_conditions"),  # NEW: Pass semantic conditions
             "llm": state.get("llm", ""),
             "source": state.get("source", ""),
             "base_url": state.get("base_url", ""),
@@ -291,6 +296,7 @@ def critic_node(state: CriticInput) -> dict:
         solution=state["solution"],
         solver_id=state["solver_id"],
         retrieved_context=state.get("retrieved_context", ""),
+        semantic_conditions=state.get("semantic_conditions"),  # NEW: Pass semantic conditions
         llm=state.get("llm") or None,
         source=state.get("source") or None,
         base_url=state.get("base_url") or None,

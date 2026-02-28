@@ -234,9 +234,9 @@ async def _setup_mcp_support_in_sandbox(sandbox: Any) -> None:
                 sandbox_config_path = f"/tmp/agent_config/{config_file}"
                 write_entries.append(WriteEntry(path=sandbox_config_path, data=config_content, mode=0o644))
         
-        # 4. Copy necessary Python modules (core, utils)
+        # 4. Copy necessary Python modules (core, utils, tools)
         # Create module directories first
-        await sandbox.commands.run("mkdir -p /tmp/agent_modules/core /tmp/agent_modules/utils")
+        await sandbox.commands.run("mkdir -p /tmp/agent_modules/core /tmp/agent_modules/utils /tmp/agent_modules/tools")
         
         # Copy core module
         core_dir = agent_dir / "core"
@@ -280,12 +280,46 @@ async def _setup_mcp_support_in_sandbox(sandbox: Any) -> None:
                     sandbox_file = f"/tmp/agent_modules/utils/{py_file}"
                     write_entries.append(WriteEntry(path=sandbox_file, data=content, mode=0o644))
         
-        # 5. Create __init__.py files
+        # 5. Copy tools module (for data transformation functions like convert_tcr_to_nettcr_format)
+        # This is needed by Revision mechanism for data_transform strategy
+        tools_dir = agent_dir / "tools"
+        if tools_dir.exists():
+            # Copy reference.py (contains convert_tcr_to_nettcr_format) and _output.py (dependency)
+            tools_files_to_copy = ["reference.py", "_output.py", "__init__.py"]
+            for py_file in tools_files_to_copy:
+                tools_file = tools_dir / py_file
+                if tools_file.exists():
+                    with open(tools_file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    # Fix import paths for sandbox environment
+                    import re
+                    # Replace config path for IMGT reference file
+                    content = re.sub(
+                        r'config_path\s*=\s*Path\(__file__\)\.parent\.parent\s*/\s*"config"\s*/\s*"imgt_vgene_cdr_reference\.json"',
+                        'config_path = Path("/tmp/agent_config") / "imgt_vgene_cdr_reference.json"',
+                        content
+                    )
+                    sandbox_file = f"/tmp/agent_modules/tools/{py_file}"
+                    write_entries.append(WriteEntry(path=sandbox_file, data=content, mode=0o644))
+            
+            # Copy IMGT reference data file (needed for CDR inference)
+            imgt_ref_file = config_dir / "imgt_vgene_cdr_reference.json"
+            if imgt_ref_file.exists():
+                with open(imgt_ref_file, "r", encoding="utf-8") as f:
+                    imgt_content = f.read()
+                write_entries.append(WriteEntry(
+                    path="/tmp/agent_config/imgt_vgene_cdr_reference.json",
+                    data=imgt_content,
+                    mode=0o644
+                ))
+        
+        # 6. Create __init__.py files
         write_entries.append(WriteEntry(path="/tmp/agent_modules/__init__.py", data="", mode=0o644))
         write_entries.append(WriteEntry(path="/tmp/agent_modules/core/__init__.py", data="", mode=0o644))
         write_entries.append(WriteEntry(path="/tmp/agent_modules/utils/__init__.py", data="", mode=0o644))
+        write_entries.append(WriteEntry(path="/tmp/agent_modules/tools/__init__.py", data="", mode=0o644))
         
-        # 6. Create a setup script
+        # 7. Create a setup script
         setup_script = """#!/usr/bin/env python
 import sys
 import os
