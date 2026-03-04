@@ -16,12 +16,21 @@ from pathlib import Path
 from .prompt import (
     TASK_DECOMPOSITION_SYSTEM_PROMPT, 
     get_task_decomposition_user_prompt,
+    get_task_decomposition_user_prompt_with_skills,
     PARALLEL_INFERENCE_SYSTEM_PROMPT,
     get_parallel_inference_user_prompt,
     COARSE_DECOMPOSITION_SYSTEM_PROMPT,
-    get_coarse_decomposition_user_prompt
+    get_coarse_decomposition_user_prompt,
+    TASK_GENERATION_GUIDE_SECTION,
 )
 from .tool_categorizer import load_service_list, get_tools_by_service_ids, get_service_summary
+from .skill_loader import (
+    get_cached_skills,
+    get_cached_task_guide,
+    get_skills_for_services,
+    format_skills_for_prompt,
+    format_task_guide_for_prompt,
+)
 
 # Import main graph state (for state mapping)
 # Add agent directory to path (support importing from subgraph directory)
@@ -93,6 +102,8 @@ class TaskDecompositionState(BaseModel):
     parameter_inference_results: Dict[str, TaskParameterInference] = Field(default_factory=dict, description="Task parameter inference results (deprecated, handled in executor)")
     parameter_inference_summary: Optional[str] = Field(default=None, description="Overall description of parameter inference (deprecated, handled in executor)")
     context_extracted_params: Dict[str, Dict[str, Dict[str, Any]]] = Field(default_factory=dict, description="Context-extracted parameters (deprecated, handled in executor)")
+    # Parameter table from preprocessing (contains file metadata with source tags)
+    extracted_parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameter table from preprocessing with source tags (files, user_parameters, etc.)")
 
 
 # ---------------------- LLM Instantiation (using public LLM factory) ----------------------
@@ -258,6 +269,9 @@ def _match_task_parameters(raw_tasks: List[Dict[str, Any]]):
     """
     Match parameter descriptions for each task (look up by tool name from tools_params_table.json)
     
+    This function generates parameter DESCRIPTIONS (not values) for each task.
+    The actual parameter values will be inferred later based on user context.
+    
     Args:
         raw_tasks: Raw task list from fine decomposition
     """
@@ -276,7 +290,8 @@ def _match_task_parameters(raw_tasks: List[Dict[str, Any]]):
         if not task_tools:
             continue
         
-        # Collect input parameters for all tools
+        # Collect parameter descriptions (structured)
+        param_descriptions = {}
         all_inputs = []
         all_outputs = []
         
@@ -319,20 +334,44 @@ def _match_task_parameters(raw_tasks: List[Dict[str, Any]]):
                 tool_params = tools_params_map.get(tool_name)
             
             if tool_params:
-                # Extract input parameters
+                # Extract input parameters and build structured descriptions
                 input_params = tool_params.get("input_params", [])
                 for param in input_params:
                     param_name = param.get("name", "")
-                    param_type = param.get("type", "")
-                    if param_name:
-                        param_desc = f"{param_name}: {param_type}"
-                        if param_desc not in all_inputs:
-                            all_inputs.append(param_desc)
+                    param_type = param.get("type", "string")
+                    param_desc = param.get("description", "")
+                    param_required = param.get("required", False)
+                    param_default = param.get("default")
+                    
+                    if param_name and param_name not in param_descriptions:
+                        # Build structured parameter description
+                        param_descriptions[param_name] = {
+                            "description": param_desc or f"The {param_name} parameter",
+                            "type": param_type,
+                            "required": param_required
+                        }
+                        if param_default is not None:
+                            param_descriptions[param_name]["default"] = param_default
+                        
+                        # Also add to inputs list for backward compatibility
+                        input_desc = f"{param_name}: {param_type}"
+                        if input_desc not in all_inputs:
+                            all_inputs.append(input_desc)
                 
-                # Output parameters: Currently tools_params_table.json has no explicit output parameters
-                # Can infer from tool type, or leave empty for subsequent nodes to handle
-                # Temporarily not adding output parameters here as there's no explicit information in the table
                 matched_count += 1
+        
+        # Update task's parameters with structured descriptions
+        if param_descriptions:
+            # Merge with existing parameters if any
+            existing_params = task.get("parameters", {})
+            if isinstance(existing_params, dict):
+                # Only add new parameter descriptions, don't overwrite existing ones
+                for param_name, param_info in param_descriptions.items():
+                    if param_name not in existing_params:
+                        existing_params[param_name] = param_info
+                task["parameters"] = existing_params
+            else:
+                task["parameters"] = param_descriptions
         
         # Update task's inputs and outputs
         if all_inputs:
@@ -471,7 +510,15 @@ def fine_decomposition_node(state: TaskDecompositionState) -> TaskDecompositionS
     if llm is not None:
         print(f"  [细分解] 调用 LLM 进行细分解...")
         llm_start = time.time()
-        result = _decompose_task_with_llm(user_input, execution_plan, filtered_tools, llm)
+        # Pass service_ids to enable skill-based enhancement
+        result = _decompose_task_with_llm(
+            user_input, 
+            execution_plan, 
+            filtered_tools, 
+            llm,
+            service_ids=state.required_service_ids,
+            use_skills=True
+        )
         llm_elapsed = time.time() - llm_start
         print(f"  [细分解] LLM 调用完成 (耗时: {llm_elapsed:.2f}秒)")
         
@@ -774,7 +821,7 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
                         if input_param not in task_params:
                             inference_result = _infer_single_parameter(
                                 task, tool_name, input_param, None, None, None, None, None,
-                                inputs, llm, all_tasks, extracted_params
+                                inputs, llm, all_tasks, extracted_params, None, state.extracted_parameters  # No source_constraint for fallback, but pass param_table
                             )
                             task_params[input_param] = inference_result
                     continue
@@ -787,7 +834,10 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
                 param_desc = param.get("description", "")
                 param_deme = param.get("deme") or param.get("demo", "")  # Get example value
                 param_options = param.get("options", [])  # Get enum options
-                is_optional = "optional" in param_type.lower() or param_type.startswith("Optional")
+                # CRITICAL FIX: Use 'required' field from tools_params_table, not type string
+                is_required = param.get("required", True)  # Default to True (required) if not specified - safer
+                is_optional = not is_required  # A parameter is optional if it's NOT required
+                source_constraint = param.get("source_constraint", None)  # Get source constraint
                 
                 if not param_name or param_name in task_params:
                     continue
@@ -795,7 +845,7 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
                 # Infer single parameter (pass extracted_params for priority checking)
                 inference_result = _infer_single_parameter(
                     task, tool_name, param_name, param_type, param_desc, param_deme, param_options, is_optional,
-                    inputs, llm, all_tasks, extracted_params
+                    inputs, llm, all_tasks, extracted_params, source_constraint, state.extracted_parameters
                 )
                 task_params[param_name] = inference_result
         
@@ -1051,6 +1101,8 @@ def _infer_single_parameter(
     llm: Optional[Any],
     all_tasks: List[SubTask],
     extracted_params: Optional[Dict[str, Any]] = None,
+    source_constraint: Optional[Dict[str, Any]] = None,
+    param_table: Optional[Dict[str, Any]] = None,
     user_input: Optional[str] = None
 ) -> ParameterInferenceResult:
     """
@@ -1076,11 +1128,74 @@ def _infer_single_parameter(
         llm: LLM instance
         all_tasks: All tasks list (for checking parameter sources)
         extracted_params: Pre-extracted parameters from context (user input, execution plan, task description)
+        source_constraint: Constraint on parameter source, e.g., {"allowed_sources": ["from_task"], "reason": "..."}
+        param_table: Full parameter table containing file metadata with source tags
     
     Returns:
         Parameter inference result
     """
-    def _normalize_base_dir_value(param_name: str, value: Any) -> Any:
+    def _normalize_base_dir_value(param_name: str, value: Any, param_type: Optional[str] = None) -> Any:
+        """Normalize parameter value with type validation.
+        
+        Args:
+            param_name: Parameter name
+            value: Parameter value (may be LLM inferred)
+            param_type: Expected parameter type from tools_params_table
+            
+        Returns:
+            Normalized value conforming to expected type
+        """
+        # Type validation: ensure value conforms to expected type
+        if param_type:
+            param_type_lower = param_type.lower()
+            
+            # Handle string type - convert list to first element or string
+            if "string" in param_type_lower or "str" in param_type_lower:
+                if isinstance(value, list):
+                    # LLM incorrectly returned a list for string type
+                    # For locus parameters, prefer TRB (most common for TCR analysis)
+                    if param_name.lower() == "locus":
+                        # Check if list contains common TCR loci
+                        if "TRB" in value:
+                            print(f"  [TypeNormalize] Converting list {value} to 'TRB' for string param '{param_name}'")
+                            value = "TRB"
+                        elif "TRA" in value:
+                            print(f"  [TypeNormalize] Converting list {value} to 'TRA' for string param '{param_name}'")
+                            value = "TRA"
+                        else:
+                            print(f"  [TypeNormalize] Converting list {value} to first element for string param '{param_name}'")
+                            value = value[0] if value else ""
+                    else:
+                        print(f"  [TypeNormalize] Converting list {value} to first element for string param '{param_name}'")
+                        value = value[0] if value else ""
+                elif isinstance(value, dict):
+                    print(f"  [TypeNormalize] Rejecting dict value for string param '{param_name}'")
+                    return None
+            
+            # Handle integer type
+            elif "int" in param_type_lower:
+                if isinstance(value, list):
+                    value = value[0] if value else 0
+                if isinstance(value, str):
+                    try:
+                        value = int(value)
+                    except ValueError:
+                        print(f"  [TypeNormalize] Failed to convert '{value}' to int for param '{param_name}'")
+                        return None
+                elif isinstance(value, float):
+                    value = int(value)
+            
+            # Handle float type
+            elif "float" in param_type_lower:
+                if isinstance(value, list):
+                    value = value[0] if value else 0.0
+                if isinstance(value, str):
+                    try:
+                        value = float(value)
+                    except ValueError:
+                        print(f"  [TypeNormalize] Failed to convert '{value}' to float for param '{param_name}'")
+                        return None
+        
         if not isinstance(value, str):
             return value
         if "base_dir" not in param_name.lower():
@@ -1202,10 +1317,51 @@ def _infer_single_parameter(
     
     # Priority 2: Check extracted parameters from context (user input, execution plan, task description)
     # Only use context-extracted values if not available from dependency tasks
+    # CRITICAL: If source_constraint restricts sources, check the source tag from param_table
     if extracted_params and param_name in extracted_params:
+        # Check if parameter has source_constraint that disallows user input
+        if source_constraint:
+            allowed_sources = source_constraint.get("allowed_sources", [])
+            constraint_reason = source_constraint.get("reason", "source constraint")
+            
+            # If "from_task" is the only allowed source, we need to check where this value came from
+            if allowed_sources == ["from_task"]:
+                # Try to find the source of this parameter value from param_table
+                param_source = "user_input"  # Default assumption for context-extracted params
+                
+                if param_table:
+                    # Check files section for source tag
+                    files = param_table.get("files", {})
+                    extracted_value_to_check = extracted_params[param_name]
+                    
+                    # Search for matching file entry
+                    for file_key, file_info in files.items():
+                        if not isinstance(file_info, dict):
+                            continue
+                        sandbox_path = file_info.get("sandbox_path", "")
+                        original_path = file_info.get("original_path", "")
+                        
+                        # Check if this file matches the extracted value
+                        if (extracted_value_to_check == sandbox_path or 
+                            extracted_value_to_check == original_path or
+                            extracted_value_to_check in sandbox_path):
+                            param_source = file_info.get("source", "user_input")
+                            print(f"  [SourceConstraint] Found parameter '{param_name}' source: {param_source} (from file: {sandbox_path})")
+                            break
+                
+                # If source is "user_input" and constraint requires "from_task", reject
+                if param_source == "user_input":
+                    print(f"  [SourceConstraint] Parameter '{param_name}' has constraint: only allowed from task output, but source is '{param_source}'")
+                    return ParameterInferenceResult(
+                        param_name=param_name,
+                        source_type=ParameterSourceType.USER_REQUIRED,
+                        user_prompt=f"参数 '{param_name}' 必须来自上游工具的输出，不能从用户输入直接获取。请确保此工具之前已运行相关的上游工具（如 NetTCR、IgBLAST 等）。",
+                        reason=f"Source constraint violation: {constraint_reason}. Parameter '{param_name}' can only come from upstream task output, not from user input."
+                    )
+        
         extracted_value = extracted_params[param_name]
         if extracted_value is not None:
-            extracted_value = _normalize_base_dir_value(param_name, extracted_value)
+            extracted_value = _normalize_base_dir_value(param_name, extracted_value, param_type)
             # Validation: Check if this is an output file parameter being set to an input file path
             # Output file parameters should not be set to user-provided input file paths
             is_output_param = any(keyword in param_name.lower() for keyword in ['output', 'result', 'save', 'export'])
@@ -1437,7 +1593,7 @@ Common recommended value rules:
             source_type_str = inference_data.get("source_type", "user_required")
             
             if source_type_str == "determined":
-                inferred_value = _normalize_base_dir_value(param_name, inference_data.get("value"))
+                inferred_value = _normalize_base_dir_value(param_name, inference_data.get("value"), param_type)
                 return ParameterInferenceResult(
                     param_name=param_name,
                     source_type=ParameterSourceType.DETERMINED,
@@ -1714,28 +1870,65 @@ def _decompose_task_with_llm(
     user_input: str, 
     execution_plan: Optional[str],
     available_tools: List[Dict[str, Any]],
-    llm
+    llm,
+    service_ids: Optional[List[str]] = None,
+    use_skills: bool = True
 ) -> Optional[Dict[str, Any]]:
     """
     Use LLM for Stage 1 task decomposition (only decompose tasks and match tools, not considering parallel execution)
+    
+    Enhanced with skill.yaml information and task generation guide for better task quality.
     
     Args:
         user_input: User's task description
         execution_plan: User-provided execution plan (if any)
         available_tools: List of available tools
         llm: LLM instance
+        service_ids: List of required service IDs (for loading relevant skills)
+        use_skills: Whether to use skill information for enhanced prompts
     
     Returns:
         Dictionary containing tasks, decomposition_summary, returns None if failed
     """
     # Use Stage 1 prompt template
     system_prompt = TASK_DECOMPOSITION_SYSTEM_PROMPT
-    user_prompt = get_task_decomposition_user_prompt(user_input, execution_plan, available_tools)
+    
+    # Prepare enhanced prompt with skill information
+    skills_info = None
+    task_guide = None
+    
+    if use_skills and service_ids:
+        try:
+            # Load skills for the required services
+            skills = get_skills_for_services(service_ids)
+            if skills:
+                skills_info = format_skills_for_prompt(skills, max_skills=10)
+                print(f"  📚 Loaded {len(skills)} skills for enhanced decomposition")
+            
+            # Load task generation guide
+            task_guide_content = get_cached_task_guide()
+            if task_guide_content:
+                task_guide = format_task_guide_for_prompt(task_guide_content, max_length=2500)
+                print(f"  📖 Loaded task generation guide ({len(task_guide)} chars)")
+        except Exception as e:
+            print(f"  ⚠ Failed to load skills/guide: {e}")
+    
+    # Use enhanced prompt if skills are available, otherwise use standard prompt
+    if skills_info or task_guide:
+        user_prompt = get_task_decomposition_user_prompt_with_skills(
+            user_input, 
+            execution_plan, 
+            available_tools,
+            skills_info=skills_info,
+            task_guide=task_guide
+        )
+    else:
+        user_prompt = get_task_decomposition_user_prompt(user_input, execution_plan, available_tools)
     
     # Check input length (rough estimate, 1 Chinese character ≈ 2 tokens)
     total_length = len(system_prompt) + len(user_prompt)
     print(f"📊 Fine decomposition input length: {total_length} characters, tool count: {len(available_tools)}")
-    if total_length > 30000:  # If total length exceeds 30000 characters, may need further optimization
+    if total_length > 40000:  # Increased threshold since skills add useful context
         print(f"⚠ Prompt is long ({total_length} characters), if API call fails, will use fallback")
     
     try:

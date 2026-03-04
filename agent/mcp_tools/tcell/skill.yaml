@@ -1,0 +1,592 @@
+# T Cell Analysis Skill Definition
+# Single-cell T Cell Repertoire Analysis Service
+# Based on Seurat, monocle3, and scRepertoire
+# Schema Version: 1.0
+
+# ============================================================
+# META - Metadata
+# ============================================================
+meta:
+  name: "tcell"
+  version: "1.0"
+  summary: "TCR data integration and T cell analysis service"
+  description: |
+    T cell analysis service providing:
+    1. **TCR Data Integration** - Merge CSV predictions (NetTCR, IgBLAST) into RDS objects
+    2. **Cell Type Annotation** - Automatic CD4+/CD8+ T cell classification
+    3. **Trajectory Analysis** - Pseudotime differentiation analysis
+    4. **Clonotype Analysis** - TCR expansion and diversity analysis
+    
+    Built on Seurat, monocle3, and scRepertoire.
+    
+    KEY USE CASE: After running NetTCR/IgBLAST predictions, use integrate_tcr_data_complete 
+    to merge prediction results into the RDS file for downstream analysis.
+  tags:
+    - t-cell
+    - single-cell
+    - tcr
+    - integration
+    - trajectory
+    - clonotype
+    - seurat
+    - monocle3
+  capabilities:
+    - "Merge CSV prediction results into RDS objects"
+    - "TCR data integration with single-cell data"
+    - "Automatic T cell subtype annotation"
+    - "CD4+/CD8+ T cell classification"
+    - "Pseudotime trajectory analysis"
+    - "TCR clonotype expansion analysis"
+    - "Antigen binding prediction visualization"
+
+# ============================================================
+# WORKFLOW - Execution Flow
+# ============================================================
+workflow:
+  description: "Required tool execution sequence"
+  steps:
+    - step: 1
+      name: "Data Integration"
+      description: "Integrate TCR data into Seurat object (MUST execute first)"
+      tools: ["integrate_tcr_data_complete"]
+      is_optional: false
+    
+    - step: 2
+      name: "Analysis & Visualization"
+      description: "Run analysis tools (can be executed in parallel)"
+      tools: ["tcell_celltype_visualization", "tcell_marker_dotplot_analysis", "tcell_trajectory_analysis", "tcr_binding_visualization", "tcr_clonotype_analysis"]
+      is_optional: true
+
+# ============================================================
+# TOOLS - Tool List
+# ============================================================
+tools:
+
+  # ----------------------------------------------------------
+  # Phase 1: Core Integration Tool
+  # ----------------------------------------------------------
+  - name: "integrate_tcr_data_complete"
+    summary: "Integrate CSV predictions into RDS - merge CSV data into Seurat object"
+    description: |
+      **CORE INTEGRATION TOOL for TCR workflows**
+      
+      Merges CSV output files (from NetTCR, IgBLAST, or other prediction tools) into 
+      the Seurat RDS object by matching cell barcodes. This creates a comprehensive 
+      dataset for downstream analysis.
+      
+      Use this tool whenever you need to:
+      - Merge TCR binding prediction results (predictions.csv) with RDS metadata
+      - Add new analysis columns from CSV to existing RDS object
+      - Combine outputs from multiple tools into a single RDS file
+      
+      IMPORTANT: This tool MUST be executed before any other tcell analysis tools!
+      IMPORTANT: input_csv MUST be a tool-generated CSV, NOT the user's original meta_csv_file!
+    
+    category: "integration"
+    priority: "core"
+    execution_order: 1
+    
+    dependencies:
+      prerequisites: []
+      recommended: []
+      enables: ["tcell_celltype_visualization", "tcell_marker_dotplot_analysis", "tcell_trajectory_analysis", "tcr_binding_visualization", "tcr_clonotype_analysis"]
+    
+    when_to_use:
+      - "Merge CSV prediction results (e.g., predictions.csv) into RDS file"
+      - "Combine NetTCR/IgBLAST CSV outputs with existing RDS metadata"
+      - "Add new columns from CSV to Seurat RDS object by barcode matching"
+      - "Before running any tcell visualization or analysis tools"
+      - "Need to integrate TCR prediction results for downstream analysis"
+    
+    parameters:
+      - name: "input_csv"
+        type: "string"
+        required: true
+        description: "Path to CSV file from upstream tool (e.g., NetTCR predictions.csv). Cannot use user's meta_csv_file."
+        example: "/data/sessions/{session_id}/output/nettcr_predictions.csv"
+        constraints:
+          - "Must be tool-generated output file"
+          - "Cannot be user-provided meta_csv_file"
+      
+      - name: "input_rds"
+        type: "string"
+        required: true
+        description: "Path to latest RDS file. Use user's meta_rds_file for first call, then chain outputs."
+        example: "/data/sessions/{session_id}/output/integrated_1.rds"
+      
+      - name: "output_path"
+        type: "string"
+        required: true
+        description: "Output path for integrated RDS file"
+        example: "/data/sessions/{session_id}/output/integrated_1.rds"
+      
+      - name: "csv_fields"
+        type: "string"
+        required: false
+        description: "CSV fields for barcode composition (comma-separated)"
+        default: "main_name"
+      
+      - name: "rds_fields"
+        type: "string"
+        required: false
+        description: "RDS fields for barcode composition (comma-separated)"
+        default: "main_name"
+      
+      - name: "skip_umap"
+        type: "boolean"
+        required: false
+        description: "Whether to skip UMAP dimensionality reduction"
+        default: false
+      
+      - name: "skip_annotation"
+        type: "boolean"
+        required: false
+        description: "Whether to skip cell type annotation"
+        default: false
+    
+    returns:
+      type: "object"
+      description: "Integration result"
+      schema:
+        - name: "rds_path"
+          type: "string"
+          description: "Path to updated RDS file"
+        - name: "metadata_columns"
+          type: "array"
+          description: "New metadata columns added"
+        - name: "integrated_cells"
+          type: "integer"
+          description: "Number of successfully integrated cells"
+
+  # ----------------------------------------------------------
+  # Phase 2: Visualization & Analysis Tools
+  # ----------------------------------------------------------
+  - name: "tcell_celltype_visualization"
+    summary: "T cell subtype UMAP visualization"
+    description: |
+      T cell subtype UMAP visualization and distribution analysis.
+      Performs marker gene-based T cell subtype classification:
+      - CD8+ T cells: Naive, Effector, Memory, Exhausted
+      - CD4+ T cells: Naive, Th1, Th2, Th17, Treg, Tfh
+      - Special subtypes: MAIT, γδT
+      - Optional: Broad immune cell annotation (Monocyte, NK, DC)
+    
+    category: "visualization"
+    priority: "core"
+    execution_order: 2
+    
+    dependencies:
+      prerequisites: ["integrate_tcr_data_complete"]
+      recommended: []
+      enables: []
+    
+    when_to_use:
+      - "Need to visualize T cell subtype distribution"
+      - "Performing cell type statistics"
+      - "Validating cell clustering quality"
+    
+    parameters:
+      - name: "input_file"
+        type: "string"
+        required: true
+        description: "Path to Seurat RDS file containing T cell data"
+        example: "/data/sessions/{session_id}/output/integrated_1.rds"
+      
+      - name: "base_dir"
+        type: "string"
+        required: true
+        description: "Output directory for analysis results"
+        example: "/data/sessions/{session_id}/output"
+      
+      - name: "annotation_level"
+        type: "string"
+        required: false
+        description: "Annotation level: 'tcell' for T cell subtypes only, 'immune' for all immune cell types"
+        default: "tcell"
+        options: ["tcell", "immune"]
+    
+    returns:
+      type: "files"
+      description: "Visualization output files"
+      schema:
+        - name: "celltype_umap.png"
+          type: "image"
+          description: "Cell type UMAP plot"
+        - name: "celltype_pie.png"
+          type: "image"
+          description: "Cell type pie chart"
+        - name: "celltype_bar.png"
+          type: "image"
+          description: "Cell type bar chart"
+        - name: "celltype_stats.csv"
+          type: "csv"
+          description: "Cell type statistics table"
+
+  - name: "tcell_marker_dotplot_analysis"
+    summary: "T cell marker gene expression dotplot"
+    description: |
+      T cell marker gene expression dotplot analysis.
+      Creates dotplot visualization of T cell subtype marker gene expression:
+      - Dot size: percentage of cells expressing the gene
+      - Dot color: average expression level
+      - Supported marker sets: CD8 markers, CD4 markers, or all
+    
+    category: "visualization"
+    priority: "core"
+    execution_order: 2
+    
+    dependencies:
+      prerequisites: ["integrate_tcr_data_complete"]
+      recommended: []
+      enables: []
+    
+    when_to_use:
+      - "Validating T cell subtype annotation"
+      - "Demonstrating marker gene expression patterns"
+      - "Comparing gene expression across subtypes"
+    
+    parameters:
+      - name: "input_file"
+        type: "string"
+        required: true
+        description: "Path to Seurat RDS file"
+        example: "/data/sessions/{session_id}/output/integrated_1.rds"
+      
+      - name: "base_dir"
+        type: "string"
+        required: true
+        description: "Output directory"
+        example: "/data/sessions/{session_id}/output"
+      
+      - name: "marker_set"
+        type: "string"
+        required: false
+        description: "Marker gene set to display: 'cd8', 'cd4', or 'all'"
+        default: "all"
+        options: ["cd8", "cd4", "all"]
+    
+    returns:
+      type: "files"
+      description: "Dotplot output files"
+      schema:
+        - name: "marker_dotplot.png"
+          type: "image"
+          description: "Marker gene dotplot"
+        - name: "marker_expression.csv"
+          type: "csv"
+          description: "Marker gene expression data"
+
+  - name: "tcell_trajectory_analysis"
+    summary: "T cell pseudotime trajectory analysis"
+    description: |
+      T cell pseudotime trajectory analysis using monocle3.
+      Infers T cell differentiation trajectories:
+      - CD8 path: Naive → Effector → Memory/Exhausted
+      - CD4 path: Naive → Th1/Th2/Th17/Treg/Tfh
+      - Configurable root cell type
+      - UMAP visualization with pseudotime coloring
+    
+    category: "analysis"
+    priority: "high"
+    execution_order: 2
+    
+    dependencies:
+      prerequisites: ["integrate_tcr_data_complete"]
+      recommended: []
+      enables: []
+    
+    when_to_use:
+      - "Studying T cell differentiation process"
+      - "Analyzing cell state transitions"
+      - "Identifying differentiation key genes"
+    
+    parameters:
+      - name: "input_file"
+        type: "string"
+        required: true
+        description: "Path to Seurat RDS file"
+        example: "/data/sessions/{session_id}/output/integrated_1.rds"
+      
+      - name: "base_dir"
+        type: "string"
+        required: true
+        description: "Output directory"
+        example: "/data/sessions/{session_id}/output"
+      
+      - name: "num_dim"
+        type: "integer"
+        required: false
+        description: "Number of principal components for dimensionality reduction"
+        default: 50
+      
+      - name: "cluster_resolution"
+        type: "number"
+        required: false
+        description: "monocle3 clustering resolution"
+        default: 0.001
+      
+      - name: "min_gene_cells"
+        type: "integer"
+        required: false
+        description: "Minimum number of cells for gene inclusion"
+        default: 3
+    
+    returns:
+      type: "files"
+      description: "Trajectory analysis output files"
+      schema:
+        - name: "trajectory_umap.png"
+          type: "image"
+          description: "Trajectory UMAP plot"
+        - name: "pseudotime_distribution.png"
+          type: "image"
+          description: "Pseudotime distribution plot"
+        - name: "trajectory_genes.csv"
+          type: "csv"
+          description: "Trajectory-related gene list"
+
+  - name: "tcr_binding_visualization"
+    summary: "TCR binding prediction visualization"
+    description: |
+      TCR binding/reactivity prediction visualization.
+      Visualizes TCR binding prediction data in UMAP space:
+      - Auto-detects binding prediction columns (bind_predict, bind_output, output)
+      - Generates density plots using Nebulosa
+      - Binding threshold classification and statistics
+      - Gracefully skips if no binding column exists
+    
+    category: "visualization"
+    priority: "medium"
+    execution_order: 2
+    
+    dependencies:
+      prerequisites: ["integrate_tcr_data_complete"]
+      recommended: []
+      enables: []
+    
+    when_to_use:
+      - "Visualizing NetTCR prediction results"
+      - "Analyzing antigen-specific T cell distribution"
+      - "Demonstrating spatial distribution of binder/non-binder cells"
+    
+    parameters:
+      - name: "input_file"
+        type: "string"
+        required: true
+        description: "Seurat RDS file containing binding prediction data"
+        example: "/data/sessions/{session_id}/output/integrated_1.rds"
+      
+      - name: "base_dir"
+        type: "string"
+        required: true
+        description: "Output directory"
+        example: "/data/sessions/{session_id}/output"
+    
+    returns:
+      type: "files"
+      description: "Binding visualization output files"
+      schema:
+        - name: "binding_umap.png"
+          type: "image"
+          description: "Binding prediction UMAP plot"
+        - name: "binding_density.png"
+          type: "image"
+          description: "Binding density plot"
+        - name: "binding_stats.csv"
+          type: "csv"
+          description: "Binding statistics table"
+
+  - name: "tcr_clonotype_analysis"
+    summary: "TCR clonotype expansion analysis"
+    description: |
+      TCR clonotype expansion analysis.
+      Analyzes TCR clonotype diversity and expansion patterns:
+      - Clonotype frequency calculation
+      - Clonotype expansion statistics
+      - Top clonotype identification
+      - Diversity index calculation (Shannon, Simpson)
+      - Group comparison by sample/condition
+    
+    category: "analysis"
+    priority: "core"
+    execution_order: 2
+    
+    dependencies:
+      prerequisites: ["integrate_tcr_data_complete"]
+      recommended: []
+      enables: []
+    
+    when_to_use:
+      - "Analyzing T cell clonal expansion"
+      - "Comparing clonotype distribution across conditions"
+      - "Evaluating TCR diversity"
+    
+    parameters:
+      - name: "input_file"
+        type: "string"
+        required: true
+        description: "Seurat RDS file containing TCR data"
+        example: "/data/sessions/{session_id}/output/integrated_1.rds"
+      
+      - name: "base_dir"
+        type: "string"
+        required: true
+        description: "Output directory"
+        example: "/data/sessions/{session_id}/output"
+      
+      - name: "group_by"
+        type: "string"
+        required: false
+        description: "Grouping variable column name"
+        default: "sample"
+      
+      - name: "top_n"
+        type: "integer"
+        required: false
+        description: "Number of top clonotypes to display"
+        default: 20
+    
+    returns:
+      type: "files"
+      description: "Clonotype analysis output files"
+      schema:
+        - name: "clonotype_frequency.png"
+          type: "image"
+          description: "Clonotype frequency plot"
+        - name: "clonotype_diversity.png"
+          type: "image"
+          description: "Diversity index plot"
+        - name: "top_clonotypes.csv"
+          type: "csv"
+          description: "Top clonotype list"
+        - name: "diversity_stats.csv"
+          type: "csv"
+          description: "Diversity statistics table"
+
+# ============================================================
+# FILE_COLUMN_SPECS - Input File Column Specifications
+# ============================================================
+file_column_specs:
+  description: "Column requirements for input files"
+  
+  rds_requirements:
+    description: "Seurat RDS object requirements"
+    required_metadata:
+      - "Cell barcodes as row names"
+      - "UMAP coordinates (umap_1, umap_2)"
+    recommended_metadata:
+      - "sample"
+      - "orig.ident"
+  
+  csv_requirements:
+    description: "CSV file requirements for integration"
+    required_columns:
+      - "Cell barcode column (configurable via csv_fields)"
+    recommended_columns:
+      - "TCR sequence columns"
+      - "Binding prediction columns"
+    reference: "See upstream tool output specifications"
+
+# ============================================================
+# CONSTRAINTS - Constraints and Limitations
+# ============================================================
+constraints:
+  celltype_markers:
+    description: "T cell subtype marker genes"
+    cd8_subtypes:
+      - name: "Naive_CD8"
+        markers: ["CCR7", "SELL", "TCF7", "LEF1"]
+        description: "Naive CD8+ T cells"
+      - name: "Effector_CD8"
+        markers: ["GZMB", "PRF1", "GNLY", "NKG7"]
+        description: "Effector CD8+ T cells"
+      - name: "Memory_CD8"
+        markers: ["GZMK", "CXCR3", "KLRG1"]
+        description: "Memory CD8+ T cells"
+      - name: "Exhausted_CD8"
+        markers: ["PDCD1", "HAVCR2", "LAG3", "TIGIT", "TOX"]
+        description: "Exhausted CD8+ T cells"
+    
+    cd4_subtypes:
+      - name: "Naive_CD4"
+        markers: ["CCR7", "SELL", "TCF7", "LEF1"]
+        description: "Naive CD4+ T cells"
+      - name: "Th1"
+        markers: ["TBX21", "IFNG", "CXCR3"]
+        description: "Th1 helper T cells"
+      - name: "Th2"
+        markers: ["GATA3", "IL4", "IL5", "IL13"]
+        description: "Th2 helper T cells"
+      - name: "Th17"
+        markers: ["RORC", "IL17A", "IL17F", "CCR6"]
+        description: "Th17 helper T cells"
+      - name: "Treg"
+        markers: ["FOXP3", "IL2RA", "CTLA4"]
+        description: "Regulatory T cells"
+      - name: "Tfh"
+        markers: ["BCL6", "CXCR5", "PD-1"]
+        description: "Follicular helper T cells"
+    
+    special_subtypes:
+      - name: "MAIT"
+        markers: ["TRAV1-2", "KLRB1", "SLC4A10"]
+        description: "Mucosal-associated invariant T cells"
+      - name: "gdT"
+        markers: ["TRDC", "TRGV9"]
+        description: "Gamma-delta T cells"
+  
+  data_requirements:
+    min_cells_trajectory: 500
+    recommended_cells: "5,000 - 50,000"
+  
+  limitations:
+    - "Requires valid Seurat RDS input file"
+    - "Integration tool must be executed first"
+    - "Trajectory analysis requires sufficient cell count (recommended > 500)"
+    - "Clonotype analysis requires TCR sequence data"
+    - "Binding visualization requires NetTCR prediction results"
+
+# ============================================================
+# EXTERNAL_REFS - External References
+# ============================================================
+external_refs:
+  frameworks:
+    - name: "Seurat"
+      version: ">=4.0"
+      purpose: "Single-cell data analysis and visualization"
+    - name: "monocle3"
+      version: ">=1.0"
+      purpose: "Pseudotime trajectory analysis"
+    - name: "scRepertoire"
+      version: ">=1.0"
+      purpose: "TCR/BCR data analysis"
+    - name: "Nebulosa"
+      version: ">=1.0"
+      purpose: "Density visualization"
+  
+  dependencies:
+    - service: "nettcr"
+      tools: ["predict_tcr_binding_fast", "predict_tcr_binding_complete"]
+      description: "TCR-peptide binding prediction"
+    - service: "igblast"
+      tools: ["analyze_vdj_batch"]
+      description: "V(D)J recombination analysis"
+  
+  references:
+    - title: "Seurat: Single-cell RNA-seq analysis"
+      authors: "Hao et al."
+      journal: "Cell"
+      year: 2021
+      doi: "10.1016/j.cell.2021.04.048"
+    
+    - title: "monocle3: Pseudotime analysis"
+      authors: "Cao et al."
+      journal: "Nature"
+      year: 2019
+      doi: "10.1038/s41586-019-1631-3"
+    
+    - title: "scRepertoire: TCR/BCR analysis"
+      authors: "Borcherding et al."
+      journal: "Nature Communications"
+      year: 2020
+      doi: "10.1038/s41467-020-15936-2"

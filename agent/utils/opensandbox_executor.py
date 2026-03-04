@@ -463,6 +463,9 @@ async def run_code_in_opensandbox(
     - OPENSANDBOX_SKIP_MCP_INSTALL: If true, skip pip install of MCP dependencies (default: false)
       Use this when your image already has langchain-mcp-adapters pre-installed (e.g., :with-mcp images)
     - OPENSANDBOX_PYTHON_CMD: Python executable inside sandbox (default: python3)
+    - OPENSANDBOX_PYTHON_VERSION: Python version to activate via code-interpreter-env.sh (default: 3.13)
+    - OPENSANDBOX_USE_VENV: If true, source /opt/opensandbox/code-interpreter-env.sh before running Python
+      This is needed for custom images where pandas etc. are installed in a venv (default: true)
     - OPENSANDBOX_SHOW_PROGRESS: If true, show progress messages during execution (default: true)
     - OPENSANDBOX_PROGRESS_INTERVAL_SECONDS: Interval for progress messages (default: 10)
     
@@ -841,6 +844,19 @@ if '{api_key_for_sandbox}':
             await sandbox.files.write_file(code_path, full_code)
 
             python_cmd = os.getenv("OPENSANDBOX_PYTHON_CMD", "python3")
+            python_version = os.getenv("OPENSANDBOX_PYTHON_VERSION", "3.13")
+            
+            # Check if we should source the virtual environment before running Python
+            # This is needed for custom images where packages are installed in a venv
+            venv_setup_script = "/opt/opensandbox/code-interpreter-env.sh"
+            use_venv = os.getenv("OPENSANDBOX_USE_VENV", "true").lower() == "true"
+            
+            # Build the execution command
+            if use_venv:
+                # Source venv first with python version, then run Python (ensures pandas etc. are available)
+                exec_cmd = f"source {venv_setup_script} python {python_version} && {python_cmd} {code_path}"
+            else:
+                exec_cmd = f"{python_cmd} {code_path}"
             
             # Progress feedback for long-running commands
             progress_interval = int(os.getenv("OPENSANDBOX_PROGRESS_INTERVAL_SECONDS", "10"))
@@ -850,7 +866,7 @@ if '{api_key_for_sandbox}':
                 """Run command with periodic progress feedback."""
                 start_time = time.time()
                 cmd_task = asyncio.create_task(
-                    sandbox.commands.run(f"{python_cmd} {code_path}")
+                    sandbox.commands.run(exec_cmd)
                 )
                 
                 while not cmd_task.done():
@@ -908,11 +924,17 @@ if '{api_key_for_sandbox}':
                 if show_progress:
                     print(f"  ⚠ python3 未找到，尝试 python...")
                 
+                # Build fallback command with same venv setup
+                if use_venv:
+                    fallback_exec_cmd = f"source {venv_setup_script} python {python_version} && {fallback_cmd} {code_path}"
+                else:
+                    fallback_exec_cmd = f"{fallback_cmd} {code_path}"
+                
                 async def _run_fallback_with_progress():
                     """Run fallback command with progress."""
                     start_time = time.time()
                     cmd_task = asyncio.create_task(
-                        sandbox.commands.run(f"{fallback_cmd} {code_path}")
+                        sandbox.commands.run(fallback_exec_cmd)
                     )
                     while not cmd_task.done():
                         try:
@@ -1058,13 +1080,18 @@ if '{api_key_for_sandbox}':
         }
     finally:
         # Improved cleanup: kill and close (similar to example code)
-        if sandbox is not None:
+        # Only kill if keep_alive is False (i.e., sandbox should not be reused)
+        if sandbox is not None and not keep_alive:
             try:
                 await sandbox.kill()
                 await sandbox.close()
+                print(f"[opensandbox] Sandbox terminated (keep_alive=False)")
             except Exception as cleanup_exc:
                 # Log but don't fail on cleanup errors
                 print(f"[opensandbox] Cleanup warning: {cleanup_exc}")
+        elif sandbox is not None and keep_alive:
+            # Sandbox kept alive for reuse - just close the connection
+            print(f"[opensandbox] Sandbox kept alive for reuse: {getattr(sandbox, 'id', 'unknown')}")
 
 
 def run_code_in_opensandbox_sync(

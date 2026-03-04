@@ -8,6 +8,11 @@ Design decisions:
     - knowledge_search: Uses retrieve_doc() which is already synchronous
     - Both load configs from .env via load_dotenv()
     - Returns formatted strings suitable for LLM consumption
+
+LangChain 1.0+ Compatibility:
+    - All tools use @tool decorator from langchain_core.tools
+    - Tools can be directly bound to LLM via .bind_tools()
+    - Backward compatible with namespace injection pattern
 """
 
 import os
@@ -21,6 +26,8 @@ os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 import logging
 from pathlib import Path
 from typing import List, Optional
+
+from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +79,7 @@ def _ensure_env_loaded():
 # ---------------------------------------------------------------------------
 # Web Search (Tavily)
 # ---------------------------------------------------------------------------
+@tool
 def web_search(query: str, max_results: int = 5) -> str:
     """Search the web for information using Tavily.
 
@@ -85,10 +93,6 @@ def web_search(query: str, max_results: int = 5) -> str:
 
     Returns:
         Formatted string containing search results with titles, URLs, and content
-
-    Example:
-        >>> results = web_search("CAR-T cell therapy mechanism")
-        >>> print(results)
     """
     _ensure_env_loaded()
 
@@ -156,12 +160,13 @@ def web_search(query: str, max_results: int = 5) -> str:
 # ---------------------------------------------------------------------------
 # Read Webpage Content
 # ---------------------------------------------------------------------------
+@tool
 def read_webpage(url: str, max_chars: int = 10000) -> str:
     """Fetch and extract the main text content from a webpage URL.
 
     Use this tool when web_search returns a relevant URL (e.g. a paper, article,
     or documentation page) and you need to read the full content rather than
-    just the search snippet.  This is essential for understanding detailed
+    just the search snippet. This is essential for understanding detailed
     methodology, results, and conclusions from scientific papers.
 
     This tool can read most URLs including PMC, PubMed, bioRxiv, Wiley,
@@ -174,10 +179,6 @@ def read_webpage(url: str, max_chars: int = 10000) -> str:
 
     Returns:
         Extracted text content from the webpage, or an error message.
-
-    Example:
-        >>> text = read_webpage("https://pmc.ncbi.nlm.nih.gov/articles/PMC12345678/")
-        >>> print(text[:500])
     """
     if not url.startswith(("http://", "https://")):
         return f"[Error] Invalid URL: {url}. Must start with http:// or https://"
@@ -254,6 +255,7 @@ def read_webpage(url: str, max_chars: int = 10000) -> str:
 # ---------------------------------------------------------------------------
 # Knowledge Base Search (Qdrant Vector DB)
 # ---------------------------------------------------------------------------
+@tool
 def knowledge_search(query: str, k: int = 5, collections: Optional[List[str]] = None) -> str:
     """Search the internal knowledge base using vector similarity.
 
@@ -270,10 +272,6 @@ def knowledge_search(query: str, k: int = 5, collections: Optional[List[str]] = 
 
     Returns:
         Formatted string containing retrieved documents with sources
-
-    Example:
-        >>> results = knowledge_search("CRISPR gene editing protocols")
-        >>> print(results)
     """
     _ensure_env_loaded()
 
@@ -333,8 +331,27 @@ def knowledge_search(query: str, k: int = 5, collections: Optional[List[str]] = 
 # ---------------------------------------------------------------------------
 # Tool registry
 # ---------------------------------------------------------------------------
-def get_search_tools() -> dict:
-    """Return a dict of all search tool functions for namespace injection."""
+def get_search_tools() -> list:
+    """Return a list of all search tool functions as LangChain tools.
+    
+    Returns:
+        List of LangChain tool objects that can be directly bound to LLM.
+        
+    Example:
+        >>> from langchain_openai import ChatOpenAI
+        >>> llm = ChatOpenAI(model="gpt-4")
+        >>> tools = get_search_tools()
+        >>> llm_with_tools = llm.bind_tools(tools)
+    """
+    return [web_search, read_webpage, knowledge_search]
+
+
+def get_search_tools_dict() -> dict:
+    """Return a dict of search tool functions for backward compatibility.
+    
+    This function is kept for backward compatibility with the existing
+    namespace injection pattern.
+    """
     return {
         "web_search": web_search,
         "read_webpage": read_webpage,

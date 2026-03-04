@@ -8,11 +8,18 @@ Implements three retrieval methods:
 """
 
 import os
+import sys
 import asyncio
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
-from agent.utils.llm_factory import create_reasoning_advanced_llm
+# 添加 agent 目录到路径
+agent_dir = Path(__file__).parent.parent.parent.parent
+if str(agent_dir) not in sys.path:
+    sys.path.insert(0, str(agent_dir))
+
+from utils.llm_factory import create_reasoning_advanced_llm
 
 
 # ===================== Configuration Check =====================

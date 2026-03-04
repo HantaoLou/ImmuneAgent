@@ -7,15 +7,22 @@ Fills the one gap in the existing document parsing infrastructure:
     - DOCX:  **this module** (was missing)
 
 Lazy import: python-docx loaded inside function scope only.
+
+LangChain 1.0+ Compatibility:
+    - Uses @tool decorator from langchain_core.tools
+    - Can be directly bound to LLM via .bind_tools()
 """
 
 import logging
+
+from langchain_core.tools import tool
 
 from ._output import truncate_output
 
 logger = logging.getLogger(__name__)
 
 
+@tool
 def parse_docx(file_path: str, max_chars: int = 6000) -> str:
     """Extract text from a DOCX file.
 
@@ -43,6 +50,15 @@ def parse_docx(file_path: str, max_chars: int = 6000) -> str:
         return f"[parse_docx] Error reading {file_path}: {e}"
 
 
-def get_docx_tools() -> dict:
-    """Return DOCX tools for namespace injection."""
+def get_docx_tools() -> list:
+    """Return DOCX tools as LangChain tools.
+    
+    Returns:
+        List of LangChain tool objects that can be directly bound to LLM.
+    """
+    return [parse_docx]
+
+
+def get_docx_tools_dict() -> dict:
+    """Return DOCX tools for backward compatibility (namespace injection)."""
     return {"parse_docx": parse_docx}

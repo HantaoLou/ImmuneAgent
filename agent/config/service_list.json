@@ -21,7 +21,7 @@
   },
   {
     "service_id": "tcell",
-    "description": "T cell repertoire analysis service with 6 tools for TCR sequencing data. Supports cell type visualization, marker dotplot, trajectory analysis, TCR binding visualization, clonotype expansion analysis, and complete TCR data integration pipeline."
+    "description": "T cell analysis service with 6 tools. **KEY TOOL: integrate_tcr_data_complete** - Merges CSV prediction results (from NetTCR, IgBLAST) into RDS Seurat objects by barcode matching. Use this after NetTCR predictions to combine prediction scores with cell metadata. Also provides cell type visualization, trajectory analysis, TCR binding visualization, and clonotype expansion analysis."
   },
   {
     "service_id": "immune",

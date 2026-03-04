@@ -1,0 +1,287 @@
+# IgBLAST Skill Definition
+# V(D)J Recombination Analysis Service
+# Schema Version: 1.0
+
+# ============================================================
+# META - Metadata
+# ============================================================
+meta:
+  name: "igblast"
+  version: "1.0"
+  summary: "V(D)J recombination analysis service"
+  description: |
+    V(D)J recombination analysis service using IgBLAST and ChangeO.
+    Provides comprehensive immune repertoire analysis including V/D/J gene assignments,
+    CDR region identification, and somatic hypermutation (SHM) detection.
+    Supports BCR (antibody) and TCR (T cell receptor) sequences for multiple species.
+  tags:
+    - immunology
+    - vdj
+    - antibody
+    - bcr
+    - tcr
+    - igblast
+    - changeo
+  capabilities:
+    - "V(D)J gene assignment"
+    - "CDR region identification"
+    - "Somatic hypermutation detection"
+    - "AIRR format output"
+    - "Multi-species support"
+    - "Batch processing"
+
+# ============================================================
+# WORKFLOW - Execution Flow
+# ============================================================
+workflow:
+  description: "Recommended tool invocation order"
+  steps:
+    - step: 1
+      name: "V(D)J Analysis"
+      description: "Run V(D)J recombination analysis on sequences"
+      tools: ["analyze_vdj_batch"]
+      is_optional: false
+    
+    - step: 2
+      name: "CDR3 Extraction"
+      description: "Extract CDR3 sequences from AIRR results"
+      tools: ["extract_cdr3_from_airr"]
+      is_optional: true
+
+# ============================================================
+# TOOLS - Tool List
+# ============================================================
+tools:
+
+  # ----------------------------------------------------------
+  # Core Analysis Tool
+  # ----------------------------------------------------------
+  - name: "analyze_vdj_batch"
+    summary: "Batch V(D)J recombination analysis"
+    description: |
+      Batch V(D)J recombination analysis using IgBLAST + ChangeO.
+      Returns AIRR format results with V/D/J gene assignments, CDR regions, and SHM identification.
+      
+      Automatically splits large files into batches for efficient processing.
+      
+      NOTE: For CSV input, the system will automatically convert to FASTA format.
+      Supported CSV column names:
+      - BCR (antibody): Heavy_DNA, Light_DNA, heavy_dna, light_dna, Heavy, Light, sequence, VH, VL
+      - TCR (T cell receptor): alpha_dna, beta_dna, TRA, TRB, CDR3a, CDR3b, tra_seq, trb_seq
+    
+    category: "analysis"
+    priority: "core"
+    execution_order: 1
+    
+    dependencies:
+      prerequisites: []
+      recommended: []
+      enables: ["extract_cdr3_from_airr"]
+    
+    when_to_use:
+      - "Analyzing antibody/BCR sequences for V(D)J recombination"
+      - "Analyzing TCR sequences for V(D)J assignment"
+      - "Need V/D/J gene identification and CDR region extraction"
+      - "Preparing sequences for downstream clonotype analysis"
+    
+    parameters:
+      - name: "sequences"
+        type: "string"
+        required: true
+        description: "Sequences input: (1) FASTA file path (.fasta/.fa), or (2) CSV file path with sequence columns (auto-converted to FASTA)"
+        example: "/data/sessions/{session_id}/input/sequences.fasta"
+        constraints:
+          - "BCR: Heavy_DNA/Light_DNA, Heavy/Light, sequence columns"
+          - "TCR: alpha_dna/beta_dna, TRA/TRB, CDR3a/CDR3b columns"
+      
+      - name: "organism"
+        type: "string"
+        required: false
+        description: "Organism type for germline database"
+        default: "human"
+        options: ["human", "mouse", "rhesus_monkey"]
+      
+      - name: "receptor_type"
+        type: "string"
+        required: false
+        description: "Receptor type: 'Ig' for BCR (antibody) or 'TCR' for T cell receptor"
+        default: "Ig"
+        options: ["Ig", "TCR"]
+      
+      - name: "locus"
+        type: "string"
+        required: false
+        description: "Locus type. For BCR: IGH, IGK, IGL. For TCR: TRA, TRB, TRG, TRD."
+        default: "IGH"
+        options: ["IGH", "IGK", "IGL", "TRA", "TRB", "TRG", "TRD"]
+      
+      - name: "timeout"
+        type: "integer"
+        required: false
+        description: "Timeout in seconds for IgBLAST and ChangeO execution"
+        default: 7200
+    
+    returns:
+      type: "csv"
+      description: "AIRR format results from ChangeO"
+      schema:
+        - name: "sequence_id"
+          type: "string"
+          description: "Unique sequence identifier"
+        - name: "v_call"
+          type: "string"
+          description: "V gene assignment"
+        - name: "d_call"
+          type: "string"
+          description: "D gene assignment"
+        - name: "j_call"
+          type: "string"
+          description: "J gene assignment"
+        - name: "cdr1"
+          type: "string"
+          description: "CDR1 sequence"
+        - name: "cdr2"
+          type: "string"
+          description: "CDR2 sequence"
+        - name: "cdr3"
+          type: "string"
+          description: "CDR3 sequence (junction)"
+        - name: "junction"
+          type: "string"
+          description: "Full junction sequence"
+        - name: "v_identity"
+          type: "number"
+          description: "V gene identity percentage"
+
+  # ----------------------------------------------------------
+  # Extraction Tool
+  # ----------------------------------------------------------
+  - name: "extract_cdr3_from_airr"
+    summary: "Extract CDR3 from AIRR results"
+    description: |
+      Extract CDR3 information from AIRR format results.
+      Supports multiple input formats:
+      - Array of AIRR records
+      - Local file path (CSV/TSV/JSON)
+      - HTTP/HTTPS URL
+      
+      Streams extraction progress via SSE for large file processing.
+    
+    category: "extraction"
+    priority: "high"
+    execution_order: 2
+    
+    dependencies:
+      prerequisites: ["analyze_vdj_batch"]
+      recommended: []
+      enables: []
+    
+    when_to_use:
+      - "Extracting CDR3 sequences from AIRR results"
+      - "Preparing CDR3 data for downstream analysis (NetTCR, etc.)"
+      - "Simplifying AIRR output for specific use cases"
+    
+    parameters:
+      - name: "airr_results"
+        type: "string"
+        required: true
+        description: "AIRR format results from V(D)J analysis. Can be: (1) Array of AIRR records, or (2) Local file path (CSV/TSV/JSON)"
+        example: "/data/sessions/{session_id}/output/airr_results.tsv"
+    
+    returns:
+      type: "csv"
+      description: "CDR3 extraction results"
+      schema:
+        - name: "sequence_id"
+          type: "string"
+          description: "Sequence identifier"
+        - name: "cdr3"
+          type: "string"
+          description: "CDR3 sequence"
+        - name: "v_gene"
+          type: "string"
+          description: "V gene family"
+        - name: "j_gene"
+          type: "string"
+          description: "J gene family"
+
+# ============================================================
+# FILE_COLUMN_SPECS - Input File Column Specifications
+# ============================================================
+file_column_specs:
+  description: "Column requirements for input files"
+  
+  fasta_requirements:
+    description: "FASTA file format requirements"
+    format: "Standard FASTA format with sequence headers starting with >"
+  
+  csv_requirements:
+    description: "CSV file column requirements (auto-converted to FASTA)"
+    bcr_columns:
+      heavy_chain: ["Heavy_DNA", "heavy_dna", "Heavy", "VH", "sequence"]
+      light_chain: ["Light_DNA", "light_dna", "Light", "VL"]
+    tcr_columns:
+      alpha_chain: ["alpha_dna", "TRA", "CDR3a", "tra_seq"]
+      beta_chain: ["beta_dna", "TRB", "CDR3b", "trb_seq"]
+
+# ============================================================
+# CONSTRAINTS - Constraints and Limitations
+# ============================================================
+constraints:
+  supported_organisms:
+    - id: "human"
+      description: "Human (Homo sapiens)"
+    - id: "mouse"
+      description: "Mouse (Mus musculus)"
+    - id: "rhesus_monkey"
+      description: "Rhesus monkey (Macaca mulatta)"
+  
+  receptor_types:
+    - id: "Ig"
+      description: "Immunoglobulin (BCR/antibody)"
+      loci: ["IGH", "IGK", "IGL"]
+    - id: "TCR"
+      description: "T cell receptor"
+      loci: ["TRA", "TRB", "TRG", "TRD"]
+  
+  limitations:
+    - "Large files are automatically split into batches"
+    - "Timeout should be increased for very large datasets"
+    - "Requires valid FASTA or CSV input format"
+
+# ============================================================
+# EXTERNAL_REFS - External References
+# ============================================================
+external_refs:
+  frameworks:
+    - name: "IgBLAST"
+      version: ">=1.17"
+      purpose: "V(D)J sequence analysis"
+    - name: "ChangeO"
+      version: ">=1.0"
+      purpose: "AIRR format processing and SHM analysis"
+  
+  dependencies:
+    - service: "nettcr"
+      tools: ["predict_tcr_binding_fast", "predict_tcr_binding_complete"]
+      description: "TCR-peptide binding prediction"
+    - service: "tcell"
+      tools: ["integrate_tcr_data_complete"]
+      description: "TCR data integration"
+    - service: "bcell"
+      tools: ["integrate_bcr_data_complete"]
+      description: "BCR data integration"
+  
+  references:
+    - title: "IgBLAST: An immunoglobulin variable domain sequence analysis tool"
+      authors: "Ye et al."
+      journal: "Nucleic Acids Research"
+      year: 2013
+      doi: "10.1093/nar/gkt382"
+    
+    - title: "Change-O: A toolkit for analyzing large-scale B cell immunoglobulin repertoire data"
+      authors: "Gupta et al."
+      journal: "Journal of Immunology"
+      year: 2015
+      doi: "10.4049/jimmunol.1402969"
+

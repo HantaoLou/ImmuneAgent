@@ -48,6 +48,23 @@ from nodes.subagents.code_act.revision import (
     create_revision_plan,
     execute_revision_plan
 )
+from nodes.subagents.code_act.todo_list import (
+    TodoTask,
+    TodoTaskStatus,
+    TodoTaskType,
+    TodoList,
+    TodoListManager
+)
+# P2: Import File Parameter Table
+from nodes.subagents.code_act.file_param_table import (
+    FileParameter,
+    FileParameterTable,
+    FileSource,
+    get_parameter_inference_prompt,
+    create_file_param_from_user_input,
+    create_file_param_from_task_output,
+    extract_file_info_from_task_result
+)
 
 # ===================== CodeAct Subgraph State Model =====================
 
@@ -103,6 +120,32 @@ class CodeActState(BaseModel):
     
     # Parent state reference
     parent_state: Optional[GlobalState] = Field(default=None, description="Main graph state reference")
+    
+    # ===================== Todo List Fields (New Architecture) =====================
+    # Todo list management
+    todo_list_path: Optional[str] = Field(default=None, description="Path to todo-list.md in sandbox")
+    todo_list: Optional[TodoList] = Field(default=None, description="Cached todo list")
+    current_todo_task: Optional[TodoTask] = Field(default=None, description="Current task being executed")
+    todo_manager: Optional[TodoListManager] = Field(default=None, description="Todo list manager instance")
+    
+    # ===================== Data Exploration Fields =====================
+    # Data exploration results (populated by explore_data_node)
+    data_exploration_result: Optional[Dict[str, Any]] = Field(default=None, description="Data exploration result (columns, dtypes, sample, etc.)")
+    needs_data_exploration: bool = Field(default=False, description="Whether this task needs data exploration")
+    explored_columns: Optional[List[str]] = Field(default=None, description="Discovered column names from exploration")
+    
+    # ===================== Output Validation Fields =====================
+    # Output validation results (populated by validate_output_node)
+    output_validation_result: Optional[Dict[str, Any]] = Field(default=None, description="Output validation result")
+    output_constraints: Optional[Dict[str, Dict[str, Any]]] = Field(default=None, description="Output constraints from task parameters")
+    validation_warnings: List[str] = Field(default_factory=list, description="Validation warnings collected")
+    
+    # ===================== File Parameter Table Fields (P2) =====================
+    # File parameter table for dynamic parameter inference
+    file_parameter_table: Optional[FileParameterTable] = Field(default=None, description="File parameter table for the session")
+    inferred_parameters: Optional[Dict[str, Any]] = Field(default=None, description="Parameters inferred by LLM")
+    user_input_context: Optional[str] = Field(default=None, description="Original user input for context")
+    completed_tasks_summary: List[Dict[str, Any]] = Field(default_factory=list, description="Summary of completed tasks")
 
 
 # ===================== Trajectory Recording Helper Functions =====================
@@ -320,7 +363,14 @@ def _get_sandbox_provider() -> str:
 
 
 def _parse_execution_output(stdout: str, stderr: str, returncode: Optional[int]) -> Dict[str, Any]:
-    """Parse CodeAct execution output from stdout/stderr."""
+    """Parse CodeAct execution output from stdout/stderr.
+    
+    Handles the following cases:
+    1. Normal execution with __CODEACT_RESULT__ marker in stdout
+    2. Execution failure with non-zero returncode
+    3. Import/Runtime errors in stderr even if returncode is 0/None
+    4. Missing dependencies (ModuleNotFoundError, ImportError)
+    """
     result_marker = "__CODEACT_RESULT__"
     parsed_result = None
     for line in (stdout or "").splitlines():
@@ -331,18 +381,89 @@ def _parse_execution_output(stdout: str, stderr: str, returncode: Optional[int])
             except Exception:
                 parsed_result = payload
 
+    # Detect errors from stderr even if returncode is 0/None
+    # This handles cases where the sandbox doesn't properly report return codes
+    stderr_error_type = None
+    stderr_error_msg = None
+    
+    if stderr:
+        stderr_lower = stderr.lower()
+        # Detect common Python errors from stderr
+        if "modulenotfounderror" in stderr_lower or "no module named" in stderr_lower:
+            stderr_error_type = "ModuleNotFoundError"
+            # Extract the missing module name
+            import re
+            match = re.search(r"No module named '([^']+)'", stderr, re.IGNORECASE)
+            if match:
+                stderr_error_msg = f"Missing dependency: {match.group(1)}"
+            else:
+                stderr_error_msg = "Missing Python dependency"
+        elif "importerror" in stderr_lower:
+            stderr_error_type = "ImportError"
+            stderr_error_msg = stderr.split('\n')[-1] if '\n' in stderr else stderr[:500]
+        elif "traceback" in stderr_lower and "error" in stderr_lower:
+            # Generic error with traceback
+            lines = stderr.strip().split('\n')
+            # Get the last line which usually contains the error
+            for line in reversed(lines):
+                if line.strip() and ('error' in line.lower() or 'exception' in line.lower()):
+                    stderr_error_msg = line.strip()
+                    # Try to extract error type
+                    if ':' in line:
+                        error_parts = line.split(':', 1)
+                        stderr_error_type = error_parts[0].strip()
+                    break
+            if not stderr_error_msg:
+                stderr_error_msg = stderr[-500:] if len(stderr) > 500 else stderr
+
     error = None
     error_type = None
+    
+    # IMPORTANT: Always check stderr for errors, regardless of parsed_result
+    # This handles cases where the code crashed before __CODEACT_RESULT__ was printed
+    # or where the sandbox doesn't properly report return codes
+    
     if isinstance(parsed_result, dict):
         status = parsed_result.get("status", "success")
         output = parsed_result.get("output")
         error = parsed_result.get("error")
         error_type = parsed_result.get("error_type")
+        
+        # CRITICAL FIX: Check stderr for errors even if parsed_result indicates success
+        # This handles the case where import fails before the try-except block
+        if stderr_error_type or stderr_error_msg:
+            # stderr has error indicators - this is a real failure
+            if status == "success":
+                # Result says success but stderr has errors - trust stderr
+                status = "failed"
+                error = stderr_error_msg or error
+                error_type = stderr_error_type or error_type
+                print(f"  ⚠ Detected error in stderr despite 'success' status: {error_type}: {error}")
+            elif not error:
+                # Result says failed but no error details - use stderr info
+                error = stderr_error_msg or "Execution failed"
+                error_type = error_type or stderr_error_type
     else:
-        status = "failed" if (returncode not in (0, None)) else "success"
-        output = parsed_result or ((stdout or "")[-1000:] if stdout else (stderr or "")[-1000:])
-        if returncode not in (0, None):
-            error = ((stderr or "")[-2000:] if stderr else (stdout or "")[-2000:]) or "Execution failed"
+        # No __CODEACT_RESULT__ found - execution likely failed before completing
+        # Check returncode first
+        returncode_indicates_failure = returncode is not None and returncode != 0
+        
+        # Also check if stderr has errors (even if returncode is 0/None)
+        stderr_indicates_failure = stderr_error_type is not None or stderr_error_msg is not None
+        
+        if returncode_indicates_failure or stderr_indicates_failure:
+            status = "failed"
+            output = (stdout or "")[-1000:] if stdout else None
+            error = stderr_error_msg or ((stderr or "")[-2000:] if stderr else (stdout or "")[-2000:]) or "Execution failed"
+            error_type = stderr_error_type
+        else:
+            # No explicit error, but also no result marker - this might be unexpected
+            # Return the stdout as output but mark as potentially incomplete
+            status = "success"
+            output = parsed_result or ((stdout or "")[-1000:] if stdout else None)
+            if stderr:
+                # Include warning about stderr even in "success" case
+                error = f"Warning: stderr output detected: {stderr[-500:]}" if len(stderr) > 500 else f"Warning: stderr output detected: {stderr}"
 
     return {
         "status": status,
@@ -388,6 +509,77 @@ def _ensure_code_executable(code: str, has_sandbox: bool, sandbox_dir: str = Non
         Executable code
     """
     result_marker = "__CODEACT_RESULT__"
+    
+    # Auto-install wrapper for missing dependencies (especially for OpenSandbox)
+    # Uses uv for faster installation (10-100x faster than pip)
+    auto_install_wrapper = '''
+# Auto-install missing dependencies wrapper (uses uv for speed)
+import sys
+import subprocess
+import shutil
+
+def _auto_install_if_missing(module_name, package_name=None):
+    """Try to import a module, install if missing using uv (fallback to pip)."""
+    try:
+        __import__(module_name)
+        return True
+    except ImportError:
+        package = package_name or module_name
+        print(f"[AutoInstall] Installing missing dependency: {package}")
+        
+        # Try uv first (much faster than pip)
+        if shutil.which("uv"):
+            try:
+                subprocess.check_call(
+                    ["uv", "pip", "install", "--system", "-q", package],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                print(f"[AutoInstall] Successfully installed via uv: {package}")
+                return True
+            except Exception as e:
+                print(f"[AutoInstall] uv install failed, trying pip: {e}")
+        
+        # Fallback to pip with --break-system-packages for Ubuntu 24.04+
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "-q", "--break-system-packages", package],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            print(f"[AutoInstall] Successfully installed via pip: {package}")
+            return True
+        except Exception as e:
+            print(f"[AutoInstall] Failed to install {package}: {e}")
+            return False
+
+def _ensure_common_dependencies():
+    """Ensure common data science dependencies are available."""
+    common_packages = [
+        ("pandas", "pandas"),
+        ("numpy", "numpy"),
+        ("sklearn", "scikit-learn"),
+        ("scipy", "scipy"),
+    ]
+    for module, package in common_packages:
+        _auto_install_if_missing(module, package)
+
+# Auto-detect and install imports from code
+# IMPORTANT: Call this BEFORE any imports that might need these packages
+_ensure_common_dependencies()
+'''
+
+    # Check if code has common imports that might need auto-installation
+    needs_auto_install = any([
+        "import pandas" in code,
+        "from pandas" in code,
+        "import numpy" in code,
+        "from numpy" in code,
+        "import sklearn" in code,
+        "from sklearn" in code,
+        "import scipy" in code,
+        "from scipy" in code,
+    ])
 
     # If code already contains result setting, return directly
     if "result" in code and ("=" in code.split("result")[0] or "result = {" in code):
@@ -420,6 +612,11 @@ except Exception:
     except Exception:
         pass
 """
+        
+        # Add auto-install wrapper if needed (for sandbox execution)
+        if needs_auto_install and has_sandbox:
+            code = auto_install_wrapper + code
+        
         return code
     
     # If code doesn't have result setting, add it
@@ -451,6 +648,10 @@ except Exception:
     except Exception:
         pass
 """
+    
+    # Add auto-install wrapper if needed (for sandbox execution)
+    if needs_auto_install and has_sandbox:
+        code = auto_install_wrapper + code
     
     return code
 
@@ -632,6 +833,347 @@ def _activate_venv_in_sys_path(venv_python: Path) -> None:
         print(f"  ⚠ Warning: Virtual environment activated, but cannot import langchain-mcp-adapters")
 
 
+# ===================== Data Exploration Node =====================
+
+DATA_EXPLORATION_PROMPT = """You are a data exploration expert. Analyze the provided data file and extract its structure.
+
+# Task
+Explore the data file and return a JSON object with the following information:
+- columns: list of column names
+- dtypes: data types of each column
+- shape: (rows, columns)
+- sample_data: first 3 rows as a list of dictionaries
+- null_counts: number of null values per column
+- suggestions: brief suggestions for which columns might be useful for the task
+
+# Code Template
+```python
+import pandas as pd
+import json
+import os
+
+file_path = "{file_path}"
+task_description = "{task_description}"
+
+result = {{"status": "failed", "error": None, "output": None}}
+
+try:
+    if not os.path.exists(file_path):
+        result["error"] = f"File not found: {{file_path}}"
+    else:
+        # Determine file type and read
+        if file_path.endswith('.csv'):
+            df = pd.read_csv(file_path)
+        elif file_path.endswith('.tsv') or file_path.endswith('.txt'):
+            df = pd.read_csv(file_path, sep='\\t')
+        elif file_path.endswith('.xlsx') or file_path.endswith('.xls'):
+            df = pd.read_excel(file_path)
+        elif file_path.endswith('.json'):
+            df = pd.read_json(file_path)
+        else:
+            # Try CSV as default
+            df = pd.read_csv(file_path)
+        
+        # Extract structure
+        exploration = {{
+            "columns": list(df.columns),
+            "dtypes": {{col: str(dtype) for col, dtype in df.dtypes.items()}},
+            "shape": list(df.shape),
+            "sample_data": df.head(3).to_dict(orient='records'),
+            "null_counts": {{col: int(df[col].isna().sum()) for col in df.columns}},
+            "unique_counts": {{col: int(df[col].nunique()) for col in df.columns}}
+        }}
+        
+        # Print exploration results for debugging
+        print(f"[Data Exploration] Columns: {{exploration['columns']}}")
+        print(f"[Data Exploration] Shape: {{exploration['shape']}}")
+        print(f"[Data Exploration] Dtypes: {{exploration['dtypes']}}")
+        
+        result["status"] = "success"
+        result["output"] = exploration
+        
+except Exception as e:
+    result["error"] = str(e)
+    print(f"[Data Exploration Error] {{e}}")
+
+# Output result as JSON
+print("__EXPLORATION_RESULT__" + json.dumps(result, ensure_ascii=False, default=str))
+```
+
+Return only Python code."""
+
+
+def codeact_explore_data_node(state: CodeActState) -> CodeActState:
+    """
+    CodeAct node: Explore data structure
+    
+    This node explores input data files to understand their structure before code generation.
+    This helps the code generation node to:
+    1. Know exact column names (no guessing!)
+    2. Understand data types
+    3. Identify potential issues
+    
+    The exploration is done by generating and executing a simple exploration script.
+    """
+    import time
+    
+    # Check if task needs data exploration
+    parameters = state.parameters or {}
+    
+    # Determine if data exploration is needed
+    needs_exploration = False
+    file_to_explore = None
+    
+    # Check for common data file parameters
+    data_file_params = ['prediction_file', 'input_file', 'data_file', 'file_path', 'csv_file', 'input_path']
+    for param in data_file_params:
+        if param in parameters and parameters[param]:
+            file_to_explore = parameters[param]
+            needs_exploration = True
+            break
+    
+    # Also check inputs list for file paths
+    if not needs_exploration and state.inputs:
+        for inp in state.inputs:
+            if isinstance(inp, str) and any(ext in inp.lower() for ext in ['.csv', '.tsv', '.xlsx', '.json']):
+                file_to_explore = inp
+                needs_exploration = True
+                break
+    
+    state.needs_data_exploration = needs_exploration
+    
+    if not needs_exploration:
+        print(f"  ℹ Data exploration: Not needed for this task")
+        return state
+    
+    print(f"  🔍 Starting data exploration for: {file_to_explore}")
+    
+    # Check sandbox availability
+    sandbox_provider = _get_sandbox_provider()
+    has_sandbox, sandbox_dir = _check_sandbox_available(state, provider=sandbox_provider)
+    
+    if not has_sandbox:
+        print(f"  ⚠ Data exploration: No sandbox available, skipping")
+        return state
+    
+    # Generate exploration code
+    exploration_code = DATA_EXPLORATION_PROMPT.format(
+        file_path=file_to_explore,
+        task_description=state.task_description.replace('"', '\\"')
+    )
+    
+    # Ensure code is executable
+    exploration_code = _ensure_code_executable(exploration_code, has_sandbox=has_sandbox, sandbox_dir=sandbox_dir)
+    
+    # Execute exploration code
+    print(f"  ▶ Executing data exploration...")
+    
+    try:
+        # Use the same execution mechanism
+        if sandbox_provider == "opensandbox":
+            from utils.opensandbox_executor import run_code_in_opensandbox_sync
+            
+            timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "180"))
+            existing_sandbox_id = None
+            if state.parent_state:
+                merged_result = getattr(state.parent_state, 'merged_result', None) or {}
+                existing_sandbox_id = merged_result.get('opensandbox_id')
+            
+            exploration_result = run_code_in_opensandbox_sync(
+                code=exploration_code,
+                task_id=f"{state.task.task_id}_explore",
+                timeout_seconds=30,  # Short timeout for exploration
+                existing_sandbox_id=existing_sandbox_id,
+                keep_alive=True
+            )
+            
+            stdout = exploration_result.get("stdout", "")
+        else:
+            # Local sandbox execution
+            import subprocess
+            sandbox_path = Path(sandbox_dir)
+            sandbox_path.mkdir(parents=True, exist_ok=True)
+            code_file = sandbox_path / f"explore_{state.task.task_id}.py"
+            code_file.write_text(exploration_code, encoding="utf-8")
+            
+            result = subprocess.run(
+                [sys.executable, str(code_file)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(sandbox_path)
+            )
+            stdout = result.stdout
+        
+        # Parse exploration result
+        import json
+        if "__EXPLORATION_RESULT__" in stdout:
+            result_json = stdout.split("__EXPLORATION_RESULT__")[-1].strip()
+            try:
+                parsed_result = json.loads(result_json)
+                if parsed_result.get("status") == "success":
+                    state.data_exploration_result = parsed_result.get("output", {})
+                    state.explored_columns = state.data_exploration_result.get("columns", [])
+                    print(f"  ✅ Data exploration successful!")
+                    print(f"     Columns found: {state.explored_columns}")
+                    print(f"     Shape: {state.data_exploration_result.get('shape')}")
+                else:
+                    print(f"  ⚠ Data exploration failed: {parsed_result.get('error')}")
+            except json.JSONDecodeError as e:
+                print(f"  ⚠ Failed to parse exploration result: {e}")
+        else:
+            print(f"  ⚠ No exploration result found in output")
+            
+    except Exception as e:
+        print(f"  ⚠ Data exploration error: {e}")
+    
+    return state
+
+
+# ===================== Output Validation Node =====================
+
+def codeact_validate_output_node(state: CodeActState) -> CodeActState:
+    """
+    CodeAct node: Validate output
+    
+    This node validates the execution output against expected constraints.
+    If output violates constraints, it can trigger a retry with warnings.
+    
+    Constraints can be:
+    1. Provided in task parameters (output_constraints)
+    2. Inferred from task type (e.g., F1 score should be > 0)
+    """
+    import time
+    
+    execution_result = state.execution_result
+    
+    if not execution_result:
+        print(f"  ℹ Output validation: No execution result to validate")
+        return state
+    
+    if execution_result.get("status") != "success":
+        print(f"  ℹ Output validation: Skipping (execution failed)")
+        return state
+    
+    output = execution_result.get("output", {})
+    
+    if not output or not isinstance(output, dict):
+        print(f"  ℹ Output validation: No structured output to validate")
+        return state
+    
+    print(f"  🔍 Starting output validation...")
+    
+    # Get constraints from task parameters or state
+    parameters = state.parameters or {}
+    constraints = parameters.get("output_constraints") or state.output_constraints or {}
+    
+    # If no explicit constraints, try to infer from task description
+    if not constraints:
+        constraints = _infer_output_constraints(state.task_description, output)
+    
+    if not constraints:
+        print(f"  ℹ Output validation: No constraints defined")
+        return state
+    
+    # Validate each constraint
+    warnings = []
+    all_passed = True
+    
+    for field_name, constraint in constraints.items():
+        if field_name not in output:
+            continue
+            
+        value = output.get(field_name)
+        min_val = constraint.get("min")
+        max_val = constraint.get("max")
+        description = constraint.get("description", "")
+        
+        # Check min constraint
+        if min_val is not None and value is not None:
+            if value < min_val:
+                warning = f"{field_name}={value} is below minimum {min_val}"
+                if description:
+                    warning += f" ({description})"
+                warnings.append(warning)
+                all_passed = False
+        
+        # Check max constraint
+        if max_val is not None and value is not None:
+            if value > max_val:
+                warning = f"{field_name}={value} exceeds maximum {max_val}"
+                if description:
+                    warning += f" ({description})"
+                warnings.append(warning)
+                all_passed = False
+        
+        # Check for suspicious zero values (common error indicator)
+        if constraint.get("non_zero", False) and value == 0:
+            warning = f"{field_name} is 0, which may indicate incorrect column selection"
+            warnings.append(warning)
+            all_passed = False
+    
+    # Store validation result
+    state.output_validation_result = {
+        "passed": all_passed,
+        "warnings": warnings,
+        "constraints_checked": list(constraints.keys())
+    }
+    state.validation_warnings = warnings
+    
+    if all_passed:
+        print(f"  ✅ Output validation passed")
+    else:
+        print(f"  ⚠ Output validation warnings:")
+        for warning in warnings:
+            print(f"     - {warning}")
+        
+        # If all scores are 0, add to error for potential retry
+        output_values = [v for k, v in output.items() if isinstance(v, (int, float))]
+        if output_values and all(v == 0 for v in output_values):
+            state.execution_result["validation_warning"] = (
+                "All output values are 0. This may indicate incorrect column selection. "
+                "Please verify that the correct columns are being used for computation."
+            )
+    
+    return state
+
+
+def _infer_output_constraints(task_description: str, output: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """
+    Infer output constraints from task description and output structure.
+    
+    This provides automatic constraint inference for common task types.
+    """
+    constraints = {}
+    task_lower = task_description.lower()
+    
+    # F1/scoring tasks
+    if "f1" in task_lower or "score" in task_lower or "metric" in task_lower:
+        if "f1_score" in output or "f1" in output:
+            constraints["f1_score"] = {"min": 0.0, "max": 1.0, "non_zero": True, 
+                                       "description": "F1 score should be between 0 and 1"}
+        if "precision" in output:
+            constraints["precision"] = {"min": 0.0, "max": 1.0}
+        if "recall" in output:
+            constraints["recall"] = {"min": 0.0, "max": 1.0}
+        if "accuracy" in output:
+            constraints["accuracy"] = {"min": 0.0, "max": 1.0, "non_zero": True}
+    
+    # Count/quantity tasks
+    if "count" in task_lower or "number" in task_lower or "total" in task_lower:
+        for key in output:
+            if "count" in key.lower() or "number" in key.lower() or "total" in key.lower():
+                constraints[key] = {"min": 0}
+    
+    # Percentage tasks
+    if "percentage" in task_lower or "ratio" in task_lower or "rate" in task_lower:
+        for key in output:
+            if any(term in key.lower() for term in ["percentage", "ratio", "rate", "pct", "%"]):
+                constraints[key] = {"min": 0.0, "max": 100.0}
+    
+    return constraints
+
+
 def codeact_generate_code_node(state: CodeActState) -> CodeActState:
     """
     CodeAct node: Generate code
@@ -790,12 +1332,22 @@ except Exception as e:
         # codeact mode: generate code based on task description
         task_desc = state.task_description
         inputs = state.inputs
+        parameters = state.parameters
+        
+        # Extract output_constraints from task parameters (if provided)
+        output_constraints = parameters.get("output_constraints") if parameters else None
+        
+        # Extract column_hints from task parameters (if provided)
+        # This enables semantic column matching instead of fuzzy keyword matching
+        column_hints = parameters.get("column_hints") if parameters else None
         
         # Use LLM to generate code
         user_prompt = get_codeact_user_prompt(
             task_description=task_desc,
             inputs=inputs,
-            outputs=None
+            outputs=None,
+            output_constraints=output_constraints,
+            column_hints=column_hints
         )
         
         # Fallback code
@@ -937,7 +1489,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
                 }
                 return state
 
-            timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "120"))
+            timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "180"))  # Default: 3 minutes
             
             # Try to reuse existing sandbox from session to preserve files across task executions
             existing_sandbox_id = None
@@ -991,7 +1543,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             import os
             from pathlib import Path
             
-            timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "120"))
+            timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "180"))  # Default: 3 minutes
             print(f"  🔄 Starting code execution (local sandbox subprocess mode, timeout={timeout_seconds}s)...")
             print(f"  ℹ Code length: {len(code)} characters")
             
@@ -1296,54 +1848,684 @@ def codeact_revision_node(state: CodeActState) -> CodeActState:
     return state
 
 
-def build_codeact_subgraph():
-    """Build CodeAct subgraph"""
+# ===================== Todo List Management Nodes (New Architecture) =====================
+
+def read_todo_node(state: CodeActState) -> CodeActState:
+    """
+    Read todo-list.md from sandbox directory
+    
+    This node reads the task list and caches it in the state.
+    If no todo-list.md exists, it creates an empty one.
+    """
+    import json
+    
+    print("=" * 60)
+    print("📖 [Todo] Reading todo-list.md from sandbox...")
+    print("=" * 60)
+    
+    # Determine sandbox directory
+    # IMPORTANT: Use string operations to preserve Unix-style paths for remote sandbox
+    sandbox_dir = None
+    if state.todo_list_path:
+        # Extract directory from todo_list_path using string operations
+        # to avoid Windows path conversion
+        todo_path = state.todo_list_path
+        if '/' in todo_path:
+            sandbox_dir = todo_path.rsplit('/', 1)[0]  # Unix-style
+        else:
+            sandbox_dir = str(Path(todo_path).parent)  # Fallback for local paths
+    elif state.parent_state and hasattr(state.parent_state, 'session_id'):
+        session_id = state.parent_state.session_id
+        sandbox_dir = f"/data/sessions/{session_id}"
+    elif state.parameters.get("sandbox_dir"):
+        sandbox_dir = state.parameters.get("sandbox_dir")
+    else:
+        # Use default sandbox directory
+        import tempfile
+        sandbox_dir = tempfile.gettempdir()
+    
+    print(f"  📁 Sandbox directory: {sandbox_dir}")
+    
+    # Get opensandbox_id for remote operations
+    opensandbox_id = None
+    if state.parent_state:
+        opensandbox_id = getattr(state.parent_state, 'opensandbox_id', None)
+        if not opensandbox_id:
+            opensandbox_id = state.parent_state.merged_result.get('opensandbox_id')
+    
+    if opensandbox_id:
+        print(f"  🔗 OpenSandbox ID: {opensandbox_id}")
+    
+    # Initialize todo manager with opensandbox_id for remote operations
+    state.todo_manager = TodoListManager(sandbox_dir, opensandbox_id=opensandbox_id)
+    
+    # Check if todo-list.md exists
+    if state.todo_manager.todo_list_exists():
+        try:
+            state.todo_list = state.todo_manager.read_todo_list()
+            print(f"  ✓ Todo list loaded: {len(state.todo_list.tasks)} tasks")
+            
+            # Show progress summary
+            summary = state.todo_manager.get_progress_summary(state.todo_list)
+            print(f"  📊 Progress: {summary}")
+        except Exception as e:
+            print(f"  ⚠ Failed to parse todo list: {e}")
+            state.todo_list = None
+    else:
+        print(f"  ℹ No todo-list.md found, will check for task from state")
+        state.todo_list = None
+    
+    # Store todo list path - use string version to preserve Unix-style paths
+    state.todo_list_path = state.todo_manager.todo_list_path_str
+    
+    return state
+
+
+def select_next_task_node(state: CodeActState) -> CodeActState:
+    """
+    Select the next pending task from the todo list
+    
+    Selection logic:
+    1. If todo list exists, select next pending task
+    2. If no todo list, use the task from state (backward compatibility)
+    3. Update state.current_todo_task
+    """
+    print("=" * 60)
+    print("🎯 [Todo] Selecting next task...")
+    print("=" * 60)
+    
+    # Case 1: Todo list exists
+    if state.todo_list and state.todo_manager:
+        next_task = state.todo_manager.get_next_pending_task(state.todo_list)
+        
+        if next_task:
+            state.current_todo_task = next_task
+            print(f"  ✓ Selected task: {next_task.id}")
+            print(f"     Type: {next_task.type}")
+            print(f"     Priority: {next_task.priority}")
+            print(f"     Description: {next_task.description[:100]}...")
+            
+            # Update task status to IN_PROGRESS
+            state.todo_manager.update_task_status(
+                next_task.id,
+                TodoTaskStatus.IN_PROGRESS
+            )
+            
+            # Map TodoTask to CodeActState fields
+            state.task_description = next_task.description
+            state.parameters = {**state.parameters, **next_task.parameters}
+            
+            # Set execution mode based on task type
+            if next_task.type == TodoTaskType.MCP_TOOL:
+                state.execution_mode = CodeActExecutionMode.MCP_TOOL
+            elif next_task.type == TodoTaskType.FILE_CONVERT:
+                state.execution_mode = CodeActExecutionMode.CODEACT
+            else:
+                state.execution_mode = CodeActExecutionMode.CODEACT
+            
+            return state
+        else:
+            print("  ℹ No pending tasks found in todo list")
+    
+    # Case 2: No todo list or no pending tasks - use existing task (backward compatibility)
+    if state.task and state.task.content:
+        print(f"  ℹ Using task from state (backward compatibility)")
+        print(f"     Task ID: {state.task.task_id}")
+        print(f"     Description: {state.task.content[:100]}...")
+        
+        # Create a TodoTask from the existing task
+        state.current_todo_task = TodoTask(
+            id=state.task.task_id,
+            type=TodoTaskType.GENERAL,
+            status=TodoTaskStatus.IN_PROGRESS,
+            priority=5,
+            description=state.task.content,
+            parameters=state.parameters
+        )
+        
+        return state
+    
+    # Case 3: No task at all
+    print("  ⚠ No task found - nothing to execute")
+    state.current_todo_task = None
+    
+    return state
+
+
+# ===================== P2: Helper Functions =====================
+
+def _build_file_parameter_table_from_parent_state(
+    parent_state: Any,
+    session_id: str = "unknown"
+) -> FileParameterTable:
+    """
+    Build FileParameterTable from parent_state.extracted_parameters
+    
+    Args:
+        parent_state: GlobalState containing extracted_parameters
+        session_id: Session ID for the table
+        
+    Returns:
+        FileParameterTable with files from extracted_parameters
+    """
+    table = FileParameterTable(session_id=session_id)
+    
+    if not parent_state:
+        return table
+    
+    # Get extracted_parameters from parent_state
+    extracted_params = None
+    if hasattr(parent_state, 'extracted_parameters'):
+        extracted_params = parent_state.extracted_parameters
+    elif isinstance(parent_state, dict):
+        extracted_params = parent_state.get('extracted_parameters', {})
+    
+    if not extracted_params:
+        return table
+    
+    # Also try merged_result as fallback
+    if not extracted_params and hasattr(parent_state, 'merged_result'):
+        merged = parent_state.merged_result or {}
+        extracted_params = merged.get('extracted_parameters', {})
+    
+    # Extract files from extracted_parameters
+    files_dict = extracted_params.get('files', {})
+    
+    for key, file_info in files_dict.items():
+        # Handle different file_info formats
+        if isinstance(file_info, dict):
+            path = file_info.get('sandbox_path') or file_info.get('path', '')
+            if not path:
+                continue
+            
+            file_type = file_info.get('format') or file_info.get('file_type', '')
+            if not file_type and path:
+                file_type = path.split('.')[-1] if '.' in path else 'unknown'
+            
+            # Build description from available info
+            desc_parts = []
+            if file_info.get('data_type'):
+                desc_parts.append(f"Data type: {file_info['data_type']}")
+            if file_info.get('row_count'):
+                desc_parts.append(f"Rows: {file_info['row_count']}")
+            if file_info.get('columns'):
+                desc_parts.append(f"Columns: {len(file_info['columns'])}")
+            
+            description = file_info.get('description') or '; '.join(desc_parts) or f"User file: {key}"
+            
+            # Create FileParameter
+            fp = create_file_param_from_user_input(
+                key=key,
+                path=path,
+                description=description,
+                file_type=file_type,
+                metadata={
+                    'columns': file_info.get('columns', []),
+                    'row_count': file_info.get('row_count'),
+                    'data_type': file_info.get('data_type'),
+                    'can_be_used_as': file_info.get('can_be_used_as', [])
+                }
+            )
+            table.add_file(fp)
+    
+    print(f"  📁 Built FileParameterTable from parent_state: {len(table.files)} files")
+    return table
+
+
+# ===================== P2: Parameter Inference Node =====================
+
+def infer_parameters_node(state: CodeActState) -> CodeActState:
+    """
+    Infer parameters for the current task using LLM
+    
+    This node:
+    1. Gets the file parameter table (priority: parent_state > todo_manager)
+    2. Uses LLM to infer parameter values based on:
+       - User's original input
+       - File parameter table (available files with descriptions)
+       - Completed tasks summary
+       - Current tool's parameter requirements
+    3. Updates state.parameters with inferred values
+    """
+    print("=" * 60)
+    print("🔮 [P2] Inferring parameters...")
+    print("=" * 60)
+    
+    # Skip if no current task
+    if not state.current_todo_task:
+        print("  ⚠ No current task, skipping parameter inference")
+        return state
+    
+    # PRIORITY 1: Build file parameter table from parent_state.extracted_parameters
+    # This is the primary source - parameters are stored in GlobalState, not in sandbox files
+    if state.parent_state:
+        session_id = "unknown"
+        if hasattr(state.parent_state, 'session_id'):
+            session_id = state.parent_state.session_id or "unknown"
+        state.file_parameter_table = _build_file_parameter_table_from_parent_state(
+            state.parent_state, 
+            session_id=session_id
+        )
+        print(f"  📁 File parameter table from parent_state: {len(state.file_parameter_table.files)} files")
+    
+    # PRIORITY 2: Fall back to todo_manager (for task outputs that were saved to file)
+    if (not state.file_parameter_table or len(state.file_parameter_table.files) == 0) and state.todo_manager:
+        state.file_parameter_table = state.todo_manager.get_file_parameter_table()
+        print(f"  📁 File parameter table from todo_manager: {len(state.file_parameter_table.files)} files")
+    
+    # Determine tool name and requirements
+    tool_name = state.current_todo_task.parameters.get("tool_name", "")
+    
+    # If this is not an MCP tool task, skip inference
+    if state.current_todo_task.type != TodoTaskType.MCP_TOOL:
+        print(f"  ℹ Task type is {state.current_todo_task.type}, using task parameters directly")
+        state.parameters = {**state.parameters, **state.current_todo_task.parameters}
+        return state
+    
+    # If no tool specified, skip inference
+    if not tool_name:
+        print("  ⚠ No tool_name specified, using task parameters directly")
+        state.parameters = {**state.parameters, **state.current_todo_task.parameters}
+        return state
+    
+    # Get tool parameter definitions
+    tool_params = _get_tool_parameter_definitions(tool_name, state.all_available_tools)
+    
+    if not tool_params:
+        print(f"  ⚠ No parameter definitions found for tool: {tool_name}")
+        state.parameters = {**state.parameters, **state.current_todo_task.parameters}
+        return state
+    
+    print(f"  🔧 Tool: {tool_name}")
+    print(f"  📋 Parameters to infer: {[p.get('name') for p in tool_params]}")
+    
+    # Use LLM to infer parameters
+    try:
+        llm = create_code_llm()
+        
+        if not llm:
+            print("  ⚠ LLM not available, using task parameters directly")
+            state.parameters = {**state.parameters, **state.current_todo_task.parameters}
+            return state
+        
+        # Build prompt
+        prompt = get_parameter_inference_prompt(
+            tool_name=tool_name,
+            tool_description=state.current_todo_task.description,
+            tool_parameters=tool_params,
+            user_input=state.user_input_context or "",
+            file_param_table=state.file_parameter_table or FileParameterTable(session_id="empty"),
+            completed_tasks=state.completed_tasks_summary
+        )
+        
+        # Call LLM
+        from langchain_core.messages import HumanMessage
+        response = llm.invoke([HumanMessage(content=prompt)])
+        response_text = response.content.strip()
+        
+        # Parse response
+        inferred = _parse_parameter_inference_response(response_text)
+        
+        if inferred:
+            print(f"  ✓ Inferred parameters:")
+            for key, value in inferred.items():
+                print(f"    - {key}: {value}")
+            
+            # Merge with existing parameters (task params as fallback)
+            state.inferred_parameters = inferred
+            state.parameters = {**state.current_todo_task.parameters, **inferred}
+        else:
+            print("  ⚠ Failed to parse inference response, using task parameters")
+            state.parameters = {**state.parameters, **state.current_todo_task.parameters}
+    
+    except Exception as e:
+        print(f"  ⚠ Parameter inference failed: {e}")
+        state.parameters = {**state.parameters, **state.current_todo_task.parameters}
+    
+    return state
+
+
+def _get_tool_parameter_definitions(tool_name: str, all_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Get parameter definitions for a tool from the available tools list"""
+    for tool in all_tools:
+        if tool.get("tool_name") == tool_name or tool.get("name") == tool_name:
+            return tool.get("parameters", [])
+    return []
+
+
+def _parse_parameter_inference_response(response_text: str) -> Optional[Dict[str, Any]]:
+    """Parse LLM response to extract inferred parameters"""
+    import re
+    
+    # Try to extract JSON from the response
+    try:
+        # Try direct JSON parse
+        result = json.loads(response_text.strip())
+        if isinstance(result, dict) and "parameters" in result:
+            return result["parameters"]
+        return result
+    except json.JSONDecodeError:
+        pass
+    
+    # Try to find JSON in code blocks
+    json_patterns = [
+        r'```json\s*(\{.*?\})\s*```',
+        r'```\s*(\{.*?\})\s*```',
+    ]
+    
+    for pattern in json_patterns:
+        matches = re.findall(pattern, response_text, re.DOTALL | re.IGNORECASE)
+        for match in matches:
+            try:
+                result = json.loads(match)
+                if isinstance(result, dict) and "parameters" in result:
+                    return result["parameters"]
+                elif isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                continue
+    
+    return None
+
+
+# ===================== P2: Extract File Parameters Node =====================
+
+def extract_file_params_node(state: CodeActState) -> CodeActState:
+    """
+    Extract file parameters from task execution result
+    
+    This node:
+    1. Analyzes the execution result for output files
+    2. Creates FileParameter entries for each output file
+    3. Updates the file parameter table
+    4. Saves the updated table
+    """
+    print("=" * 60)
+    print("📤 [P2] Extracting file parameters from result...")
+    print("=" * 60)
+    
+    # Skip if no execution result
+    if not state.execution_result:
+        print("  ℹ No execution result, skipping file extraction")
+        return state
+    
+    # Skip if execution failed
+    if state.execution_result.get("status") != "success":
+        print("  ℹ Execution failed, skipping file extraction")
+        return state
+    
+    # Get current task info
+    task_id = state.current_todo_task.id if state.current_todo_task else "unknown"
+    task_description = state.current_todo_task.description if state.current_todo_task else "Unknown task"
+    
+    # Extract file parameters from result
+    file_params = extract_file_info_from_task_result(
+        task_id=task_id,
+        task_description=task_description,
+        task_result=state.execution_result
+    )
+    
+    if not file_params:
+        print("  ℹ No output files detected in result")
+        return state
+    
+    print(f"  📁 Found {len(file_params)} output file(s):")
+    for fp in file_params:
+        print(f"    - [{fp.key}] {fp.path}")
+        print(f"      Description: {fp.description}")
+    
+    # Update file parameter table
+    if state.file_parameter_table:
+        for fp in file_params:
+            state.file_parameter_table.add_file(fp)
+        print(f"  ✓ Updated file parameter table")
+    else:
+        # Create new table if needed
+        session_id = "unknown"
+        if state.todo_list and state.todo_list.session:
+            session_id = state.todo_list.session.session_id
+        state.file_parameter_table = FileParameterTable(session_id=session_id)
+        for fp in file_params:
+            state.file_parameter_table.add_file(fp)
+    
+    # Save to TodoListManager
+    if state.todo_manager:
+        state.todo_manager.add_file_parameters(file_params)
+    
+    # Add to completed tasks summary for future inference
+    completed_summary = {
+        "id": task_id,
+        "description": task_description,
+        "result_summary": str(state.execution_result.get("output", ""))[:200],
+        "output_files": [fp.path for fp in file_params]
+    }
+    state.completed_tasks_summary.append(completed_summary)
+    
+    return state
+
+
+def update_todo_node(state: CodeActState) -> CodeActState:
+    """
+    Update task status in todo-list.md after execution
+    
+    Updates the current task's status based on execution result:
+    - Success -> COMPLETED
+    - Failure -> FAILED
+    """
+    print("=" * 60)
+    print("📝 [Todo] Updating task status...")
+    print("=" * 60)
+    
+    if not state.current_todo_task:
+        print("  ℹ No current task to update")
+        return state
+    
+    task_id = state.current_todo_task.id
+    
+    # Determine new status based on execution result
+    if state.execution_result:
+        if state.execution_result.get("status") == "success":
+            new_status = TodoTaskStatus.COMPLETED
+            # Ensure result is a dict (TodoTask.result requires Dict type)
+            raw_output = state.execution_result.get("output", {})
+            if isinstance(raw_output, dict):
+                result = raw_output
+            else:
+                # Wrap string output in a dict
+                result = {"output": raw_output}
+            error = None
+            print(f"  ✓ Task {task_id} completed successfully")
+        else:
+            new_status = TodoTaskStatus.FAILED
+            result = None
+            error = state.execution_result.get("error", "Unknown error")
+            print(f"  ✗ Task {task_id} failed: {error[:100]}...")
+    else:
+        new_status = TodoTaskStatus.FAILED
+        result = None
+        error = "No execution result"
+        print(f"  ✗ Task {task_id} failed: No execution result")
+    
+    # Update todo list if manager exists
+    if state.todo_manager:
+        success = state.todo_manager.update_task_status(
+            task_id,
+            new_status,
+            result=result,
+            error=error
+        )
+        if success:
+            print(f"  ✓ Todo list updated")
+        else:
+            print(f"  ⚠ Failed to update todo list")
+        
+        # Show progress summary
+        if state.todo_manager._cached_todo_list:
+            summary = state.todo_manager.get_progress_summary()
+            print(f"  📊 Progress: {summary}")
+    
+    # Update current task status
+    state.current_todo_task.status = new_status
+    state.current_todo_task.result = result
+    state.current_todo_task.error = error
+    
+    return state
+
+
+def has_pending_tasks(state: CodeActState) -> str:
+    """
+    Router: Check if there are more pending tasks
+    
+    Returns:
+        "continue": More pending tasks exist
+        "end": No more pending tasks
+    """
+    print("  🔍 Checking for pending tasks...")
+    
+    # Check todo list for pending tasks
+    if state.todo_list and state.todo_manager:
+        pending_count = state.todo_manager.get_pending_count(state.todo_list)
+        
+        if pending_count > 0:
+            print(f"  ℹ Found {pending_count} pending task(s), continuing...")
+            return "continue"
+        else:
+            print(f"  ℹ No more pending tasks, finishing...")
+            return "end"
+    
+    # No todo list - single task mode
+    print(f"  ℹ Single task mode, finishing...")
+    return "end"
+
+
+def build_codeact_subgraph(use_todo_mode: bool = True):
+    """
+    Build CodeAct subgraph
+    
+    Args:
+        use_todo_mode: If True, use new todo-list driven mode;
+                       If False, use legacy single-task mode
+    
+    New Architecture (todo mode) with P2 enhancements:
+    START → read_todo → select_next_task → infer_parameters → explore_data → generate_code → execute_code → extract_file_params → validate_output → update_todo → check_pending
+                                                                                                                                                                                      ↓
+                                                                                                                                                                         "continue" → select_next_task
+                                                                                                                                                                         "end" → END
+    
+    Legacy Architecture (single-task mode):
+    START → explore_data → generate_code → execute_code → validate_output → [success? END : revision → generate_code]
+    """
     graph = StateGraph(CodeActState)
     
+    # Add core nodes
+    graph.add_node("explore_data", codeact_explore_data_node)
     graph.add_node("generate_code", codeact_generate_code_node)
     graph.add_node("execute_code", codeact_execute_code_node)
+    graph.add_node("validate_output", codeact_validate_output_node)
     graph.add_node("revision", codeact_revision_node)
     
-    graph.add_edge(START, "generate_code")
-    graph.add_edge("generate_code", "execute_code")
+    # Add P2 nodes for parameter inference and file extraction
+    graph.add_node("infer_parameters", infer_parameters_node)
+    graph.add_node("extract_file_params", extract_file_params_node)
     
-    # After execution, decide whether to enter Revision based on result
-    def should_revise(state: CodeActState) -> str:
-        """Determine if Revision is needed"""
+    # Add todo management nodes (new architecture)
+    if use_todo_mode:
+        graph.add_node("read_todo", read_todo_node)
+        graph.add_node("select_next_task", select_next_task_node)
+        graph.add_node("update_todo", update_todo_node)
+        
+        # P2 Enhanced flow:
+        # START → read_todo → select_next_task → infer_parameters → explore_data → generate_code → execute_code → extract_file_params → validate_output → update_todo
+        graph.add_edge(START, "read_todo")
+        graph.add_edge("read_todo", "select_next_task")
+        graph.add_edge("select_next_task", "infer_parameters")  # P2: Add parameter inference
+        graph.add_edge("infer_parameters", "explore_data")      # P2: Then explore data
+        graph.add_edge("explore_data", "generate_code")
+    else:
+        # Legacy flow with parameter inference:
+        # START → infer_parameters → explore_data → generate_code
+        graph.add_edge(START, "infer_parameters")  # P2: Add parameter inference even in legacy mode
+        graph.add_edge("infer_parameters", "explore_data")
+    
+    graph.add_edge("generate_code", "execute_code")
+    graph.add_edge("execute_code", "extract_file_params")  # P2: Extract files before validation
+    graph.add_edge("extract_file_params", "validate_output")  # P2: Then validate
+    
+    # Router: After execution, decide next step
+    def should_revise_or_update(state: CodeActState) -> str:
+        """
+        Determine next step after execution:
+        1. If failed and can retry -> "revision"
+        2. If failed and max retries reached -> "update_todo" (todo mode) or "end" (legacy)
+        3. If success -> "update_todo" (todo mode) or "end" (legacy)
+        """
+        # Check if revision is needed
         if state.execution_result and state.execution_result.get("status") == "failed":
             error_type = state.execution_result.get("error_type", "")
             error = state.execution_result.get("error", "")
             
-            # Don't retry on timeout errors - they usually indicate code issues that won't be fixed by revision
+            # Don't retry on timeout errors
             if error_type == "TimeoutError" or "timed out" in error.lower():
-                print(f"  ⚠ Execution timed out, skipping Revision (timeout errors usually indicate code issues)")
+                print(f"  ⚠ Execution timed out, skipping Revision")
+                if use_todo_mode:
+                    return "update_todo"
                 return "end"
             
-            # Check iteration limit (use current value, will be incremented in revision node)
+            # Check iteration limit
             current_iteration = state.revision_iteration
             max_iterations = 3
             
             if current_iteration < max_iterations:
                 next_iteration = current_iteration + 1
-                print(f"  🔄 Entering Revision (iteration {next_iteration}/{max_iterations}, current: {current_iteration})")
-                print(f"  ℹ Trajectory history: {len(state.trajectory_history)} entries")
+                print(f"  🔄 Entering Revision (iteration {next_iteration}/{max_iterations})")
                 return "revision"
             else:
-                print(f"  ⚠ Maximum Revision iterations ({max_iterations}) reached (current: {current_iteration}), stopping")
-                print(f"  ℹ Final trajectory history: {len(state.trajectory_history)} entries")
+                print(f"  ⚠ Maximum Revision iterations ({max_iterations}) reached")
+                if use_todo_mode:
+                    return "update_todo"
+                return "end"
+        
+        # Success - update todo or end
+        if use_todo_mode:
+            return "update_todo"
         return "end"
     
-    graph.add_conditional_edges(
-        "execute_code",
-        should_revise,
-        {
-            "revision": "revision",
-            "end": END
-        }
-    )
-    
-    # After Revision, regenerate code
-    graph.add_edge("revision", "generate_code")
+    if use_todo_mode:
+        # Todo mode: validate_output -> revision or update_todo
+        graph.add_conditional_edges(
+            "validate_output",
+            should_revise_or_update,
+            {
+                "revision": "revision",
+                "update_todo": "update_todo"
+            }
+        )
+        
+        # After revision, go back to generate_code
+        graph.add_edge("revision", "generate_code")
+        
+        # After update_todo, check for pending tasks
+        graph.add_conditional_edges(
+            "update_todo",
+            has_pending_tasks,
+            {
+                "continue": "select_next_task",
+                "end": END
+            }
+        )
+    else:
+        # Legacy mode: validate_output -> revision or end
+        graph.add_conditional_edges(
+            "validate_output",
+            should_revise_or_update,
+            {
+                "revision": "revision",
+                "end": END
+            }
+        )
+        
+        # After revision, regenerate code
+        graph.add_edge("revision", "generate_code")
     
     return graph.compile()
 
@@ -1353,7 +2535,8 @@ def build_codeact_subgraph():
 def codeact_input_mapper(executor_state: Any, task: SubTask, execution_mode: CodeActExecutionMode, 
                          parameters: Dict[str, Any] = None, previous_code: str = None, 
                          previous_error: str = None, error_category: str = None,
-                         revision_plan: Any = None, revision_iteration: int = 0) -> CodeActState:
+                         revision_plan: Any = None, revision_iteration: int = 0,
+                         parent_state: GlobalState = None) -> CodeActState:
     """
     Map Executor state to CodeAct subgraph state
     
@@ -1365,6 +2548,7 @@ def codeact_input_mapper(executor_state: Any, task: SubTask, execution_mode: Cod
         previous_code: Previous code (for fixing)
         previous_error: Previous error (for fixing)
         error_category: Error category (for fixing)
+        parent_state: Parent GlobalState reference (for opensandbox_id passing)
     
     Returns:
         CodeAct subgraph state
@@ -1388,6 +2572,22 @@ def codeact_input_mapper(executor_state: Any, task: SubTask, execution_mode: Cod
     else:
         tools = []
     
+    # Extract todo_list_path from parameters if present
+    todo_list_path = None
+    if parameters:
+        todo_list_path = parameters.get("todo_list_path")
+    
+    # If todo_list_path not in parameters, try to build from session_id
+    if not todo_list_path:
+        # Try parameters first
+        session_id = parameters.get("session_id") if parameters else None
+        # Then try parent_state
+        if not session_id and parent_state and hasattr(parent_state, 'session_id'):
+            session_id = parent_state.session_id
+        # Build todo_list_path from session_id
+        if session_id:
+            todo_list_path = f"/data/sessions/{session_id}/todo-list.md"
+    
     # Ensure task is correctly passed (Pydantic v2 compatibility)
     try:
         return CodeActState(
@@ -1401,7 +2601,9 @@ def codeact_input_mapper(executor_state: Any, task: SubTask, execution_mode: Cod
             previous_error=previous_error,
             error_category=error_category,
             revision_plan=revision_plan,
-            revision_iteration=revision_iteration
+            revision_iteration=revision_iteration,
+            parent_state=parent_state,
+            todo_list_path=todo_list_path  # Pass todo_list_path from parameters
         )
     except Exception:
         # If direct construction fails, use model_validate
@@ -1417,7 +2619,9 @@ def codeact_input_mapper(executor_state: Any, task: SubTask, execution_mode: Cod
             "previous_error": previous_error,
             "error_category": error_category,
             "revision_plan": revision_plan,
-            "revision_iteration": revision_iteration
+            "revision_iteration": revision_iteration,
+            "parent_state": parent_state,
+            "todo_list_path": todo_list_path  # Pass todo_list_path from parameters
         })
 
 

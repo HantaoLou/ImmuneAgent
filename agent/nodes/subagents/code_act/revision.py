@@ -314,10 +314,19 @@ Please generate Revision plan (JSON format)."""
             strategy = RevisionStrategy.CODE_FIX
             root_cause = "Code syntax error"
             action_items = ["Check code syntax", "Fix indentation issues", "Verify code structure"]
-        elif "NameError" in error_type or "ImportError" in error_type:
+        elif "ModuleNotFoundError" in error_type or "NameError" in error_type or "ImportError" in error_type:
             strategy = RevisionStrategy.DEPENDENCY_RESOLVE
-            root_cause = "Dependency or import issue"
-            action_items = ["Check import statements", "Add missing dependencies", "Verify module paths"]
+            root_cause = f"Missing dependency or import issue: {error_message}"
+            # Extract the missing module name from error message
+            import re
+            module_match = re.search(r"No module named '([^']+)'", error_message, re.IGNORECASE)
+            missing_module = module_match.group(1) if module_match else "unknown"
+            action_items = [
+                f"Install missing dependency: {missing_module}",
+                f"Add auto-install wrapper: pip install {missing_module}",
+                "Ensure code has proper import handling",
+                "The _ensure_code_executable function should auto-install common packages"
+            ]
         elif "TypeError" in error_type or "ValueError" in error_type:
             strategy = RevisionStrategy.PARAMETER_ADJUST
             root_cause = "Parameter type or value error"

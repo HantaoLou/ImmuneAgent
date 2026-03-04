@@ -5,6 +5,10 @@ required by the underlying data_lake/tools functions. This makes them easy for
 LLM agents to call directly in <execute> blocks without constructing Pydantic objects.
 
 All functions return formatted strings suitable for LLM consumption.
+
+LangChain 1.0+ Compatibility:
+    - All tools use @tool decorator from langchain_core.tools
+    - Tools can be directly bound to LLM via .bind_tools()
 """
 
 import importlib
@@ -12,6 +16,8 @@ import subprocess
 import sys
 import logging
 from typing import Optional, List, Dict, Any
+
+from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +102,7 @@ def _format_results(results: List[Dict[str, Any]], tool_name: str, max_results: 
 # ============================================================
 # 1. Knowledge Graph (gene-disease-drug-pathway associations)
 # ============================================================
+@tool
 def query_kg(entity_name: str = None, entity_type: str = None,
              relation: str = None, target_type: str = None, limit: int = 50) -> str:
     """Query biomedical knowledge graph for gene-disease-drug-pathway associations.
@@ -124,6 +131,7 @@ def query_kg(entity_name: str = None, entity_type: str = None,
 # ============================================================
 # 2. Gene Expression (GTEx tissue expression)
 # ============================================================
+@tool
 def query_expression(gene: str = None, tissue: str = None,
                      min_expression: float = 0.0, limit: int = 50) -> str:
     """Query GTEx tissue gene expression profiles (TPM across 54 human tissues).
@@ -142,6 +150,7 @@ def query_expression(gene: str = None, tissue: str = None,
 # ============================================================
 # 3. Disease-Gene Associations (DisGeNET)
 # ============================================================
+@tool
 def query_disease_gene(gene: str = None, disease: str = None,
                        min_score: float = None, limit: int = 50) -> str:
     """Query DisGeNET for disease-gene associations with evidence scores.
@@ -160,6 +169,7 @@ def query_disease_gene(gene: str = None, disease: str = None,
 # ============================================================
 # 4. Gene Info (Ensembl annotations)
 # ============================================================
+@tool
 def query_gene(gene_id: str = None, chromosome: str = None, limit: int = 50) -> str:
     """Query Ensembl gene annotations (ID, name, chromosome, position, biotype).
 
@@ -176,6 +186,7 @@ def query_gene(gene_id: str = None, chromosome: str = None, limit: int = 50) -> 
 # ============================================================
 # 5. Protein Atlas (protein expression & localization)
 # ============================================================
+@tool
 def query_protein_atlas(gene: str = None, tissue: str = None,
                         subcellular_location: str = None, limit: int = 50) -> str:
     """Query Human Protein Atlas for protein expression and subcellular localization.
@@ -194,6 +205,7 @@ def query_protein_atlas(gene: str = None, tissue: str = None,
 # ============================================================
 # 6. OMIM (Mendelian disease)
 # ============================================================
+@tool
 def query_omim(gene: str = None, disease: str = None, limit: int = 50) -> str:
     """Query OMIM for Mendelian inheritance disease-gene associations.
 
@@ -210,6 +222,7 @@ def query_omim(gene: str = None, disease: str = None, limit: int = 50) -> str:
 # ============================================================
 # 7. Protein-Protein Interaction (BioGRID PPI)
 # ============================================================
+@tool
 def query_ppi(gene_id: str = None, gene_id_b: str = None,
               experiment_type: str = "all", organism_id: int = None, limit: int = 50) -> str:
     """Query BioGRID physical protein-protein interactions.
@@ -230,6 +243,7 @@ def query_ppi(gene_id: str = None, gene_id_b: str = None,
 # ============================================================
 # 8. Drug-Drug Interaction (DDInter)
 # ============================================================
+@tool
 def query_drug_interaction(drug_name: str = None, drug_name_b: str = None,
                            severity: str = "all", limit: int = 50) -> str:
     """Query DDInter for drug-drug interactions and severity levels.
@@ -249,6 +263,7 @@ def query_drug_interaction(drug_name: str = None, drug_name_b: str = None,
 # ============================================================
 # 9. Drug-Target Binding Affinity (BindingDB)
 # ============================================================
+@tool
 def query_binding(ligand_name: str = None, target_name: str = None, limit: int = 50) -> str:
     """Query BindingDB for drug-target binding affinity (Ki/Kd/IC50).
 
@@ -265,6 +280,7 @@ def query_binding(ligand_name: str = None, target_name: str = None, limit: int =
 # ============================================================
 # 10. Genetic Variant (SNP)
 # ============================================================
+@tool
 def query_variant(rs_id: str = None, chromosome: str = None, limit: int = 50) -> str:
     """Query genetic variant data (SNP positions, alleles).
 
@@ -281,6 +297,7 @@ def query_variant(rs_id: str = None, chromosome: str = None, limit: int = 50) ->
 # ============================================================
 # 11. GWAS Catalog
 # ============================================================
+@tool
 def query_gwas(disease_trait: str = None, gene: str = None, snp: str = None,
                p_value_threshold: float = 5e-8, limit: int = 50) -> str:
     """Query GWAS Catalog for SNP-disease/trait associations.
@@ -301,6 +318,7 @@ def query_gwas(disease_trait: str = None, gene: str = None, snp: str = None,
 # ============================================================
 # 12. Genebass (rare variant burden analysis)
 # ============================================================
+@tool
 def query_genebass(gene: str = None, phenotype: str = None,
                    variant_type: str = "plof", p_value_threshold: float = 1e-6,
                    limit: int = 50) -> str:
@@ -324,6 +342,7 @@ def query_genebass(gene: str = None, phenotype: str = None,
 # ============================================================
 # 13. TCR-Antigen (McPAS-TCR)
 # ============================================================
+@tool
 def query_tcr(epitope: str = None, pathology: str = None,
               cdr3_beta: str = None, mhc: str = None, limit: int = 50) -> str:
     """Query McPAS-TCR for T cell receptor sequences and antigen specificity.
@@ -343,6 +362,7 @@ def query_tcr(epitope: str = None, pathology: str = None,
 # ============================================================
 # 14. miRNA Target Prediction (miRDB)
 # ============================================================
+@tool
 def query_mirna_target(mirna: str = None, target_gene: str = None,
                        min_score: float = 80.0, limit: int = 50) -> str:
     """Query miRDB for computational miRNA target predictions.
@@ -361,6 +381,7 @@ def query_mirna_target(mirna: str = None, target_gene: str = None,
 # ============================================================
 # 15. Validated miRNA-Target (miRTarBase)
 # ============================================================
+@tool
 def query_mirna_validated(mirna: str = None, target_gene: str = None,
                           species: str = None, limit: int = 50) -> str:
     """Query miRTarBase for experimentally validated miRNA-target interactions.
@@ -379,6 +400,7 @@ def query_mirna_validated(mirna: str = None, target_gene: str = None,
 # ============================================================
 # 16. CRISPR sgRNA Design (Human)
 # ============================================================
+@tool
 def query_sgrna(target_gene: str, species: str = "human",
                 min_efficacy: float = 0.5, limit: int = 20) -> str:
     """Query CRISPR sgRNA design sequences for gene knockout experiments.
@@ -399,6 +421,7 @@ def query_sgrna(target_gene: str, species: str = "human",
 # ============================================================
 # 17. Gene Ontology (GO)
 # ============================================================
+@tool
 def query_go(term_id: str = None, name: str = None, keyword: str = None,
              namespace: str = None, limit: int = 50) -> str:
     """Query Gene Ontology terms by ID, name, or keyword.
@@ -423,6 +446,7 @@ def query_go(term_id: str = None, name: str = None, keyword: str = None,
 # ============================================================
 # 18. Human Phenotype Ontology (HPO)
 # ============================================================
+@tool
 def query_hpo(term_id: str = None, name: str = None, keyword: str = None,
               limit: int = 50) -> str:
     """Query Human Phenotype Ontology terms for disease phenotype descriptions.
@@ -441,6 +465,7 @@ def query_hpo(term_id: str = None, name: str = None, keyword: str = None,
 # ============================================================
 # 19. Gene Set (MSigDB)
 # ============================================================
+@tool
 def query_geneset(gene_symbol: str = None, geneset_name: str = None,
                   collection: str = "hallmark", limit: int = 50) -> str:
     """Query MSigDB gene sets (pathways, signatures, regulatory targets).
@@ -462,6 +487,7 @@ def query_geneset(gene_symbol: str = None, geneset_name: str = None,
 # ============================================================
 # 20. Drug Repurposing Predictions (TxGNN)
 # ============================================================
+@tool
 def query_drug_for_disease(disease_name: str, min_score: float = 0.5, top_k: int = 20) -> str:
     """Find AI-predicted drugs for a disease (TxGNN graph neural network).
 
@@ -475,6 +501,7 @@ def query_drug_for_disease(disease_name: str, min_score: float = 0.5, top_k: int
     return _format_results(_qd(q), "TxGNN Drug-for-Disease")
 
 
+@tool
 def query_disease_for_drug(drug_name: str, min_score: float = 0.5, top_k: int = 20) -> str:
     """Find AI-predicted diseases treatable by a drug (TxGNN graph neural network).
 
@@ -491,6 +518,7 @@ def query_disease_for_drug(drug_name: str, min_score: float = 0.5, top_k: int = 
 # ============================================================
 # 21. DepMap (cancer cell line dependencies)
 # ============================================================
+@tool
 def query_depmap(cell_line: str = None, data_type: str = "crispr_dependency",
                  limit: int = 50) -> str:
     """Query DepMap cancer dependency data (CRISPR, RNAi, drug sensitivity).
@@ -509,6 +537,7 @@ def query_depmap(cell_line: str = None, data_type: str = "crispr_dependency",
 # ============================================================
 # 22. Cell Type Markers
 # ============================================================
+@tool
 def query_cell_markers(cell_type: str = None, marker_gene: str = None,
                        limit: int = 50) -> str:
     """Query cell type marker genes (e.g., CD3 for T cells).
@@ -526,6 +555,7 @@ def query_cell_markers(cell_type: str = None, marker_gene: str = None,
 # ============================================================
 # 23. Virus-Host PPI
 # ============================================================
+@tool
 def query_virus_host(viral_protein: str = None, host_gene: str = None,
                      limit: int = 50) -> str:
     """Query virus-host protein-protein interactions.
@@ -543,6 +573,7 @@ def query_virus_host(viral_protein: str = None, host_gene: str = None,
 # ============================================================
 # 24. Drug Repurposing (Broad)
 # ============================================================
+@tool
 def query_drug_repurposing(drug_name: str = None, target: str = None,
                            moa: str = None, limit: int = 50) -> str:
     """Query Broad Institute drug repurposing hub.
@@ -561,13 +592,49 @@ def query_drug_repurposing(drug_name: str = None, target: str = None,
 # ============================================================
 # Tool registry: all wrapper functions for injection
 # ============================================================
-def get_biomedical_tools() -> dict:
-    """Return a dict of all biomedical tool wrapper functions for namespace injection.
+def get_biomedical_tools() -> list:
+    """Return a list of all biomedical tool wrapper functions as LangChain tools.
 
     Every function is wrapped with ``_auto_install_on_missing`` so that a
     missing dependency (e.g. ``duckdb``) is automatically pip-installed on
     first call rather than surfacing a raw ``ModuleNotFoundError``.
+    
+    Returns:
+        List of LangChain tool objects that can be directly bound to LLM.
     """
+    raw = [
+        query_kg,
+        query_expression,
+        query_disease_gene,
+        query_gene,
+        query_protein_atlas,
+        query_omim,
+        query_ppi,
+        query_drug_interaction,
+        query_binding,
+        query_variant,
+        query_gwas,
+        query_genebass,
+        query_tcr,
+        query_mirna_target,
+        query_mirna_validated,
+        query_sgrna,
+        query_go,
+        query_hpo,
+        query_geneset,
+        query_drug_for_disease,
+        query_disease_for_drug,
+        query_depmap,
+        query_cell_markers,
+        query_virus_host,
+        query_drug_repurposing,
+    ]
+    # Wrap each tool function with auto-install decorator for missing deps
+    return [_auto_install_on_missing(fn) for fn in raw]
+
+
+def get_biomedical_tools_dict() -> dict:
+    """Return biomedical tools as dict for backward compatibility (namespace injection)."""
     raw = {
         "query_kg": query_kg,
         "query_expression": query_expression,

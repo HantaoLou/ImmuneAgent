@@ -15,6 +15,7 @@ Instead, we analyze WHY A was wrong and WHAT knowledge/reasoning is needed.
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 import re
+import hashlib
 
 # 支持两种导入路径（测试环境使用 nodes.xxx，运行环境使用 agent.nodes.xxx）
 try:
@@ -29,6 +30,21 @@ except ImportError:
         ErrorAnalysisCache,
         cache_error_analysis,
     )
+
+
+def _normalize_question(question: str) -> str:
+    """Normalize question for consistent hashing"""
+    # Remove extra whitespace
+    normalized = " ".join(question.split())
+    # Convert to lowercase for consistency
+    normalized = normalized.lower().strip()
+    return normalized
+
+
+def _compute_hash(question: str) -> str:
+    """Compute SHA256 hash of normalized question"""
+    normalized = _normalize_question(question)
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:32]
 
 
 # ========== Error Classification Patterns ==========
@@ -643,7 +659,9 @@ class ErrorAnalyzer:
         )
         
         # Create cache entry
+        question_hash = _compute_hash(question)
         error_cache = ErrorAnalysisCache(
+            question_hash=question_hash,
             question_text=question,
             wrong_answer=wrong_answer,
             correct_answer=correct_answer,

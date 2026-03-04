@@ -9,6 +9,10 @@ Provides 5 clinical data retrieval functions using stdlib urllib.request:
 
 All functions are synchronous, return formatted strings, and use truncate_output()
 to cap responses at MAX_OUTPUT_CHARS.
+
+LangChain 1.0+ Compatibility:
+    - All tools use @tool decorator from langchain_core.tools
+    - Tools can be directly bound to LLM via .bind_tools()
 """
 
 import json
@@ -20,6 +24,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Optional
+
+from langchain_core.tools import tool
 
 from ._output import TrialDetail, TrialSummary, truncate_output
 
@@ -74,6 +80,7 @@ def _post_json(
 # ---------------------------------------------------------------------------
 
 
+@tool
 def search_clinical_trials(
     condition: Optional[str] = None,
     intervention: Optional[str] = None,
@@ -200,6 +207,7 @@ def search_clinical_trials(
 # ---------------------------------------------------------------------------
 
 
+@tool
 def query_open_targets(
     target: Optional[str] = None,
     disease: Optional[str] = None,
@@ -348,6 +356,7 @@ def query_open_targets(
 # ---------------------------------------------------------------------------
 
 
+@tool
 def search_clinvar(
     gene: Optional[str] = None,
     variant: Optional[str] = None,
@@ -458,6 +467,7 @@ def search_clinvar(
 # ---------------------------------------------------------------------------
 
 
+@tool
 def query_pharmgkb(
     gene: Optional[str] = None,
     drug: Optional[str] = None,
@@ -562,6 +572,7 @@ def query_pharmgkb(
 # ---------------------------------------------------------------------------
 
 
+@tool
 def search_openfda(
     drug_name: Optional[str] = None,
     event_type: Optional[str] = None,
@@ -653,8 +664,23 @@ def search_openfda(
 # ---------------------------------------------------------------------------
 
 
-def get_clinical_tools() -> dict:
-    """Return clinical tools for namespace injection.
+def get_clinical_tools() -> list:
+    """Return clinical tools as LangChain tools.
+
+    Returns:
+        List of LangChain tool objects that can be directly bound to LLM.
+    """
+    return [
+        search_clinical_trials,
+        query_open_targets,
+        search_clinvar,
+        query_pharmgkb,
+        search_openfda,
+    ]
+
+
+def get_clinical_tools_dict() -> dict:
+    """Return clinical tools for backward compatibility (namespace injection).
 
     Returns:
         Dict mapping tool names to functions

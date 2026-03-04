@@ -16,7 +16,7 @@ Fully utilize LangGraph 1.0+ features:
 - Optimize asynchronous execution and state management
 """
 
-from typing import Dict, List, Any, Optional, Literal, Union
+from typing import Dict, List, Any, Optional, Literal, Union, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from langgraph.graph import StateGraph, START, END
@@ -494,6 +494,19 @@ def _extract_file_candidates_from_text(text: Optional[str]) -> List[str]:
     import re as re_module
     if not text:
         return []
+    
+    # 修复问题1: 跳过包含 "Generated X files in" 或类似模式中的目录路径
+    # 这些路径通常是输出目录，而不是实际的文件
+    directory_patterns = [
+        r"[Gg]enerated\s+\d+\s+files?\s+in\s+(/[^\s\"']+)",
+        r"[Ss]aved\s+to\s+directory\s*[:=]?\s*(/[^\s\"']+)",
+        r"[Oo]utput\s+directory\s*[:=]?\s*(/[^\s\"']+)",
+    ]
+    skip_paths = set()
+    for pattern in directory_patterns:
+        for match in re_module.findall(pattern, text):
+            skip_paths.add(match.strip().strip(".,;:()[]{}<>\"'"))
+    
     patterns = [
         r"[A-Za-z]:\\[^\s\"']+",  # Windows absolute paths
         r"/[^\s\"']+",  # Unix absolute paths
@@ -504,7 +517,9 @@ def _extract_file_candidates_from_text(text: Optional[str]) -> List[str]:
         for match in re_module.findall(pattern, text):
             cleaned = match.strip().strip(".,;:()[]{}<>\"'")
             if cleaned and not _looks_like_status_message(cleaned):
-                candidates.append(cleaned)
+                # 跳过已识别的目录路径
+                if cleaned not in skip_paths:
+                    candidates.append(cleaned)
     seen = set()
     deduped = []
     for item in candidates:
@@ -715,20 +730,19 @@ except Exception as e:
     print("__RDS_CSV_FAILED__", flush=True)
 '''
     
-    # Execute in sandbox
+    # Execute in sandbox via codeact_executor (遵循架构原则：统一接口)
     if sandbox_id:
         try:
-            from utils.opensandbox_executor import run_code_in_opensandbox_sync
-            result = run_code_in_opensandbox_sync(
-                code=conversion_code,
-                task_id="auto_rds_to_csv",
-                timeout_seconds=120,
-                env={"OPENSANDBOX_SKIP_MCP_INSTALL": "true"}
+            from utils.codeact_executor import convert_rds_to_csv
+            
+            result = convert_rds_to_csv(
+                rds_path=rds_path,
+                output_csv_path=output_csv_path,
+                sandbox_id=sandbox_id
             )
             
-            stdout = result.get("stdout", "") + result.get("formatted_output", "") if result else ""
-            if result and "__RDS_CSV_SUCCESS__" in stdout:
-                for line in stdout.split("\n"):
+            if result.is_success() and "__RDS_CSV_SUCCESS__" in result.output:
+                for line in result.output.split("\n"):
                     if "__RDS_CSV_SUCCESS__:" in line:
                         parts = line.split(":")
                         if len(parts) >= 2:
@@ -739,7 +753,7 @@ except Exception as e:
                             print(f"  [RDS->CSV] Conversion successful: {csv_path}")
                             return csv_path
             else:
-                print(f"  [RDS->CSV] Conversion failed: {result.get('stderr', 'Unknown error') if result else 'No result'}")
+                print(f"  [RDS->CSV] Conversion failed: {result.error or 'Unknown error'}")
         except Exception as e:
             print(f"  [RDS->CSV] Conversion error: {e}")
     else:
@@ -839,25 +853,27 @@ else:
     print(f"__FASTA_SUCCESS__:{{fasta_path}}:{{seq_count}}")
 '''
         
-        # Try to execute in sandbox
+        # Try to execute in sandbox via codeact_executor (遵循架构原则：统一接口)
         if sandbox_id:
             try:
-                from utils.opensandbox_executor import run_code_in_opensandbox_sync
-                result = run_code_in_opensandbox_sync(
-                    code=fasta_code,
-                    task_id="auto_csv_to_fasta",
-                    timeout_seconds=120,
-                    env={"OPENSANDBOX_SKIP_MCP_INSTALL": "true"}
+                from utils.codeact_executor import convert_csv_to_fasta
+                
+                result = convert_csv_to_fasta(
+                    csv_path=source_csv,
+                    output_path=suggested_path,
+                    sequence_columns=seq_columns,
+                    sandbox_id=sandbox_id
                 )
                 
-                stdout = result.get("stdout", "") + result.get("formatted_output", "") if result else ""
-                if result and "__FASTA_SUCCESS__" in stdout:
-                    stdout = result.get("stdout", "")
-                    for line in stdout.split("\n"):
+                if result.is_success() and "__FASTA_SUCCESS__" in result.output:
+                    for line in result.output.split("\n"):
                         if "__FASTA_SUCCESS__:" in line:
                             parts = line.split(":")
                             if len(parts) >= 2:
                                 fasta_path = parts[1]
+                                # Convert container path to server path if needed
+                                if fasta_path.startswith("/tmp/sessions/"):
+                                    fasta_path = fasta_path.replace("/tmp/sessions/", "/data/sessions/", 1)
                                 print(f"  [FASTA] Conversion successful: {fasta_path}")
                                 
                                 # Update parent state's extracted_parameters
@@ -872,7 +888,7 @@ else:
                                 
                                 return fasta_path
                 else:
-                    print(f"  [FASTA] Conversion failed: {result.get('stderr', 'Unknown error')}")
+                    print(f"  [FASTA] Conversion failed: {result.error or 'Unknown error'}")
             except Exception as e:
                 print(f"  [FASTA] Conversion error: {e}")
         else:
@@ -905,67 +921,36 @@ def _copy_file_to_session_directory(
     Returns:
         Target path if copy succeeded, None if failed
     """
-    from utils.opensandbox_executor import run_code_in_opensandbox_sync, is_opensandbox_enabled
+    # 使用 codeact_executor 统一接口 (遵循架构原则)
+    from utils.codeact_executor import copy_file_in_sandbox, is_codeact_available
     
-    if not is_opensandbox_enabled():
-        print(f"  [FileCopy] OpenSandbox not enabled, skipping file copy")
+    if not is_codeact_available():
+        print(f"  [FileCopy] CodeAct not available, skipping file copy")
         return None
     
     # Normalize paths
     source_path = source_path.replace("\\", "/")
     target_path = target_path.replace("\\", "/")
     
-    # Convert server path to container path for sandbox execution
-    container_source = source_path
-    container_target = target_path.replace("/data/sessions/", "/tmp/sessions/", 1)
-    
-    copy_code = f'''
-import os
-import shutil
-
-source = "{container_source}"
-target = "{container_target}"
-
-try:
-    if os.path.exists(source):
-        target_dir = os.path.dirname(target)
-        os.makedirs(target_dir, exist_ok=True)
-        try:
-            os.chmod(target_dir, 0o777)  # Allow all users to write
-        except Exception:
-            pass
-        shutil.copy2(source, target)
-        print(f"__FILE_COPIED__:{{target}}")
-    else:
-        print(f"__FILE_NOT_FOUND__:{{source}}")
-except Exception as e:
-    print(f"__COPY_ERROR__:{{str(e)}}")
-'''
+    # Get sandbox_id from parent state
+    existing_sandbox_id = None
+    if state.parent_state:
+        merged_result = getattr(state.parent_state, 'merged_result', None) or {}
+        existing_sandbox_id = merged_result.get('opensandbox_id')
     
     try:
-        # Reuse existing sandbox if available
-        existing_sandbox_id = None
-        if state.parent_state:
-            merged_result = getattr(state.parent_state, 'merged_result', None) or {}
-            existing_sandbox_id = merged_result.get('opensandbox_id')
-        
-        result = run_code_in_opensandbox_sync(
-            code=copy_code,
-            task_id=f"copy_output_{task_id}",
-            timeout_seconds=30,
-            existing_sandbox_id=existing_sandbox_id,
-            keep_alive=True
+        result = copy_file_in_sandbox(
+            source_path=source_path,
+            target_path=target_path,
+            sandbox_id=existing_sandbox_id
         )
         
-        if result:
-            stdout = result.get("stdout", "") + result.get("formatted_output", "")
-            if "__FILE_COPIED__:" in stdout:
-                return target_path  # Return server path, not container path
-            elif "__FILE_NOT_FOUND__:" in stdout:
-                print(f"  [FileCopy] Source file not found: {source_path}")
-            elif "__COPY_ERROR__:" in stdout:
-                error_msg = stdout.split("__COPY_ERROR__:")[1].split("\n")[0] if "__COPY_ERROR__:" in stdout else "unknown"
-                print(f"  [FileCopy] Copy error: {error_msg}")
+        if result.is_success() and "__FILE_COPIED__:" in result.output:
+            return target_path  # Return server path
+        elif "__FILE_NOT_FOUND__:" in result.output:
+            print(f"  [FileCopy] Source file not found: {source_path}")
+        elif result.error:
+            print(f"  [FileCopy] Copy error: {result.error}")
     except Exception as e:
         print(f"  [FileCopy] Exception during copy: {e}")
     
@@ -1092,10 +1077,26 @@ def _expand_parameter_table_with_output(
     tool_lower = tool_name.lower()
     if not output_files and session_output_dir:
         # Check if this is a tool that should produce output files
+        # ENHANCED: Support multiple file extensions per tool
         tools_with_implicit_output = {
-            "analyze_vdj_batch": {"ext": ".tsv", "prefix": "airr_results", "description": "AIRR format V(D)J analysis results"},
-            "metabcr": {"ext": ".csv", "prefix": "binding", "description": "Binding prediction results"},
-            "predict_tcr_binding": {"ext": ".csv", "prefix": "predictions", "description": "TCR binding predictions"},
+            "analyze_vdj_batch": {
+                "exts": [".tsv", ".csv"],  # AIRR format can be TSV or CSV
+                "prefix": "airr_results",
+                "description": "AIRR format V(D)J analysis results",
+                "data_type": "airr_results"  # For semantic matching
+            },
+            "metabcr": {
+                "exts": [".csv"],
+                "prefix": "binding",
+                "description": "Binding prediction results",
+                "data_type": "binding_predictions"
+            },
+            "predict_tcr_binding": {
+                "exts": [".csv"],
+                "prefix": "predictions",
+                "description": "TCR binding predictions",
+                "data_type": "binding_predictions"
+            },
         }
         
         for tool_key, tool_info in tools_with_implicit_output.items():
@@ -1106,30 +1107,32 @@ def _expand_parameter_table_with_output(
                 import glob as glob_module
                 import os as os_module
                 
-                # Get list of files with the expected extension
-                expected_ext = tool_info["ext"]
-                search_pattern = f"{session_output_dir}/*{expected_ext}"
-                potential_files = glob_module.glob(search_pattern)
-                
-                # Filter files by creation time (within last 5 minutes)
-                import time as time_module
-                current_time = time_module.time()
-                recent_threshold = 300  # 5 minutes
-                
-                for potential_file in potential_files:
-                    try:
-                        file_mtime = os_module.path.getmtime(potential_file)
-                        if current_time - file_mtime < recent_threshold:
-                            output_files.append(potential_file)
-                            output_metadata[potential_file] = {
-                                "key": "output_file",
-                                "prefix": "",
-                                "implicit_output": True,
-                                "description": tool_info["description"]
-                            }
-                            print(f"  [ParamTable] Found recent output file: {potential_file}")
-                    except Exception as e:
-                        print(f"  [ParamTable] Error checking file {potential_file}: {e}")
+                # Search for all expected extensions
+                expected_exts = tool_info["exts"]
+                for expected_ext in expected_exts:
+                    search_pattern = f"{session_output_dir}/*{expected_ext}"
+                    potential_files = glob_module.glob(search_pattern)
+                    
+                    # Filter files by creation time (within last 5 minutes)
+                    import time as time_module
+                    current_time = time_module.time()
+                    recent_threshold = 300  # 5 minutes
+                    
+                    for potential_file in potential_files:
+                        try:
+                            file_mtime = os_module.path.getmtime(potential_file)
+                            if current_time - file_mtime < recent_threshold:
+                                output_files.append(potential_file)
+                                output_metadata[potential_file] = {
+                                    "key": "output_file",
+                                    "prefix": "",
+                                    "implicit_output": True,
+                                    "description": tool_info["description"],
+                                    "data_type": tool_info.get("data_type", "unknown")
+                                }
+                                print(f"  [ParamTable] Found recent output file ({expected_ext}): {potential_file}")
+                        except Exception as e:
+                            print(f"  [ParamTable] Error checking file {potential_file}: {e}")
                 
                 break  # Only check the first matching tool
     
@@ -1192,6 +1195,7 @@ def _expand_parameter_table_with_output(
             "original_path": file_path if file_path != final_path else None,
             "type": file_ext,
             "data_type": f"{tool_name}_output",
+            "source": "task_output",  # Tag: this file was generated by a task
             "source_task": task_id,
             "source_tool": tool_name,
             "description": file_description,
@@ -1310,8 +1314,12 @@ TOOL_OUTPUT_SEMANTIC_TYPES: Dict[str, List[str]] = {
     "run_igblast": ["airr_results", "antibody_analysis", "vdj_annotation"],
     "metabcr": ["binding_predictions", "affinity_scores"],
     "integrate_bcr_data_complete": ["integrated_bcr_data", "seurat_object"],
+    "integrate_tcr_data_complete": ["integrated_tcr_data", "seurat_object", "tcr_predictions"],
     "antigen_binding_prediction_visualization": ["visualization", "binding_statistics"],
     "bcell_celltype_distribution_analysis": ["cell_distribution", "statistics"],
+    "tcr_clonotype_analysis": ["clonotype_statistics", "diversity_metrics"],
+    "tcell_celltype_visualization": ["visualization", "celltype_statistics"],
+    "tcr_binding_visualization": ["visualization", "binding_statistics"],
 }
 
 # Map parameter names to their expected semantic types
@@ -1330,9 +1338,9 @@ PARAM_EXPECTED_SEMANTIC_TYPES: Dict[str, List[str]] = {
     "csv_file": ["csv_data", "airr_results", "binding_predictions", "statistics"],
     
     # RDS file - accepts Seurat objects or integrated data
-    "rds_file": ["rds_data", "seurat_object", "integrated_bcr_data"],
-    "input_file": ["rds_data", "seurat_object", "integrated_bcr_data"],
-    "input_rds": ["rds_data", "seurat_object", "integrated_bcr_data"],
+    "rds_file": ["rds_data", "seurat_object", "integrated_bcr_data", "integrated_tcr_data"],
+    "input_file": ["rds_data", "seurat_object", "integrated_bcr_data", "integrated_tcr_data"],
+    "input_rds": ["rds_data", "seurat_object", "integrated_bcr_data", "integrated_tcr_data"],
 }
 
 
@@ -1441,47 +1449,28 @@ def _analyze_csv_columns(
         List of column names, or None if analysis failed
     """
     try:
-        # Try to read CSV header using sandbox code execution
-        analyze_code = f'''
-import csv
-import json
-
-columns = []
-try:
-    with open("{file_path}", 'r', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        columns = next(reader, [])
-    print("__CSV_COLUMNS__:" + json.dumps(columns))
-except Exception as e:
-    print("__CSV_COLUMNS_ERROR__:" + str(e))
-'''
+        # 使用 codeact_executor 统一接口 (遵循架构原则)
+        from utils.codeact_executor import analyze_file_structure
         
-        from utils.opensandbox_executor import run_code_in_opensandbox_sync
-        
-        # Use existing sandbox if available
+        # Get existing sandbox ID
         existing_sandbox_id = None
         if state.parent_state and hasattr(state.parent_state, 'merged_result'):
             merged_result = getattr(state.parent_state, 'merged_result', None)
             if isinstance(merged_result, dict):
                 existing_sandbox_id = merged_result.get("opensandbox_id")
         
-        sandbox_result = run_code_in_opensandbox_sync(
-            code=analyze_code,
-            timeout=30,
-            existing_sandbox_id=existing_sandbox_id,
-            keep_alive=True
+        result = analyze_file_structure(
+            file_path=file_path,
+            sandbox_id=existing_sandbox_id
         )
         
-        stdout = sandbox_result.get("stdout", "")
-        if "__CSV_COLUMNS__:" in stdout:
-            for line in stdout.split("\n"):
-                if "__CSV_COLUMNS__:" in line:
-                    json_str = line.split("__CSV_COLUMNS__:", 1)[1].strip()
-                    columns = json.loads(json_str)
-                    return columns
+        if result.is_success() and result.parsed_result:
+            columns = result.parsed_result.get("column_names", [])
+            if columns:
+                return columns
         
-        if "__CSV_COLUMNS_ERROR__:" in stdout:
-            print(f"    [CSV Analysis] Failed to analyze {file_path}")
+        if not result.is_success():
+            print(f"    [CSV Analysis] Failed to analyze {file_path}: {result.error}")
             
     except Exception as e:
         print(f"    [CSV Analysis] Error analyzing {file_path}: {e}")
@@ -1729,6 +1718,14 @@ def _is_output_param(param_name: str, param_type: Optional[str]) -> bool:
     if name_lower in input_exceptions:
         return False
     
+    # Output directory parameters - these should be auto-filled with session output dir
+    output_dir_params = {
+        "base_dir", "output_dir", "out_dir", "save_dir", "result_dir",
+        "output_directory", "output_path", "save_path", "result_path"
+    }
+    if name_lower in output_dir_params:
+        return True
+    
     return (
         "output" in name_lower
         or "result" in name_lower
@@ -1861,8 +1858,21 @@ def _extract_file_path_from_description(value: str) -> Optional[str]:
     if not isinstance(value, str):
         return None
     
-    # Try to extract path from parentheses: "description (/path/to/file.rds)"
+    # 修复问题1: 跳过包含 "Generated X files in" 或类似模式中的目录路径
+    # 这些路径通常是输出目录，而不是实际的文件
     import re
+    skip_patterns = [
+        r"[Gg]enerated\s+\d+\s+files?\s+in\s+(/[^\s\"']+)",
+        r"[Ss]aved\s+to\s+directory\s*[:=]?\s*(/[^\s\"']+)",
+        r"[Oo]utput\s+directory\s*[:=]?\s*(/[^\s\"']+)",
+    ]
+    for pattern in skip_patterns:
+        if re.search(pattern, value):
+            # 如果值包含这些模式，提取实际文件路径而不是目录
+            # 从 message 中提取可能是不安全的，返回 None 让调用者使用其他来源
+            pass
+    
+    # Try to extract path from parentheses: "description (/path/to/file.rds)"
     patterns = [
         r'\(([^)]+\.(?:csv|tsv|json|xlsx|xls|rds|fasta|fa|fastq|txt|pdb))\)',  # Path in parentheses
         r'\[([^\]]+\.(?:csv|tsv|json|xlsx|xls|rds|fasta|fa|fastq|txt|pdb))\]',  # Path in brackets
@@ -2116,7 +2126,23 @@ def _normalize_inferred_param_value(param_name: str, param_type: Optional[str], 
             if extracted_path:
                 return extracted_path
             # If extraction failed, check if the value itself is a valid path
-            return value if _is_path_like(value) else None
+            if not _is_path_like(value):
+                return None
+            
+            # 修复问题1: 检查路径是否真的是一个文件（而非目录）
+            # 当参数期望 CSV/RDS 等文件类型时，如果路径以这些扩展名结尾但实际是一个目录，
+            # 则需要拒绝这个值（例如 output.csv 实际上是一个目录，而不是 CSV 文件）
+            # 这种情况发生在 predict_tcr_binding_complete 的 output_dir 被设置为 xxx.csv 时
+            expected_exts = _expected_file_extensions(param_name, param_type, None)
+            if expected_exts:
+                # 检查路径扩展名是否符合预期
+                _, ext = os.path.splitext(value)
+                if ext.lower().lstrip(".") in expected_exts:
+                    # 路径有正确的扩展名，但我们无法在这里验证它是否真的是文件
+                    # 因为此时代理可能无法访问沙箱文件系统
+                    # 我们返回值，让后续的文件存在性检查来处理
+                    pass
+            return value
         return value
 
     return value
@@ -2311,6 +2337,16 @@ def _extract_dependency_candidates(
             
             if is_output_key:
                 if isinstance(value, str) and _is_path_like(value):
+                    # 修复问题1: 检查是否可能是目录路径（看起来像文件但实际是目录）
+                    # 当 result_path 数组存在时，message 中的路径可能是目录
+                    # 跳过这种情况，优先使用 result_path 中的实际文件路径
+                    if key_lower == "message":
+                        # 检查是否存在 result_path
+                        result_path = dep_output.get("result_path") if isinstance(dep_output, dict) else None
+                        if result_path and isinstance(result_path, list) and len(result_path) > 0:
+                            # 存在 result_path，跳过从 message 中提取路径
+                            print(f"  [ExtractCandidates] Skipping message path '{value[:50]}...' because result_path exists")
+                            continue
                     candidates.append(value)
                 elif isinstance(value, list):
                     # Special handling for result_path arrays with multiple files
@@ -3314,10 +3350,11 @@ except Exception as e:
     traceback.print_exc()
 '''
     
+    # 使用 codeact_executor 统一接口 (遵循架构原则)
     try:
-        from utils.opensandbox_executor import run_code_in_opensandbox_sync, is_opensandbox_enabled
+        from utils.codeact_executor import execute_code_via_codeact, is_codeact_available
         
-        if is_opensandbox_enabled():
+        if is_codeact_available():
             # Try to reuse existing sandbox from session
             existing_sandbox_id = None
             if state.parent_state:
@@ -3326,22 +3363,18 @@ except Exception as e:
                 if existing_sandbox_id:
                     print(f"  [ParamPreprocess] Reusing session sandbox for conversion: {existing_sandbox_id}")
             
-            result = run_code_in_opensandbox_sync(
-                code=conversion_code,
-                task_id=f"csv_to_fasta_{task_id}",
+            result = execute_code_via_codeact(
+                task_description=f"将 CSV {csv_path_normalized} 转换为 FASTA 格式",
+                code_template=conversion_code,
+                sandbox_id=existing_sandbox_id,
                 timeout_seconds=60,
-                env={},  # No special env needed
-                existing_sandbox_id=existing_sandbox_id,
-                keep_alive=True,  # Keep for subsequent tasks
+                keep_alive=True
             )
             
-            if result:
-                stdout = result.get("stdout", "") + result.get("formatted_output", "")
-                stderr = result.get("stderr", "")
+            if result.is_success():
+                stdout = result.output
                 print(f"  [ParamPreprocess] Conversion output:")
                 print(f"    stdout: {stdout[:1000]}..." if len(stdout) > 1000 else f"    stdout: {stdout}")
-                if stderr:
-                    print(f"    stderr: {stderr[:300]}")
                 
                 if "__CSV_TO_FASTA_SUCCESS__:" in stdout:
                     for line in stdout.split("\n"):
@@ -3352,34 +3385,25 @@ except Exception as e:
                                 seq_count = parts[2].strip()
                                 
                                 # CRITICAL: Convert container path to server path for MCP services
-                                # Container uses /tmp/sessions/..., MCP services need /data/sessions/...
                                 if container_fasta_path.startswith("/tmp/sessions/"):
                                     server_fasta_path = container_fasta_path.replace("/tmp/sessions/", "/data/sessions/", 1)
                                 else:
                                     server_fasta_path = container_fasta_path
                                 
                                 print(f"  [ParamPreprocess] Conversion successful: {server_fasta_path} ({seq_count} sequences)")
-                                print(f"  [ParamPreprocess] Container path: {container_fasta_path}")
-                                print(f"  [ParamPreprocess] Server path (for MCP): {server_fasta_path}")
                                 return server_fasta_path
                 elif "__CSV_NOT_FOUND__:" in stdout:
-                    for line in stdout.split("\n"):
-                        if "__CSV_NOT_FOUND__:" in line:
-                            path = line.split(":", 1)[1].strip() if ":" in line else "unknown"
-                            print(f"  [ParamPreprocess] CSV file not found: {path}")
+                    print(f"  [ParamPreprocess] CSV file not found")
                 elif "__CSV_NO_SEQ_COLUMNS__" in stdout:
                     print(f"  [ParamPreprocess] No sequence columns found in CSV")
                 elif "__CSV_NO_VALID_SEQS__" in stdout:
                     print(f"  [ParamPreprocess] No valid sequences found in CSV columns")
                 elif "__CSV_TO_FASTA_ERROR__:" in stdout:
-                    for line in stdout.split("\n"):
-                        if "__CSV_TO_FASTA_ERROR__:" in line:
-                            error_msg = line.split(":", 1)[1].strip() if ":" in line else "unknown"
-                            print(f"  [ParamPreprocess] Conversion error: {error_msg}")
+                    print(f"  [ParamPreprocess] Conversion error in output")
                 else:
                     print(f"  [ParamPreprocess] No expected markers in output")
             else:
-                print(f"  [ParamPreprocess] Sandbox returned empty result")
+                print(f"  [ParamPreprocess] Conversion failed: {result.error}")
         else:
             print(f"  [ParamPreprocess] OpenSandbox not enabled")
     except Exception as e:
@@ -3561,10 +3585,11 @@ print(f"[NetTCR Prep] Total rows: {{len(output_rows)}}")
 print(f"__NETTCR_CSV_PREPARED__:{{output_path}}:{{len(output_rows)}}")
 '''
     
+    # 使用 codeact_executor 统一接口 (遵循架构原则)
     try:
-        from utils.opensandbox_executor import run_code_in_opensandbox_sync, is_opensandbox_enabled
+        from utils.codeact_executor import execute_code_via_codeact, is_codeact_available
         
-        if is_opensandbox_enabled():
+        if is_codeact_available():
             # Try to reuse existing sandbox from session
             existing_sandbox_id = None
             if state.parent_state:
@@ -3573,17 +3598,16 @@ print(f"__NETTCR_CSV_PREPARED__:{{output_path}}:{{len(output_rows)}}")
                 if existing_sandbox_id:
                     print(f"  [NetTCR Prep] Reusing session sandbox: {existing_sandbox_id}")
             
-            result = run_code_in_opensandbox_sync(
-                code=preparation_code,
-                task_id=f"nettcr_prep_{task_id}",
+            result = execute_code_via_codeact(
+                task_description=f"准备 NetTCR 输入 CSV: {csv_path_normalized}",
+                code_template=preparation_code,
+                sandbox_id=existing_sandbox_id,
                 timeout_seconds=60,
-                env={},
-                existing_sandbox_id=existing_sandbox_id,
-                keep_alive=True,
+                keep_alive=True
             )
             
-            if result:
-                stdout = result.get("stdout", "") + result.get("formatted_output", "")
+            if result.is_success():
+                stdout = result.output
                 print(f"  [NetTCR Prep] Output: {stdout[:500]}..." if len(stdout) > 500 else f"  [NetTCR Prep] Output: {stdout}")
                 
                 if "__NETTCR_CSV_PREPARED__:" in stdout:
@@ -3595,9 +3619,9 @@ print(f"__NETTCR_CSV_PREPARED__:{{output_path}}:{{len(output_rows)}}")
                 elif "__NETTCR_CSV_NOT_FOUND__:" in stdout:
                     print(f"  [NetTCR Prep] CSV file not found")
             else:
-                print(f"  [NetTCR Prep] Sandbox returned empty result")
+                print(f"  [NetTCR Prep] Execution failed: {result.error}")
         else:
-            print(f"  [NetTCR Prep] OpenSandbox not enabled")
+            print(f"  [NetTCR Prep] CodeAct not available")
     except Exception as e:
         print(f"  [NetTCR Prep] Preparation error: {e}")
         import traceback
@@ -3940,10 +3964,11 @@ except Exception as e:
     traceback.print_exc()
 '''
     
+    # 使用 codeact_executor 统一接口 (遵循架构原则)
     try:
-        from utils.opensandbox_executor import run_code_in_opensandbox_sync, is_opensandbox_enabled
+        from utils.codeact_executor import execute_code_via_codeact, is_codeact_available
         
-        if is_opensandbox_enabled():
+        if is_codeact_available():
             # Try to reuse existing sandbox from session
             existing_sandbox_id = None
             if state.parent_state:
@@ -3952,22 +3977,18 @@ except Exception as e:
                 if existing_sandbox_id:
                     print(f"  [ParamPreprocess] Reusing session sandbox for TCR conversion: {existing_sandbox_id}")
             
-            result = run_code_in_opensandbox_sync(
-                code=conversion_code,
-                task_id=f"tcr_to_nettcr_{task_id}",
+            result = execute_code_via_codeact(
+                task_description=f"将 TCR CSV 转换为 NetTCR 格式: {csv_path}",
+                code_template=conversion_code,
+                sandbox_id=existing_sandbox_id,
                 timeout_seconds=60,
-                env={},
-                existing_sandbox_id=existing_sandbox_id,
-                keep_alive=True,
+                keep_alive=True
             )
             
-            if result:
-                stdout = result.get("stdout", "") + result.get("formatted_output", "")
-                stderr = result.get("stderr", "")
+            if result.is_success():
+                stdout = result.output
                 print(f"  [ParamPreprocess] TCR conversion output:")
                 print(f"    stdout: {stdout[:1000]}..." if len(stdout) > 1000 else f"    stdout: {stdout}")
-                if stderr:
-                    print(f"    stderr: {stderr[:300]}")
                 
                 if "__TCR_TO_NETTCR_SUCCESS__:" in stdout:
                     for line in stdout.split("\n"):
@@ -3986,14 +4007,11 @@ except Exception as e:
                                 print(f"  [ParamPreprocess] TCR conversion successful: {server_output_path} ({row_count} rows)")
                                 return server_output_path
                 elif "__TCR_TO_NETTCR_ERROR__:" in stdout:
-                    for line in stdout.split("\n"):
-                        if "__TCR_TO_NETTCR_ERROR__:" in line:
-                            error_msg = line.split(":", 1)[1].strip() if ":" in line else "unknown"
-                            print(f"  [ParamPreprocess] TCR conversion error: {error_msg}")
+                    print(f"  [ParamPreprocess] TCR conversion error in output")
             else:
-                print(f"  [ParamPreprocess] Sandbox returned empty result")
+                print(f"  [ParamPreprocess] Execution failed: {result.error}")
         else:
-            print(f"  [ParamPreprocess] OpenSandbox not enabled")
+            print(f"  [ParamPreprocess] CodeAct not available")
     except Exception as e:
         print(f"  [ParamPreprocess] TCR conversion execution error: {e}")
         import traceback
@@ -4414,6 +4432,15 @@ def _resolve_param_from_dependencies(
                         normalized = _normalize_inferred_param_value(param_name, param_type, output_file)
                         if normalized is not None:
                             return normalized
+                    
+                    # Special handling: tcell service tools need integrated_tcr_data.rds from integrate_tcr_data_complete
+                    # This ensures downstream tcell tools can find the fixed output filename
+                    if dep_tool_name == "integrate_tcr_data_complete" and param_name == "input_file":
+                        if output_file.endswith(".rds"):
+                            print(f"  [ResolveParam] Found integrated TCR RDS from integrate_tcr_data_complete: {output_file}")
+                            normalized = _normalize_inferred_param_value(param_name, param_type, output_file)
+                            if normalized is not None:
+                                return normalized
         
         # STEP 3: Fall back to raw dependency output extraction
         # Determine expected file type from expected_exts for filtering
@@ -4923,6 +4950,34 @@ def initialize_tasks_node(state: ExecutorState) -> ExecutorState:
     ready_count = sum(1 for s in state.task_status_map.values() if s == ExecutorTaskStatus.READY)
     print(f"  Ready tasks: {ready_count}, waiting for dependencies: {state.total_tasks - ready_count}")
     
+    # =================================================================
+    # Generate todo-list.md in sandbox directory
+    # This allows codeact to track task progress via TodoListManager
+    # =================================================================
+    try:
+        from .todolist_generator import generate_and_save_todolist_from_state
+        
+        # Get sandbox directory from parent_state or state
+        sandbox_dir = None
+        if state.parent_state:
+            # Prefer sandbox_data_dir (session directory) over sandbox_dir
+            sandbox_dir = getattr(state.parent_state, 'sandbox_data_dir', None) or state.sandbox_dir
+        
+        if sandbox_dir and state.parent_state:
+            # Create a minimal GlobalState-like object for todolist generator
+            # We use parent_state directly since it's a GlobalState
+            todo_list = generate_and_save_todolist_from_state(state.parent_state, sandbox_dir)
+            if todo_list:
+                print(f"  📋 Generated todo-list.md with {len(todo_list.tasks)} tasks")
+            else:
+                print(f"  ⚠️ Failed to generate todo-list.md")
+        else:
+            print(f"  ⚠️ No sandbox directory available, skipping todo-list.md generation")
+    except Exception as e:
+        print(f"  ⚠️ Error generating todo-list.md: {e}")
+        import traceback
+        traceback.print_exc()
+    
     return state
 
 
@@ -5182,6 +5237,55 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
                 return True
             return False
         
+        # Build a set of all valid file paths from parameter table
+        # Parameter table = user input files + tool output files
+        # File type parameters MUST come from this table
+        def _build_valid_file_paths_set() -> Set[str]:
+            """Build set of all valid file paths from parameter table."""
+            valid_paths: Set[str] = set()
+            
+            # 1. User input files (from preprocessing)
+            for file_key, file_info in preprocess_files.items():
+                if isinstance(file_info, dict):
+                    sandbox_path = file_info.get("sandbox_path", "")
+                    original_path = file_info.get("original_path", "")
+                    if sandbox_path:
+                        valid_paths.add(sandbox_path)
+                    if original_path:
+                        valid_paths.add(original_path)
+            
+            # 2. Tool output files (from task_outputs)
+            if state.parent_state and hasattr(state.parent_state, 'extracted_parameters'):
+                task_outputs = state.parent_state.extracted_parameters.get("task_outputs", {})
+                for task_id, output_info in task_outputs.items():
+                    if isinstance(output_info, dict):
+                        output_files = output_info.get("output_files", [])
+                        for out_file in output_files:
+                            if isinstance(out_file, str) and out_file:
+                                valid_paths.add(out_file)
+            
+            return valid_paths
+        
+        _valid_file_paths = _build_valid_file_paths_set()
+        
+        def _is_valid_file_param_value(val: Any, is_file_param: bool) -> bool:
+            """Check if a file parameter value exists in the parameter table.
+            
+            Core principle: File type parameters MUST come from:
+            1. User input files (preprocess_files)
+            2. Tool output files (task_outputs)
+            
+            Any file path not in this table is considered invalid/fabricated.
+            """
+            if not is_file_param:
+                return True  # Non-file params don't need validation
+            
+            if not isinstance(val, str):
+                return False
+            
+            # Check if value exists in valid file paths
+            return val in _valid_file_paths
+        
         # Build a mapping from original paths to sandbox paths for path conversion
         original_to_sandbox_path: Dict[str, str] = {}
         for file_key, file_info in preprocess_files.items():
@@ -5205,6 +5309,16 @@ def infer_parameters_node(state: ExecutorState) -> ExecutorState:
                 if _is_placeholder_value(value):
                     print(f"  [ParamInfer] Skipping placeholder value for {key}: {value}")
                     continue
+                
+                # CRITICAL: For file type parameters, validate that the value exists in parameter table
+                # Parameter table = user input files + tool output files
+                # This prevents using LLM-fabricated file paths that don't exist
+                is_file_param = _is_file_type(key, None)  # Use param name to detect file type
+                if is_file_param and isinstance(value, str):
+                    if not _is_valid_file_param_value(value, is_file_param):
+                        print(f"  [ParamInfer] Skipping invalid file path for {key}: {value} (not in parameter table)")
+                        print(f"  [ParamInfer] Valid paths in table: {len(_valid_file_paths)} files")
+                        continue
                 
                 # CRITICAL: Convert original paths to sandbox paths
                 # Task decomposition may use original paths, but sandbox needs sandbox paths
@@ -5424,14 +5538,27 @@ Return JSON format:
                     else:
                         print(f"  [ParamInfer] rds_fields already set and matches: {all_params.get('rds_fields')}")
             
-            # Special handling for bioinformatics service tools:
+            # Special handling for integrate_tcr_data_complete: always use "main_name" for csv_fields and rds_fields
+            # This is simpler than BCR integration - no need to infer from meta CSV or trigger HITL
+            if tool_name == "integrate_tcr_data_complete":
+                print(f"  [ParamInfer] Processing integrate_tcr_data_complete - auto-filling csv_fields and rds_fields with 'main_name'")
+                
+                # Always use "main_name" for TCR integration
+                all_params["csv_fields"] = "main_name"
+                all_params["rds_fields"] = "main_name"
+                param_sources["csv_fields"] = "auto_inferred"
+                param_sources["rds_fields"] = "auto_inferred"
+                print(f"  [ParamInfer] ✓ Auto-filled csv_fields=main_name and rds_fields=main_name for {tool_name}")
+            
+            # Special handling for bioinformatics, tcell, bcell service tools:
             # These tools typically require integrated RDS files as input
             # Auto-match the latest (highest n) integrated_n.rds file
             # Also auto-fill base_dir to sandbox output directory
             # IMPORTANT: Put values directly in all_params to prevent override by PRIORITY 0/1
             tool_service = tool_params.get("service", "")
-            if tool_service == "bioinformatics":
-                print(f"  [ParamInfer] Bioinformatics tool detected: {tool_name}")
+            bioinformatics_services = {"bioinformatics", "tcell", "bcell", "immune"}
+            if tool_service in bioinformatics_services:
+                print(f"  [ParamInfer] Bioinformatics/tcell/bcell tool detected: {tool_name} (service={tool_service})")
                 
                 # Get sandbox output directory for base_dir
                 # Note: sandbox_data_dir is already initialized at function scope above
@@ -5452,7 +5579,7 @@ Return JSON format:
                         if sandbox_output_dir and p_name not in all_params:
                             all_params[p_name] = sandbox_output_dir
                             param_sources[p_name] = "bioinformatics_auto"
-                            print(f"  [ParamInfer] Auto-filled {p_name}={sandbox_output_dir} for bioinformatics tool (highest priority)")
+                            print(f"  [ParamInfer] Auto-filled {p_name}={sandbox_output_dir} for {tool_service} tool (highest priority)")
                 
                 # Look for input_file parameter that expects RDS
                 for p in input_params:
@@ -5540,10 +5667,17 @@ Return JSON format:
                 param_type = param.get("type", "")
                 param_desc = param.get("description", "")
                 param_deme = param.get("deme") or param.get("demo", "")
-                is_optional = "optional" in param_type.lower() or param_type.startswith("Optional")
+                # CRITICAL FIX: Use 'required' field from tools_params_table, not type string
+                # Before: is_optional = "optional" in param_type.lower() or param_type.startswith("Optional")
+                # This was WRONG because tools_params_table uses 'required' field, not 'optional' in type
+                is_required = param.get("required", True)  # Default to True (required) if not specified - safer
+                is_optional = not is_required  # A parameter is optional if it's NOT required
                 
                 if not param_name:
                     continue
+                
+                # Debug: log parameter requirement status
+                print(f"  [ParamInfer] Parameter '{param_name}' for tool '{tool_name}': required={is_required}, optional={is_optional}")
                 
                 # Check if parameter is already in all_params (from parameter inference results)
                 # Also check if it's in missing_params with tool prefix
@@ -5838,6 +5972,10 @@ Return JSON format:
                         # Check if it looks like a DOI or paper ID (e.g., "10.1074/jbc.RA123.045678")
                         if re_module.match(r'^\d+\.\d+/[a-zA-Z0-9._-]+$', raw_value) or re_module.match(r'^[a-zA-Z0-9._-]+/\d+$', raw_value):
                             print(f"    [ParamValidate] Rejecting invalid parameter value (looks like DOI/paper ID): {raw_value}")
+                            # CRITICAL FIX: Must add to missing_params if not optional
+                            if not is_optional:
+                                missing_params.append(f"{tool_name}.{param_name}")
+                                print(f"    [ParamValidate] Added {param_name} to missing_params (invalid value rejected)")
                             continue
                         # For file parameters, must validate against parameter table
                         if _is_file_type(param_name, param_type):
@@ -5849,6 +5987,11 @@ Return JSON format:
                             )
                             if not is_in_param_table:
                                 print(f"    [ParamValidate] Rejecting file parameter value not in parameter table: {raw_value}")
+                                # CRITICAL FIX: Must add to missing_params if not optional
+                                # Previously this was just 'continue' which skipped adding to missing_params
+                                if not is_optional:
+                                    missing_params.append(f"{tool_name}.{param_name}")
+                                    print(f"    [ParamValidate] Added {param_name} to missing_params (required file param rejected)")
                                 continue
                     
                     normalized = _normalize_inferred_param_value(param_name, param_type, raw_value)
@@ -6114,12 +6257,13 @@ Return JSON format:
 
             if _tool_requires_matched_fields(input_params):
                 # Validate and align csv_fields and rds_fields (ensure they match)
-                # Note: For integrate_bcr_data_complete, csv_fields and rds_fields are already
-                # auto-filled BEFORE the parameter loop, so this just ensures they match
+                # Note: For integrate_bcr_data_complete and integrate_tcr_data_complete, 
+                # csv_fields and rds_fields are already auto-filled BEFORE the parameter loop,
+                # so this just ensures they match
                 _validate_matched_fields(tool_name, all_params, missing_params)
                 
                 # Ensure these parameters are not in missing_params (they were auto-filled)
-                if tool_name == "integrate_bcr_data_complete":
+                if tool_name in ("integrate_bcr_data_complete", "integrate_tcr_data_complete"):
                     if "csv_fields" in all_params:
                         missing_params[:] = [p for p in missing_params if not p.endswith(".csv_fields")]
                     if "rds_fields" in all_params:
@@ -6220,12 +6364,13 @@ Return JSON format:
                             # Note: MetaBcr output file name is dynamic (based on input file names)
                             # The actual output path will be extracted from MCP response after execution
                         # Special handling for integrate_tcr_data_complete output_path - should output RDS file
+                        # Use FIXED filename "integrated_tcr_data.rds" so downstream tools can find it
                         elif tool_name == "integrate_tcr_data_complete" and p_name == "output_path":
-                            auto_output = f"{sandbox_data_dir}/output/integrated_tcr_{task.task_id}.rds"
+                            auto_output = f"{sandbox_data_dir}/output/integrated_tcr_data.rds"
                             all_params[p_name] = auto_output
                             param_sources[p_name] = "auto_generated"
                             missing_params[:] = [p for p in missing_params if not p.endswith(f".{p_name}")]
-                            print(f"  [ParamInfer] Auto-generated {p_name}={auto_output} for {tool_name} (RDS output)")
+                            print(f"  [ParamInfer] Auto-generated {p_name}={auto_output} for {tool_name} (fixed RDS output for downstream tools)")
                         else:
                             # For other output parameters, check if already valid before replacing
                             existing_value = all_params.get(p_name)
@@ -6877,8 +7022,9 @@ def execute_tasks_node(state: ExecutorState) -> ExecutorState:
                     input_params = tool_params.get("input_params", [])
                     for param in input_params:
                         if param.get("name") == param_name:
-                            param_type = param.get("type", "")
-                            is_optional = "optional" in param_type.lower() or param_type.startswith("Optional")
+                            # CRITICAL FIX: Use 'required' field from tools_params_table
+                            is_required = param.get("required", True)  # Default to True (required)
+                            is_optional = not is_required
                             break
                 
                 if not is_optional:
@@ -7418,6 +7564,28 @@ def _receive_sse_messages(sse_url: str, task_id: str, service_id: str, timeout: 
                             # 这是最重要的消息，保存为final_result
                             final_result = message_data
                             print(f"  ✓ [streaming_task] Received result message (tool execution result)")
+                            
+                            # 修复问题2: 检查 result 消息内容是否包含错误信息
+                            # 即使 status 字段为 success，如果 message 内容以 "Error:" 开头，也应标记为失败
+                            if message_content and isinstance(message_content, str):
+                                content_stripped = message_content.strip()
+                                # 检测常见错误模式
+                                error_patterns = [
+                                    "Error:",
+                                    "error:",
+                                    "ERROR:",
+                                    "Integration failed",
+                                    "Processing failed",
+                                    "Execution failed",
+                                    "Failed to",
+                                    "Exception:",
+                                ]
+                                for pattern in error_patterns:
+                                    if content_stripped.startswith(pattern) or f"\n{pattern}" in content_stripped:
+                                        task_failed = True
+                                        error_msg = content_stripped
+                                        print(f"  ✗ [streaming_task] Detected error in result message: {error_msg[:200]}")
+                                        break
                             # 不要break，继续等待end消息
                         elif message_type == "task_completed" or (message_type == "progress" and status == "completed"):
                             # task_completed 或 progress消息中status为completed，只是表示任务完成
@@ -7970,11 +8138,23 @@ def analyze_results_node(state: ExecutorState) -> ExecutorState:
                     has_explicit_error = True
                     error_message = "Task execution returned error status"
         
+        # ========== NEW: Validate data effectiveness ==========
+        # Even if no explicit error, check if the returned data is actually valid
+        if not has_explicit_error:
+            tool_name = _extract_tool_name_from_task(task)
+            data_valid, data_error = _validate_result_data_validity(result, tool_name)
+            if not data_valid:
+                has_explicit_error = True
+                error_message = data_error
+                print(f"  ⚠ Task {task.task_id} returned invalid data: {data_error}")
+        
         # If no explicit error, mark as satisfied and continue without HITL
         if not has_explicit_error:
             result.result_satisfied = True
-            result.confidence_score = 0.9
-            print(f"  ✓ Task {task.task_id} completed without errors, continuing...")
+            # Calculate confidence score based on multiple factors
+            tool_name = _extract_tool_name_from_task(task)
+            result.confidence_score = _calculate_confidence_score(result, tool_name)
+            print(f"  ✓ Task {task.task_id} completed without errors (confidence: {result.confidence_score:.2f}), continuing...")
         else:
             # Only trigger HITL for explicit errors
             result.result_satisfied = False
@@ -7995,6 +8175,166 @@ def analyze_results_node(state: ExecutorState) -> ExecutorState:
             result.result_summary = _build_task_result_summary(task, result)
     
     return state
+
+
+def _extract_tool_name_from_task(task: SubTask) -> str:
+    """Extract tool name from task content or result."""
+    # Try to get tool name from task result
+    if task.result and isinstance(task.result, dict):
+        tools = task.result.get("tools", [])
+        if tools and isinstance(tools, list) and len(tools) > 0:
+            first_tool = tools[0]
+            if isinstance(first_tool, dict):
+                return first_tool.get("tool_name", first_tool.get("name", ""))
+            elif isinstance(first_tool, str):
+                return first_tool
+    
+    # Try to extract from task content
+    content = task.content.lower() if task.content else ""
+    
+    # Common tool name patterns in task content
+    tool_patterns = [
+        "extract_cdr3_from_airr", "analyze_vdj_batch", "integrate_tcr_data_complete",
+        "integrate_bcr_data_complete", "predict_tcr_binding_complete", "metabcr",
+        "tcr_clonotype_analysis", "tcell_celltype_visualization", "tcr_binding_visualization"
+    ]
+    
+    for pattern in tool_patterns:
+        if pattern in content:
+            return pattern
+    
+    return ""
+
+
+def _validate_result_data_validity(result: TaskExecutionResult, tool_name: str) -> tuple:
+    """
+    Validate if the returned data is actually valid, not just "status: success" with null data.
+    
+    Args:
+        result: Task execution result
+        tool_name: Name of the tool that was executed
+        
+    Returns:
+        (is_valid, error_message) - is_valid is True if data is valid, False otherwise
+    """
+    if not result.output:
+        # Empty output might be normal for some tools
+        return True, ""
+    
+    output_data = result.output if isinstance(result.output, dict) else {}
+    
+    # ========== Tool-specific validation ==========
+    
+    # For extract_cdr3_from_airr - check if CDR3 results are all null
+    if tool_name == "extract_cdr3_from_airr":
+        cdr3_results = output_data.get("cdr3_results", [])
+        if cdr3_results and len(cdr3_results) > 0:
+            # Check if all records have all null values
+            all_null_count = 0
+            for record in cdr3_results:
+                if isinstance(record, dict):
+                    if all(v is None for v in record.values()):
+                        all_null_count += 1
+            
+            if all_null_count == len(cdr3_results):
+                return False, f"All {len(cdr3_results)} CDR3 records are null - no valid data extracted from input"
+            elif all_null_count > len(cdr3_results) * 0.9:
+                # More than 90% are null - likely a problem
+                return False, f"{all_null_count}/{len(cdr3_results)} CDR3 records are null - data extraction mostly failed"
+    
+    # For analyze_vdj_batch - check if V/D/J annotations are present
+    if tool_name == "analyze_vdj_batch":
+        # Check for AIRR format results
+        airr_results = output_data.get("airr_results", [])
+        if airr_results and len(airr_results) > 0:
+            # Check if at least some records have V gene annotations
+            v_gene_count = sum(
+                1 for r in airr_results 
+                if isinstance(r, dict) and r.get("v_call")
+            )
+            if v_gene_count == 0:
+                return False, f"No V gene annotations found in {len(airr_results)} AIRR records"
+    
+    # For tcell visualization tools - check if input file exists error
+    if tool_name in ["tcr_clonotype_analysis", "tcell_celltype_visualization", "tcr_binding_visualization"]:
+        # Check for "file does not exist" error in message
+        message = output_data.get("message", "") or output_data.get("content", "")
+        if "does not exist" in message.lower() or "file not found" in message.lower():
+            return False, f"Input file not found: {message}"
+    
+    # For integration tools - check if output file was actually created
+    if tool_name in ["integrate_tcr_data_complete", "integrate_bcr_data_complete"]:
+        result_path = output_data.get("result_path", [])
+        if isinstance(result_path, str):
+            result_path = [result_path]
+        if not result_path or not any(".rds" in str(p) for p in result_path):
+            # Check in final_result as well
+            final_result = output_data.get("final_result", {})
+            if isinstance(final_result, dict):
+                result_path = final_result.get("result_path", [])
+                if isinstance(result_path, str):
+                    result_path = [result_path]
+            if not result_path or not any(".rds" in str(p) for p in result_path):
+                return False, "Integration completed but no RDS output file was generated"
+    
+    return True, ""
+
+
+def _calculate_confidence_score(result: TaskExecutionResult, tool_name: str) -> float:
+    """
+    Calculate confidence score based on multiple factors.
+    
+    Factors:
+    1. Execution status (success/failed)
+    2. Output file existence
+    3. Data validity (non-empty, correct format)
+    4. Execution time reasonability
+    5. Statistics information presence
+    
+    Returns:
+        Confidence score between 0.0 and 1.0
+    """
+    base_score = 0.5
+    
+    output_data = result.output if isinstance(result.output, dict) else {}
+    
+    # Factor 1: Check if output files were generated
+    result_paths = output_data.get("result_path", [])
+    if isinstance(result_paths, str):
+        result_paths = [result_paths]
+    if result_paths and len(result_paths) > 0:
+        base_score += 0.2
+    
+    # Factor 2: Check for statistics information
+    if "statistics" in output_data:
+        base_score += 0.1
+    
+    # Factor 3: Check for meaningful message
+    message = output_data.get("message", "")
+    if message and len(message) > 20:
+        base_score += 0.1
+    
+    # Factor 4: Tool-specific checks
+    if tool_name == "extract_cdr3_from_airr":
+        cdr3_results = output_data.get("cdr3_results", [])
+        if cdr3_results:
+            valid_count = sum(
+                1 for r in cdr3_results 
+                if isinstance(r, dict) and any(v is not None for v in r.values())
+            )
+            validity_ratio = valid_count / len(cdr3_results) if cdr3_results else 0
+            base_score += 0.1 * validity_ratio
+    
+    # Factor 5: Check execution time (too fast might indicate no actual processing)
+    if result.execution_time < 1.0 and result_paths:
+        # Executed in less than 1 second but has output files - suspicious
+        base_score -= 0.05
+    elif result.execution_time > 60:
+        # Long execution time - likely did real work
+        base_score += 0.05
+    
+    # Clamp to [0.0, 1.0]
+    return min(1.0, max(0.0, base_score))
 
 
 def check_hitl_confirm_node(state: ExecutorState) -> Literal["hitl_confirm", "activate"]:
@@ -8459,6 +8799,67 @@ def summary_results_node(state: ExecutorState) -> ExecutorState:
     
     print(f"{'='*60}\n")
     
+    # =================================================================
+    # Update todo-list.md with final task statuses
+    # This ensures the todo-list reflects the final execution state
+    # =================================================================
+    try:
+        from .todolist_generator import update_task_status_in_todolist, TodoTaskStatus
+        
+        # Get sandbox directory from parent_state or state
+        sandbox_dir = None
+        if state.parent_state:
+            sandbox_dir = getattr(state.parent_state, 'sandbox_data_dir', None) or state.sandbox_dir
+        
+        if sandbox_dir:
+            # Map ExecutorTaskStatus to TodoTaskStatus
+            status_map = {
+                ExecutorTaskStatus.COMPLETED: TodoTaskStatus.COMPLETED,
+                ExecutorTaskStatus.FAILED: TodoTaskStatus.FAILED,
+                ExecutorTaskStatus.READY: TodoTaskStatus.PENDING,
+                ExecutorTaskStatus.RUNNING: TodoTaskStatus.IN_PROGRESS,
+                ExecutorTaskStatus.WAITING_DEPENDENCY: TodoTaskStatus.PENDING,
+                ExecutorTaskStatus.WAITING_HITL_PARAMS: TodoTaskStatus.PENDING,
+                ExecutorTaskStatus.WAITING_HITL_CONFIRM: TodoTaskStatus.PENDING,
+            }
+            
+            updated_count = 0
+            for task in state.subtasks:
+                executor_status = state.task_status_map.get(task.task_id)
+                if executor_status:
+                    todo_status = status_map.get(executor_status, TodoTaskStatus.PENDING)
+                    
+                    # Get result and error from task_results
+                    task_result = state.task_results.get(task.task_id)
+                    result_dict = None
+                    error_msg = None
+                    
+                    if task_result:
+                        if task_result.output:
+                            if isinstance(task_result.output, dict):
+                                result_dict = task_result.output
+                            else:
+                                result_dict = {"output": str(task_result.output)}
+                        if task_result.error:
+                            error_msg = task_result.error
+                    
+                    # Update task status in todo-list.md
+                    if update_task_status_in_todolist(
+                        sandbox_dir=sandbox_dir,
+                        task_id=task.task_id,
+                        status=todo_status,
+                        result=result_dict,
+                        error=error_msg
+                    ):
+                        updated_count += 1
+            
+            if updated_count > 0:
+                print(f"  📋 Updated {updated_count} task statuses in todo-list.md")
+    except Exception as e:
+        print(f"  ⚠️ Error updating todo-list.md: {e}")
+        import traceback
+        traceback.print_exc()
+    
     return state
 
 
@@ -8562,12 +8963,13 @@ def executor_input_mapper(global_state: GlobalState) -> ExecutorState:
     return executor_state
 
 
-def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalState) -> GlobalState:
+def executor_output_mapper(executor_state: Union[ExecutorState, Dict], global_state: GlobalState) -> GlobalState:
     """
     Map Executor subgraph state back to main graph state
     
     Args:
         executor_state: Executor subgraph state (subtasks already merged with parallel groups)
+                       Can be ExecutorState object or dict (from LangGraph invoke)
         global_state: Main graph global state
     
     Returns:
@@ -8577,26 +8979,55 @@ def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalSt
     # So executor_state.subtasks contains ALL tasks (serial + parallel)
     # We should update global_state.subtasks to match executor_state.subtasks to avoid counting issues
     
+    # Handle case where executor_state might be a dict (from LangGraph invoke)
+    if isinstance(executor_state, dict):
+        executor_subtasks = executor_state.get("subtasks", [])
+        task_results_raw = executor_state.get("task_results", {})
+        total_tasks = executor_state.get("total_tasks", 0)
+        completed_count = executor_state.get("completed_count", 0)
+        failed_count = executor_state.get("failed_count", 0)
+        hitl_requests = executor_state.get("hitl_requests", {})
+        hitl_responses = executor_state.get("hitl_responses", {})
+    else:
+        executor_subtasks = executor_state.subtasks if hasattr(executor_state, 'subtasks') else []
+        task_results_raw = executor_state.task_results if hasattr(executor_state, 'task_results') else {}
+        total_tasks = executor_state.total_tasks if hasattr(executor_state, 'total_tasks') else 0
+        completed_count = executor_state.completed_count if hasattr(executor_state, 'completed_count') else 0
+        failed_count = executor_state.failed_count if hasattr(executor_state, 'failed_count') else 0
+        hitl_requests = executor_state.hitl_requests if hasattr(executor_state, 'hitl_requests') else {}
+        hitl_responses = executor_state.hitl_responses if hasattr(executor_state, 'hitl_responses') else {}
+    
     # Update global_state.subtasks to match executor's merged subtasks
     # This ensures consistency between executor_state.total_tasks and test's all_tasks count
-    if executor_state.subtasks:
+    if executor_subtasks:
         # Create a mapping of task_id -> task for quick lookup
-        executor_task_map = {task.task_id: task for task in executor_state.subtasks}
+        executor_task_map = {}
+        for task in executor_subtasks:
+            if hasattr(task, 'task_id'):
+                executor_task_map[task.task_id] = task
+            elif isinstance(task, dict):
+                executor_task_map[task.get('task_id', '')] = task
         
         # Update existing tasks in global_state.subtasks with executor results
         updated_subtasks = []
         for task in global_state.subtasks:
             if task.task_id in executor_task_map:
                 # Update with executor's version (which may have been merged from parallel groups)
-                updated_subtasks.append(executor_task_map[task.task_id])
+                updated_task = executor_task_map[task.task_id]
+                if hasattr(updated_task, 'task_id'):
+                    updated_subtasks.append(updated_task)
+                else:
+                    updated_subtasks.append(task)  # Keep original if can't update
             else:
                 updated_subtasks.append(task)
         
         # Add any tasks from executor that are not in global_state.subtasks
         # (these are tasks that were in parallel groups and merged)
-        for executor_task in executor_state.subtasks:
-            if not any(t.task_id == executor_task.task_id for t in updated_subtasks):
-                updated_subtasks.append(executor_task)
+        for executor_task in executor_subtasks:
+            task_id = executor_task.task_id if hasattr(executor_task, 'task_id') else executor_task.get('task_id', '')
+            if not any(t.task_id == task_id for t in updated_subtasks):
+                if hasattr(executor_task, 'task_id'):
+                    updated_subtasks.append(executor_task)
         
         global_state.subtasks = updated_subtasks
     
@@ -8612,54 +9043,102 @@ def executor_output_mapper(executor_state: ExecutorState, global_state: GlobalSt
     
     # Update results for all tasks
     for task in all_tasks_to_update:
-        task_result = executor_state.task_results.get(task.task_id)
-        if task_result and task_result.status == ExecutorTaskStatus.COMPLETED:
-            # Update task result
-            if not task.result:
-                task.result = {}
-            if isinstance(task.result, dict):
-                task.result["execution_result"] = task_result.output
-                task.result["execution_mode"] = task_result.execution_mode
-                task.result["code"] = task_result.code
-                task.result["confidence_score"] = task_result.confidence_score
-                task.result["execution_summary"] = task_result.result_summary
+        task_result = task_results_raw.get(task.task_id)
+        if task_result:
+            # Handle both object and dict result
+            if hasattr(task_result, 'status'):
+                is_completed = task_result.status == ExecutorTaskStatus.COMPLETED
+                status_value = task_result.status.value if hasattr(task_result.status, 'value') else str(task_result.status)
+                output = task_result.output if hasattr(task_result, 'output') else None
+                execution_mode = task_result.execution_mode if hasattr(task_result, 'execution_mode') else None
+                code = task_result.code if hasattr(task_result, 'code') else None
+                confidence = task_result.confidence_score if hasattr(task_result, 'confidence_score') else None
+                summary = task_result.result_summary if hasattr(task_result, 'result_summary') else None
+                error = task_result.error if hasattr(task_result, 'error') else None
+                error_type = task_result.error_type if hasattr(task_result, 'error_type') else None
+                error_cat = task_result.error_category.value if hasattr(task_result, 'error_category') and task_result.error_category else None
+                exec_time = int(task_result.execution_time * 1000) if hasattr(task_result, 'execution_time') and task_result.execution_time else None
+                failure_analysis = task_result.failure_analysis if hasattr(task_result, 'failure_analysis') else None
+                suggestions = task_result.suggestions if hasattr(task_result, 'suggestions') else None
+            else:
+                status_raw = task_result.get('status', 'unknown')
+                is_completed = status_raw == ExecutorTaskStatus.COMPLETED.value if isinstance(status_raw, str) else False
+                status_value = status_raw.value if hasattr(status_raw, 'value') else str(status_raw)
+                output = task_result.get('output')
+                execution_mode = task_result.get('execution_mode')
+                code = task_result.get('code')
+                confidence = task_result.get('confidence_score')
+                summary = task_result.get('result_summary')
+                error = task_result.get('error')
+                error_type = task_result.get('error_type')
+                error_cat = task_result.get('error_category')
+                exec_time = task_result.get('execution_time_ms')
+                failure_analysis = task_result.get('failure_analysis')
+                suggestions = task_result.get('suggestions')
             
-            # Mark task as completed
-            global_state.completed_tasks[task.task_id] = task
+            if is_completed:
+                # Update task result
+                if not task.result:
+                    task.result = {}
+                if isinstance(task.result, dict):
+                    task.result["execution_result"] = output
+                    task.result["execution_mode"] = execution_mode
+                    task.result["code"] = code
+                    task.result["confidence_score"] = confidence
+                    task.result["execution_summary"] = summary
+                
+                # Mark task as completed
+                global_state.completed_tasks[task.task_id] = task
+    
+    # Build task_results dict for merged_result
+    formatted_task_results = {}
+    for task_id, result in task_results_raw.items():
+        if hasattr(result, 'status'):
+            formatted_task_results[task_id] = {
+                "status": result.status.value if hasattr(result.status, 'value') else str(result.status),
+                "execution_mode": result.execution_mode if hasattr(result, 'execution_mode') else None,
+                "error": result.error if hasattr(result, 'error') else None,
+                "error_type": result.error_type if hasattr(result, 'error_type') else None,
+                "error_category": result.error_category.value if hasattr(result, 'error_category') and result.error_category else None,
+                "execution_time_ms": int(result.execution_time * 1000) if hasattr(result, 'execution_time') and result.execution_time else None,
+                "confidence_score": result.confidence_score if hasattr(result, 'confidence_score') else None,
+                "failure_analysis": result.failure_analysis if hasattr(result, 'failure_analysis') else None,
+                "suggestions": result.suggestions if hasattr(result, 'suggestions') else None,
+                "summary": result.result_summary if hasattr(result, 'result_summary') else None
+            }
+        else:
+            formatted_task_results[task_id] = {
+                "status": result.get('status', 'unknown'),
+                "execution_mode": result.get('execution_mode'),
+                "error": result.get('error'),
+                "error_type": result.get('error_type'),
+                "error_category": result.get('error_category'),
+                "execution_time_ms": result.get('execution_time_ms'),
+                "confidence_score": result.get('confidence_score'),
+                "failure_analysis": result.get('failure_analysis'),
+                "suggestions": result.get('suggestions'),
+                "summary": result.get('result_summary') or result.get('summary')
+            }
     
     # Update summary results
     global_state.merged_result["executor_results"] = {
-        "total_tasks": executor_state.total_tasks,
-        "completed": executor_state.completed_count,
-        "failed": executor_state.failed_count,
-        "task_results": {
-            task_id: {
-                "status": result.status.value,
-                "execution_mode": result.execution_mode,
-                "error": result.error,
-                "error_type": result.error_type,
-                "error_category": result.error_category.value if result.error_category else None,
-                "execution_time_ms": int(result.execution_time * 1000) if result.execution_time else None,
-                "confidence_score": result.confidence_score,
-                "failure_analysis": result.failure_analysis,
-                "suggestions": result.suggestions,
-                "summary": result.result_summary
-            }
-            for task_id, result in executor_state.task_results.items()
-        }
+        "total_tasks": total_tasks,
+        "completed": completed_count,
+        "failed": failed_count,
+        "task_results": formatted_task_results
     }
     
     # Update HITL status (if any)
-    if executor_state.hitl_requests:
+    if hitl_requests:
         pending_hitl = [
-            task_id for task_id in executor_state.hitl_requests.keys()
-            if task_id not in executor_state.hitl_responses
+            task_id for task_id in hitl_requests.keys()
+            if task_id not in hitl_responses
         ]
         if pending_hitl:
             global_state.hitl_status = json.dumps({
                 "type": "request",
                 "requests": [
-                    executor_state.hitl_requests[task_id]
+                    hitl_requests[task_id]
                     for task_id in pending_hitl
                 ]
             }, ensure_ascii=False)

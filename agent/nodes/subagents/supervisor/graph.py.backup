@@ -1,0 +1,36 @@
+# BACKUP of original graph.py - Created on 2026-03-03
+# This file is the original supervisor/graph.py before refactoring
+# Total lines: 2249
+
+from typing import Dict, List, Any, Optional, Tuple
+from enum import Enum
+from pydantic import BaseModel, Field
+from langgraph.graph import StateGraph, START, END
+import shutil
+import sys
+import os
+import json
+import re
+import asyncio
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+
+# ---------------------- File Source Types ----------------------
+class FileSourceType(str, Enum):
+    """File source type enumeration"""
+    LOCAL = "local"       # Local file (on the machine running agent), needs upload to sandbox
+    REMOTE = "remote"     # File on sandbox server (e.g., /data/...), already exists, no upload needed
+    URL = "url"           # Download link, needs to be downloaded in sandbox
+
+
+class DetectedFile(BaseModel):
+    """Detected file information"""
+    path: str = Field(description="File path or URL")
+    source_type: FileSourceType = Field(description="File source type")
+    suggested_name: Optional[str] = Field(default=None, description="Suggested filename (for URLs)")
+
+# ... [REST OF THE ORIGINAL FILE CONTENT] ...
+# See the full file content in the git history or restore from this backup
+

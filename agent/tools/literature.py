@@ -10,6 +10,10 @@ Design:
     - All outputs truncated to 6000 chars max
     - Environment-based API key loading
     - Graceful error handling with descriptive messages
+
+LangChain 1.0+ Compatibility:
+    - All tools use @tool decorator from langchain_core.tools
+    - Tools can be directly bound to LLM via .bind_tools()
 """
 
 import json
@@ -21,6 +25,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Optional
+
+from langchain_core.tools import tool
 
 from ._output import PaperSummary, truncate_output
 
@@ -57,6 +63,7 @@ def _ensure_env_loaded():
 # ---------------------------------------------------------------------------
 # L1: PubMed search via NCBI E-utilities
 # ---------------------------------------------------------------------------
+@tool
 def search_pubmed(
     query: str,
     max_results: int = 10,
@@ -75,9 +82,6 @@ def search_pubmed(
 
     Returns:
         Formatted string with paper summaries, truncated to 6000 chars
-
-    Example:
-        search_pubmed("COVID-19 vaccine", max_results=5, date_from="2023/01/01")
     """
     _ensure_env_loaded()
     api_key = os.getenv("NCBI_API_KEY", "")
@@ -210,6 +214,7 @@ def search_pubmed(
 # ---------------------------------------------------------------------------
 # L2: Get single PubMed abstract by PMID
 # ---------------------------------------------------------------------------
+@tool
 def get_pubmed_abstract(pmid: str) -> str:
     """Retrieve full abstract and metadata for a single PubMed article.
 
@@ -218,9 +223,6 @@ def get_pubmed_abstract(pmid: str) -> str:
 
     Returns:
         Formatted string with title, authors, journal, year, abstract, and MeSH terms
-
-    Example:
-        get_pubmed_abstract("36265145")
     """
     _ensure_env_loaded()
     api_key = os.getenv("NCBI_API_KEY", "")
@@ -323,6 +325,7 @@ def get_pubmed_abstract(pmid: str) -> str:
 # ---------------------------------------------------------------------------
 # L3: Semantic Scholar search
 # ---------------------------------------------------------------------------
+@tool
 def search_semantic_scholar(
     query: str,
     fields: Optional[str] = None,
@@ -339,9 +342,6 @@ def search_semantic_scholar(
 
     Returns:
         Formatted string with paper summaries including citation counts
-
-    Example:
-        search_semantic_scholar("neutralizing antibodies", year_range="2020-2023", max_results=5)
     """
     _ensure_env_loaded()
     api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
@@ -421,6 +421,7 @@ def search_semantic_scholar(
 # ---------------------------------------------------------------------------
 # L4: Get paper citations from Semantic Scholar
 # ---------------------------------------------------------------------------
+@tool
 def get_paper_citations(
     paper_id: str, direction: str = "citations", max_results: int = 20
 ) -> str:
@@ -433,10 +434,6 @@ def get_paper_citations(
 
     Returns:
         Formatted string with citing/cited papers
-
-    Example:
-        get_paper_citations("10.1038/s41586-020-2012-7", direction="citations", max_results=10)
-        get_paper_citations("PMID:32015508", direction="references")
     """
     _ensure_env_loaded()
     api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
@@ -520,6 +517,7 @@ def get_paper_citations(
 # ---------------------------------------------------------------------------
 # L5: Search preprints via rxivist API
 # ---------------------------------------------------------------------------
+@tool
 def search_preprints(query: str, server: str = "biorxiv", max_results: int = 10) -> str:
     """Search preprint servers (BioRxiv/MedRxiv) via rxivist API.
 
@@ -530,9 +528,6 @@ def search_preprints(query: str, server: str = "biorxiv", max_results: int = 10)
 
     Returns:
         Formatted string with preprint summaries
-
-    Example:
-        search_preprints("SARS-CoV-2 variants", server="biorxiv", max_results=5)
 
     Note:
         Uses the rxivist.org API which indexes BioRxiv and MedRxiv preprints.
@@ -607,6 +602,7 @@ def search_preprints(query: str, server: str = "biorxiv", max_results: int = 10)
 # ---------------------------------------------------------------------------
 # L6: Europe PMC search
 # ---------------------------------------------------------------------------
+@tool
 def search_europe_pmc(
     query: str, source: Optional[str] = None, max_results: int = 10
 ) -> str:
@@ -619,10 +615,6 @@ def search_europe_pmc(
 
     Returns:
         Formatted string with paper summaries including abstracts
-
-    Example:
-        search_europe_pmc("immunology", source="PPR", max_results=5)
-        search_europe_pmc("COVID-19 vaccine effectiveness")
 
     Note:
         Source codes: PPR (preprints), MED (PubMed), PMC (PubMed Central), etc.
@@ -718,12 +710,24 @@ def search_europe_pmc(
 # ---------------------------------------------------------------------------
 # Export function
 # ---------------------------------------------------------------------------
-def get_literature_tools() -> dict:
-    """Return dictionary of all literature search tool functions.
+def get_literature_tools() -> list:
+    """Return list of all literature search tool functions as LangChain tools.
 
     Returns:
-        Dict mapping tool names to function references
+        List of LangChain tool objects that can be directly bound to LLM.
     """
+    return [
+        search_pubmed,
+        get_pubmed_abstract,
+        search_semantic_scholar,
+        get_paper_citations,
+        search_preprints,
+        search_europe_pmc,
+    ]
+
+
+def get_literature_tools_dict() -> dict:
+    """Return dictionary of literature tools for backward compatibility."""
     return {
         "search_pubmed": search_pubmed,
         "get_pubmed_abstract": get_pubmed_abstract,

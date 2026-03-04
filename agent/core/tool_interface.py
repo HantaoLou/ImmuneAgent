@@ -213,17 +213,19 @@ try:
 except Exception as e:
     print(f"__CHECK_ERROR__:{{e}}")
 '''
+        # 使用 codeact_executor 统一接口 (遵循架构原则)
         try:
-            from utils.opensandbox_executor import run_code_in_opensandbox_sync
-            result = run_code_in_opensandbox_sync(
-                code=check_code,
-                task_id="check_csv_seq_cols",
-                timeout_seconds=60,
-                env={"OPENSANDBOX_SKIP_MCP_INSTALL": "true"}
+            from utils.codeact_executor import execute_code_via_codeact
+            
+            result = execute_code_via_codeact(
+                task_description=f"检查 CSV 文件序列列: {csv_path}",
+                code_template=check_code,
+                sandbox_id=sandbox_id,
+                timeout_seconds=60
             )
             
-            if result:
-                stdout = result.get("stdout", "") + result.get("formatted_output", "")
+            if result.is_success():
+                stdout = result.output
                 if "__HAS_SEQ_COLS__:" in stdout:
                     return True
                 elif "__NO_SEQ_COLS__" in stdout:
@@ -412,22 +414,25 @@ except Exception as e:
     traceback.print_exc()
     print("__CSV_TO_FASTA_FAILED__")
 '''
+        # 使用 codeact_executor 统一接口 (遵循架构原则)
         try:
-            from utils.opensandbox_executor import run_code_in_opensandbox_sync
-            result = run_code_in_opensandbox_sync(
-                code=conversion_code,
-                task_id="csv_to_fasta_conversion",
-                timeout_seconds=120,
-                env={"OPENSANDBOX_SKIP_MCP_INSTALL": "true"}
+            from utils.codeact_executor import execute_code_via_codeact
+            
+            result = execute_code_via_codeact(
+                task_description=f"将 CSV 转换为 FASTA: {csv_path_normalized}",
+                code_template=conversion_code,
+                sandbox_id=sandbox_id,
+                timeout_seconds=120
             )
             
-            stdout = result.get("stdout", "") + result.get("formatted_output", "") if result else ""
-            if result and "__CSV_TO_FASTA_SUCCESS__" in stdout:
-                for line in stdout.split("\n"):
-                    if "__CSV_TO_FASTA_SUCCESS__:" in line:
-                        parts = line.split(":")
-                        if len(parts) >= 2:
-                            return parts[1]
+            if result.is_success():
+                stdout = result.output
+                if "__CSV_TO_FASTA_SUCCESS__" in stdout:
+                    for line in stdout.split("\n"):
+                        if "__CSV_TO_FASTA_SUCCESS__:" in line:
+                            parts = line.split(":")
+                            if len(parts) >= 2:
+                                return parts[1]
         except Exception as e:
             print(f"  [ToolHook] Remote conversion error: {e}")
     

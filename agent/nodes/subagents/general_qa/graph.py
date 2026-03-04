@@ -29,10 +29,17 @@ from langgraph.graph import StateGraph, START, END
 import json
 import re
 import os
+import sys
+from pathlib import Path
 
-from agent.utils.llm_factory import create_bioinformatics_llm, create_reasoning_llm
-from agent.nodes.subagents.general_qa.state import GeneralQAState
-from agent.nodes.subagents.general_qa.prompt import (
+# 添加 agent 目录到路径
+agent_dir = Path(__file__).parent.parent.parent.parent
+if str(agent_dir) not in sys.path:
+    sys.path.insert(0, str(agent_dir))
+
+from utils.llm_factory import create_bioinformatics_llm, create_reasoning_llm
+from nodes.subagents.general_qa.state import GeneralQAState
+from nodes.subagents.general_qa.prompt import (
     get_input_preprocessing_prompt,
     get_question_decomposition_prompt,
     get_calculation_algorithm_recognition_prompt,
@@ -46,11 +53,11 @@ from agent.nodes.subagents.general_qa.prompt import (
     get_exception_handling_prompt,
     get_manual_intervention_prompt
 )
-from agent.nodes.subagents.general_qa.prompts.domain_mapper import detect_domain_from_state
+from nodes.subagents.general_qa.prompts.domain_mapper import detect_domain_from_state
 
 # Import enhancement modules
 try:
-    from agent.nodes.subagents.general_qa.enhancements import (
+    from nodes.subagents.general_qa.enhancements import (
         SelfConsistencyEngine,
         ChainOfThoughtParser,
         CalculationVerifier,

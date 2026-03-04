@@ -1,0 +1,228 @@
+# MetaBCR Skill Definition
+# Antibody-Antigen Interaction Prediction Service
+# Schema Version: 1.0
+
+# ============================================================
+# META - Metadata
+# ============================================================
+meta:
+  name: "metabcr"
+  version: "1.0"
+  summary: "Antibody-antigen interaction prediction service"
+  description: |
+    MetaBCR: A Deep Learning Framework for Antibody-Antigen Interaction Prediction.
+    Predicts binding affinity between antibodies and antigens using deep learning models.
+    Supports multiple antigen types including influenza (H1N1, H3N2), SARS-CoV-2, RSV, and HIV.
+    Provides streaming progress updates for large-scale predictions.
+  tags:
+    - antibody
+    - antigen-binding
+    - deep-learning
+    - bcr
+    - prediction
+    - affinity
+  capabilities:
+    - "Antibody-antigen binding prediction"
+    - "Multi-antigen support (flu, SARS, RSV, HIV)"
+    - "Deep learning model ensemble"
+    - "Streaming progress updates"
+    - "Batch prediction processing"
+
+# ============================================================
+# WORKFLOW - Execution Flow
+# ============================================================
+workflow:
+  description: "Recommended tool invocation order"
+  steps:
+    - step: 1
+      name: "V(D)J Analysis (Optional)"
+      description: "Run IgBLAST for CDR extraction if needed"
+      tools: ["analyze_vdj_batch"]
+      is_optional: true
+    
+    - step: 2
+      name: "Binding Prediction"
+      description: "Run MetaBCR for antibody-antigen binding prediction"
+      tools: ["metabcr"]
+      is_optional: false
+
+# ============================================================
+# TOOLS - Tool List
+# ============================================================
+tools:
+
+  # ----------------------------------------------------------
+  # Core Prediction Tool
+  # ----------------------------------------------------------
+  - name: "metabcr"
+    summary: "Antibody-antigen binding prediction"
+    description: |
+      MetaBCR: A Deep Learning Framework for Antibody-Antigen Interaction Prediction.
+      Predicts binding affinity between antibodies and antigens using deep learning models.
+      Supports multiple model architectures including CNN, GNN, and BERT-based models.
+      
+      Supported antigen types:
+      - Influenza: H1N1, H3N2 strains
+      - SARS-CoV-2
+      - RSV (Respiratory Syncytial Virus)
+      - HIV
+      
+      Provides streaming progress updates via SSE for large-scale predictions.
+    
+    category: "prediction"
+    priority: "core"
+    execution_order: 1
+    
+    dependencies:
+      prerequisites: []
+      recommended: ["analyze_vdj_batch"]
+      enables: ["integrate_predictions_with_experimental_data"]
+    
+    when_to_use:
+      - "Predicting antibody-antigen binding affinity"
+      - "Screening antibody candidates for antigen binding"
+      - "Analyzing BCR repertoire for antigen specificity"
+      - "Validating experimental binding measurements"
+    
+    parameters:
+      - name: "input_file"
+        type: "string"
+        required: true
+        description: "Path to input file containing antibody sequences (FASTA or CSV format)"
+        example: "/data/sessions/{session_id}/input/antibodies.csv"
+      
+      - name: "antigen_type"
+        type: "string"
+        required: false
+        description: "Target antigen type for binding prediction"
+        default: "flu"
+        options: ["flu", "sars", "rsv", "hiv"]
+      
+      - name: "strain"
+        type: "string"
+        required: false
+        description: "Specific strain for prediction (e.g., H1N1, H3N2 for flu)"
+        default: "H1N1"
+      
+      - name: "output_dir"
+        type: "string"
+        required: false
+        description: "Output directory for prediction results"
+        default: null
+        example: "/data/sessions/{session_id}/output"
+      
+      - name: "model_type"
+        type: "string"
+        required: false
+        description: "Model architecture to use"
+        default: "ensemble"
+        options: ["cnn", "gnn", "bert", "ensemble"]
+    
+    returns:
+      type: "csv"
+      description: "Binding prediction results"
+      schema:
+        - name: "sequence_id"
+          type: "string"
+          description: "Antibody sequence identifier"
+        - name: "heavy_chain"
+          type: "string"
+          description: "Heavy chain sequence"
+        - name: "light_chain"
+          type: "string"
+          description: "Light chain sequence"
+        - name: "binding_score"
+          type: "number"
+          description: "Predicted binding affinity score (0-1)"
+        - name: "prediction_confidence"
+          type: "number"
+          description: "Model prediction confidence"
+        - name: "antigen_type"
+          type: "string"
+          description: "Target antigen type"
+        - name: "strain"
+          type: "string"
+          description: "Specific strain"
+
+# ============================================================
+# FILE_COLUMN_SPECS - Input File Column Specifications
+# ============================================================
+file_column_specs:
+  description: "Column requirements for input files"
+  
+  fasta_requirements:
+    description: "FASTA file format requirements"
+    format: "Standard FASTA format with paired heavy/light chain sequences"
+  
+  csv_requirements:
+    description: "CSV file column requirements"
+    required_columns:
+      - name: "heavy_chain"
+        aliases: ["Heavy", "VH", "heavy_dna", "Heavy_DNA"]
+        description: "Heavy chain sequence"
+      - name: "light_chain"
+        aliases: ["Light", "VL", "light_dna", "Light_DNA"]
+        description: "Light chain sequence"
+    optional_columns:
+      - name: "sequence_id"
+        description: "Unique identifier for each antibody"
+
+# ============================================================
+# CONSTRAINTS - Constraints and Limitations
+# ============================================================
+constraints:
+  supported_antigens:
+    - id: "flu"
+      description: "Influenza virus"
+      strains: ["H1N1", "H3N2"]
+    - id: "sars"
+      description: "SARS-CoV-2"
+      strains: ["original", "delta", "omicron"]
+    - id: "rsv"
+      description: "Respiratory Syncytial Virus"
+      strains: ["A", "B"]
+    - id: "hiv"
+      description: "Human Immunodeficiency Virus"
+      strains: ["clade_A", "clade_B", "clade_C"]
+  
+  model_architectures:
+    - id: "cnn"
+      description: "Convolutional Neural Network"
+    - id: "gnn"
+      description: "Graph Neural Network"
+    - id: "bert"
+      description: "Transformer-based BERT model"
+    - id: "ensemble"
+      description: "Ensemble of multiple architectures (recommended)"
+  
+  limitations:
+    - "Requires paired heavy/light chain sequences"
+    - "Prediction accuracy varies by antigen type"
+    - "Limited to supported antigen types"
+
+# ============================================================
+# EXTERNAL_REFS - External References
+# ============================================================
+external_refs:
+  frameworks:
+    - name: "PyTorch"
+      version: ">=1.10"
+      purpose: "Deep learning framework"
+    - name: "Transformers"
+      version: ">=4.0"
+      purpose: "BERT model implementation"
+  
+  dependencies:
+    - service: "igblast"
+      tools: ["analyze_vdj_batch"]
+      description: "V(D)J analysis for CDR extraction"
+    - service: "flu"
+      tools: ["integrate_predictions_with_experimental_data"]
+      description: "Integration with experimental data"
+  
+  references:
+    - title: "MetaBCR: A Deep Learning Framework for Antibody-Antigen Interaction Prediction"
+      authors: "Bio-Agent Team"
+      journal: "Internal"
+      year: 2024
+

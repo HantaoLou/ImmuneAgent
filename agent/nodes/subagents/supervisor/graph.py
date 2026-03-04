@@ -1554,6 +1554,72 @@ async def _convert_csv_to_fasta_if_needed(
     return new_file_analyses, new_mappings
 
 
+def _get_compatible_param_types_for_file(file_ext: str, data_type: Optional[str] = None) -> List[str]:
+    """
+    Determine which parameter types this file can be used for.
+    
+    This is critical for automatic parameter matching during execution.
+    The returned list must match parameter names defined in tools_params_table.json.
+    
+    Args:
+        file_ext: File extension (without dot, e.g., 'csv', 'rds')
+        data_type: Detected data type from file analysis (e.g., 'antibody_fasta')
+        
+    Returns:
+        List of compatible parameter type names
+    """
+    compatible = []
+    file_ext_lower = (file_ext or "").lower()
+    data_type_lower = (data_type or "").lower()
+    
+    # CSV files can be used for various parameters
+    if file_ext_lower == 'csv':
+        compatible.extend(['csv_file', 'input_csv', 'data_file', 'test_file', 'input_file'])
+        
+        # Data type specific compatibility
+        if 'airr' in data_type_lower or 'vdj' in data_type_lower:
+            compatible.extend([
+                'airr_file', 'vdj_results', 'annotation_file',
+                'airr_results', 'airr_data', 'vdj_output'
+            ])
+        elif 'binding' in data_type_lower or 'prediction' in data_type_lower:
+            compatible.extend(['binding_results', 'prediction_file'])
+        elif 'tcr' in data_type_lower:
+            compatible.extend(['tcr_predictions', 'prediction_file', 'binding_results'])
+    
+    # TSV files (AIRR format is often TSV)
+    elif file_ext_lower == 'tsv':
+        compatible.extend(['tsv_file', 'data_file', 'input_file'])
+        if 'airr' in data_type_lower or 'vdj' in data_type_lower:
+            compatible.extend(['airr_results', 'airr_file', 'airr_data'])
+    
+    # RDS files (R data objects, often Seurat objects)
+    elif file_ext_lower == 'rds':
+        compatible.extend(['rds_file', 'seurat_object', 'r_data', 'rds_path', 'input_rds', 'input_file'])
+    
+    # H5AD files (AnnData objects for single-cell)
+    elif file_ext_lower == 'h5ad' or file_ext_lower == 'h5':
+        compatible.extend(['h5ad_file', 'anndata_object', 'input_h5ad', 'input_file'])
+    
+    # FASTA files
+    elif file_ext_lower in ['fasta', 'fa']:
+        compatible.extend(['fasta_file', 'sequences', 'input_fasta', 'sequence_file'])
+        if 'antibody' in data_type_lower:
+            compatible.extend(['antibody_fasta', 'antibody_sequences'])
+        elif 'tcr' in data_type_lower:
+            compatible.extend(['tcr_fasta', 'tcr_sequences'])
+    
+    # JSON files
+    elif file_ext_lower == 'json':
+        compatible.extend(['json_file', 'config_file', 'metadata'])
+    
+    # Excel files
+    elif file_ext_lower in ['xlsx', 'xls']:
+        compatible.extend(['excel_file', 'xlsx_file', 'data_file', 'input_file'])
+    
+    return compatible
+
+
 def _build_parameter_table(
     extracted_params: Dict[str, Any],
     file_analyses: List[FileAnalysis],
@@ -1564,6 +1630,12 @@ def _build_parameter_table(
     Build parameter table, integrating all extracted parameters and file information
     
     File entries use unique keys based on purpose/data_type + filename to avoid collision.
+    
+    IMPORTANT: Each file entry includes 'can_be_used_as' field that lists compatible
+    parameter names. This is used by the executor for automatic parameter matching.
+    
+    IMPORTANT: Each entry is tagged with its source (user_input, task_output, etc.)
+    to enable source-based constraint checking.
     """
     param_table = {
         "user_parameters": extracted_params,
@@ -1575,6 +1647,12 @@ def _build_parameter_table(
     used_keys = set()
     
     for analysis in file_analyses:
+        # Get file extension
+        file_ext = analysis.file_type or Path(analysis.sandbox_path).suffix.lstrip('.').lower()
+        
+        # CRITICAL: Determine which parameters this file can be used for
+        can_be_used_as = _get_compatible_param_types_for_file(file_ext, analysis.detected_data_type)
+        
         file_info = {
             "original_path": analysis.original_path,
             "sandbox_path": analysis.sandbox_path,
@@ -1583,6 +1661,9 @@ def _build_parameter_table(
             "row_count": analysis.row_count,
             "columns": analysis.column_names,
             "summary": analysis.content_summary,
+            "can_be_used_as": can_be_used_as,  # CRITICAL: enables automatic parameter matching
+            "source": "user_input",  # Tag: this file was provided by user
+            "source_tool": "preprocess",  # Mark as from preprocessing, not from a tool
         }
         
         # Generate unique key: prefer detected_data_type, fallback to filename

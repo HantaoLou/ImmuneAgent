@@ -6,6 +6,10 @@ databases without external dependencies beyond Python stdlib. All functions:
 - Return formatted strings truncated to 6000 chars
 - Use urllib.request for HTTP (no requests/httpx)
 - Load API keys from .env when needed
+
+LangChain 1.0+ Compatibility:
+    - All tools use @tool decorator from langchain_core.tools
+    - Tools can be directly bound to LLM via .bind_tools()
 """
 
 import os
@@ -16,6 +20,8 @@ import urllib.parse
 import urllib.error
 from pathlib import Path
 from typing import Optional
+
+from langchain_core.tools import tool
 
 from ._output import truncate_output, ProteinSummary
 
@@ -91,6 +97,7 @@ def _post_json(url: str, data: dict, headers: dict = None, timeout: int = 30) ->
 # ---------------------------------------------------------------------------
 # R1: UniProt
 # ---------------------------------------------------------------------------
+@tool
 def query_uniprot(
     accession: Optional[str] = None,
     gene_name: Optional[str] = None,
@@ -112,10 +119,6 @@ def query_uniprot(
 
     Returns:
         Formatted string with protein entries
-
-    Examples:
-        >>> query_uniprot(gene_name="IGHV3-23", organism="human")
-        >>> query_uniprot(accession="P01857", detailed=True)
     """
     try:
         # Build query string
@@ -231,6 +234,7 @@ def query_uniprot(
 # ---------------------------------------------------------------------------
 # R2: InterPro
 # ---------------------------------------------------------------------------
+@tool
 def query_interpro(
     protein_accession: Optional[str] = None,
     type_filter: Optional[str] = None,
@@ -248,10 +252,6 @@ def query_interpro(
 
     Returns:
         Formatted string with InterPro entries
-
-    Examples:
-        >>> query_interpro(protein_accession="P01857")
-        >>> query_interpro(protein_accession="P12345", type_filter="domain")
     """
     try:
         if not protein_accession:
@@ -313,6 +313,7 @@ def query_interpro(
 # ---------------------------------------------------------------------------
 # R3: IMGT (via OGRDB as more accessible alternative)
 # ---------------------------------------------------------------------------
+@tool
 def query_imgt(
     gene: Optional[str] = None,
     species: str = "human",
@@ -330,10 +331,6 @@ def query_imgt(
 
     Returns:
         Formatted string with germline gene entries
-
-    Examples:
-        >>> query_imgt(gene="IGHV3-23", species="human")
-        >>> query_imgt(locus="IGH", species="human")
     """
     try:
         # Map species names
@@ -399,6 +396,7 @@ def query_imgt(
 # ---------------------------------------------------------------------------
 # R4: Reactome
 # ---------------------------------------------------------------------------
+@tool
 def query_reactome(
     pathway_id: Optional[str] = None,
     gene: Optional[str] = None,
@@ -416,10 +414,6 @@ def query_reactome(
 
     Returns:
         Formatted string with pathway entries
-
-    Examples:
-        >>> query_reactome(gene="TP53")
-        >>> query_reactome(pathway_id="R-HSA-109582")
     """
     try:
         if pathway_id:
@@ -499,6 +493,7 @@ def query_reactome(
 # ---------------------------------------------------------------------------
 # R5: STRING-DB
 # ---------------------------------------------------------------------------
+@tool
 def query_string_db(
     proteins: Optional[str] = None,
     species: int = 9606,
@@ -518,10 +513,6 @@ def query_string_db(
 
     Returns:
         Formatted string with protein-protein interactions
-
-    Examples:
-        >>> query_string_db(proteins="TP53", species=9606, score_threshold=400)
-        >>> query_string_db(proteins="TP53|MDM2", species=9606)
     """
     try:
         if not proteins:
@@ -589,6 +580,7 @@ def query_string_db(
 # ---------------------------------------------------------------------------
 # R6: KEGG
 # ---------------------------------------------------------------------------
+@tool
 def query_kegg(
     pathway: Optional[str] = None,
     gene: Optional[str] = None,
@@ -608,10 +600,6 @@ def query_kegg(
 
     Returns:
         Formatted string with KEGG entries
-
-    Examples:
-        >>> query_kegg(gene="TP53", organism="hsa")
-        >>> query_kegg(pathway="cell cycle")
     """
     try:
         if pathway:
@@ -691,6 +679,7 @@ def query_kegg(
 # ---------------------------------------------------------------------------
 # R7: RCSB PDB
 # ---------------------------------------------------------------------------
+@tool
 def query_pdb_search(
     query: Optional[str] = None,
     entity_type: Optional[str] = None,
@@ -707,10 +696,6 @@ def query_pdb_search(
 
     Returns:
         Formatted string with PDB entries
-
-    Examples:
-        >>> query_pdb_search(query="antibody", max_results=5)
-        >>> query_pdb_search(query="7FAE")
     """
     try:
         if not query:
@@ -796,6 +781,7 @@ def query_pdb_search(
 # ---------------------------------------------------------------------------
 # R8: VDJdb
 # ---------------------------------------------------------------------------
+@tool
 def query_vdjdb(
     cdr3: Optional[str] = None,
     gene: Optional[str] = None,
@@ -816,10 +802,6 @@ def query_vdjdb(
 
     Returns:
         Formatted string with TCR entries
-
-    Examples:
-        >>> query_vdjdb(epitope="GILGFVFTL", species="human")
-        >>> query_vdjdb(cdr3="CASSLAPGATNEKLFF")
     """
     try:
         # Build query parameters
@@ -905,6 +887,7 @@ def query_vdjdb(
 # ---------------------------------------------------------------------------
 # R9: IPD-IMGT/HLA
 # ---------------------------------------------------------------------------
+@tool
 def query_ipd_hla(
     allele: Optional[str] = None,
     locus: Optional[str] = None,
@@ -919,10 +902,6 @@ def query_ipd_hla(
 
     Returns:
         Formatted string with HLA allele entries
-
-    Examples:
-        >>> query_ipd_hla(allele="A*02:01")
-        >>> query_ipd_hla(locus="DRB1")
     """
     try:
         # Build query
@@ -991,6 +970,7 @@ def query_ipd_hla(
 # ---------------------------------------------------------------------------
 # R10: ImmPort
 # ---------------------------------------------------------------------------
+@tool
 def query_immport(
     study_accession: Optional[str] = None,
     dataset_type: Optional[str] = None,
@@ -1010,10 +990,6 @@ def query_immport(
 
     Returns:
         Formatted string with ImmPort study/dataset entries
-
-    Examples:
-        >>> query_immport(study_accession="SDY123")
-        >>> query_immport(dataset_type="flow_cytometry")
     """
     try:
         _ensure_env_loaded()
@@ -1255,6 +1231,7 @@ def _infer_cdr_from_vgene(vgene: str, chain_type: str = "trbv") -> tuple:
     return "", ""
 
 
+@tool
 def infer_cdr1_cdr2_from_vgene(
     tra_v_gene: Optional[str] = None,
     trb_v_gene: Optional[str] = None,
@@ -1276,15 +1253,6 @@ def infer_cdr1_cdr2_from_vgene(
         
     Returns:
         Formatted string with inferred CDR sequences and NetTCR format info
-        
-    Examples:
-        >>> infer_cdr1_cdr2_from_vgene(
-        ...     tra_v_gene="TRAV1-1",
-        ...     trb_v_gene="TRBV12-1",
-        ...     cdr3a="CASSLAPGATNEKLFF",
-        ...     cdr3b="CAVRDSNYQLIW",
-        ...     peptide="ELAGIGILTV"
-        ... )
     """
     try:
         results = []
@@ -1364,6 +1332,7 @@ def infer_cdr1_cdr2_from_vgene(
         return f"[IMGT CDR Inference] Error: {e}"
 
 
+@tool
 def convert_tcr_to_nettcr_format(
     input_data: str,
     peptide: str,
@@ -1400,13 +1369,6 @@ def convert_tcr_to_nettcr_format(
         
     Returns:
         Formatted string with conversion summary and output file path
-        
-    Examples:
-        >>> convert_tcr_to_nettcr_format(
-        ...     input_data="/path/to/tcr_data.csv",
-        ...     peptide="ELAGIGILTV",
-        ...     output_dir="/data/sessions/session_id/output"
-        ... )
     """
     import csv
     
@@ -1589,12 +1551,30 @@ def convert_tcr_to_nettcr_format(
         return f"[TCR->NetTCR] Error: {e}"
 
 
-def get_reference_tools() -> dict:
-    """Return a registry of all reference database tool functions.
+def get_reference_tools() -> list:
+    """Return a registry of all reference database tool functions as LangChain tools.
 
     Returns:
-        Dict mapping function names to callable functions
+        List of LangChain tool objects that can be directly bound to LLM.
     """
+    return [
+        query_uniprot,
+        query_interpro,
+        query_imgt,
+        query_reactome,
+        query_string_db,
+        query_kegg,
+        query_pdb_search,
+        query_vdjdb,
+        query_ipd_hla,
+        query_immport,
+        infer_cdr1_cdr2_from_vgene,
+        convert_tcr_to_nettcr_format,
+    ]
+
+
+def get_reference_tools_dict() -> dict:
+    """Return reference tools as dict for backward compatibility."""
     return {
         "query_uniprot": query_uniprot,
         "query_interpro": query_interpro,

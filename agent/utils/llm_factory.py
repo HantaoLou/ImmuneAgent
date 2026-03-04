@@ -161,7 +161,7 @@ def _create_zhipu_llm(
     print(f"Creating Zhipu AI LLM instance: {model}, temperature={temperature}, timeout={timeout}")
     try:
         # Use adapter to create instance compatible with OpenAI interface
-        from agent.utils.zhipu_adapter import ZhipuAIAdapter
+        from .zhipu_adapter import ZhipuAIAdapter
         return ZhipuAIAdapter(
             model=model,
             temperature=temperature,

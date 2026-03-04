@@ -7,12 +7,18 @@ Extends existing cache pattern (code_cache_manager.py, paperqa_cache.py) with:
 
 DB location: agent/.cache/agent_memory.db
 Schema: (namespace TEXT, key TEXT, value TEXT, created_at REAL, expires_at REAL)
+
+LangChain 1.0+ Compatibility:
+    - Uses @tool decorator from langchain_core.tools
+    - Can be directly bound to LLM via .bind_tools()
 """
 
 import logging
 import sqlite3
 import time
 from pathlib import Path
+
+from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +59,7 @@ def _cleanup_expired(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+@tool
 def agent_memory(
     action: str,
     key: str = None,
@@ -140,6 +147,15 @@ def agent_memory(
         return f"[agent_memory] Error: {e}"
 
 
-def get_memory_tools() -> dict:
-    """Return memory tools for namespace injection."""
+def get_memory_tools() -> list:
+    """Return memory tools as LangChain tools.
+    
+    Returns:
+        List of LangChain tool objects that can be directly bound to LLM.
+    """
+    return [agent_memory]
+
+
+def get_memory_tools_dict() -> dict:
+    """Return memory tools for backward compatibility (namespace injection)."""
     return {"agent_memory": agent_memory}

@@ -1,0 +1,499 @@
+# NetTCR-2.2 Skill Definition
+# TCR-Peptide Binding Prediction Service
+# Schema Version: 1.0
+
+# ============================================================
+# META - Metadata
+# ============================================================
+meta:
+  name: "nettcr"
+  version: "2.2"
+  summary: "TCR-peptide binding prediction service"
+  description: |
+    NetTCR-2.2 is a deep learning-based TCR-peptide binding prediction service.
+    Uses 20 TFLite model ensembles (5-fold CV × 4 validation splits) for high-precision prediction.
+    Supports 26 pre-trained peptide-specific models with percentile rank rescaling.
+    Automatically falls back to pan-specific model for unseen peptides.
+  tags:
+    - tcr
+    - peptide-binding
+    - immuno-oncology
+    - t-cell
+  capabilities:
+    - "TCR-peptide binding affinity prediction"
+    - "Percentile rank calculation (26 pre-trained peptides)"
+    - "Pan-specific model fallback (any peptide)"
+    - "Automatic input format detection"
+    - "Batch prediction processing"
+    - "Input data validation"
+
+# ============================================================
+# WORKFLOW - Execution Flow
+# ============================================================
+workflow:
+  description: "Recommended tool invocation order"
+  steps:
+    - step: 1
+      name: "Information Query"
+      description: "Understand system capabilities, check peptide support"
+      tools: ["list_available_peptides", "check_peptide_support"]
+      is_optional: true
+    
+    - step: 2
+      name: "Input Validation"
+      description: "Validate data format and integrity"
+      tools: ["validate_tcr_input"]
+      is_optional: false
+    
+    - step: 3
+      name: "Run Prediction"
+      description: "Select prediction tool based on requirements"
+      tools: ["predict_tcr_binding_fast", "predict_tcr_binding_complete"]
+      is_optional: false
+
+# ============================================================
+# TOOLS - Tool List
+# ============================================================
+tools:
+
+  # ----------------------------------------------------------
+  # Phase 1: Information Query Tools
+  # ----------------------------------------------------------
+  - name: "list_available_peptides"
+    summary: "List all pre-trained peptides"
+    description: |
+      Lists all 26 peptides with pre-trained NetTCR-2.2 models.
+      Returns peptide sequences, model counts, and negative control statistics.
+      Pre-trained peptides support percentile rank rescaling.
+    
+    category: "information"
+    priority: "high"
+    execution_order: 1
+    
+    dependencies:
+      prerequisites: []
+      recommended: []
+      enables: ["check_peptide_support"]
+    
+    when_to_use:
+      - "Before analysis, understand all supported pre-trained peptides"
+      - "Determine if target peptide is in the support list"
+      - "Query available models when planning analysis strategy"
+    
+    parameters: []
+    
+    returns:
+      type: "array"
+      description: "List of pre-trained peptides"
+      schema:
+        - name: "peptide"
+          type: "string"
+          description: "Peptide sequence"
+        - name: "model_count"
+          type: "integer"
+          description: "Number of models"
+        - name: "negative_control_count"
+          type: "integer"
+          description: "Number of negative controls"
+
+  - name: "check_peptide_support"
+    summary: "Check if peptide is supported"
+    description: |
+      Checks if a peptide has pre-trained NetTCR-2.2 model support.
+      Checks if target peptide is among the 26 pre-trained peptide-specific models.
+      Peptides without models will fall back to pan-specific prediction.
+    
+    category: "information"
+    priority: "high"
+    execution_order: 1
+    
+    dependencies:
+      prerequisites: []
+      recommended: ["list_available_peptides"]
+      enables: ["validate_tcr_input"]
+    
+    when_to_use:
+      - "Check specific peptide support before prediction"
+      - "Determine if percentile rank feature is available"
+      - "Assess expected prediction accuracy"
+    
+    parameters:
+      - name: "peptides"
+        type: "string"
+        required: true
+        description: "Comma-separated list of peptide sequences"
+        example: "GILGFVFTL,NLVPMVATV"
+    
+    returns:
+      type: "object"
+      description: "Peptide support check result"
+      schema:
+        - name: "peptide"
+          type: "string"
+          description: "Peptide sequence"
+        - name: "is_supported"
+          type: "boolean"
+          description: "Whether pre-trained model exists"
+        - name: "model_count"
+          type: "integer"
+          description: "Number of models (if supported)"
+        - name: "fallback"
+          type: "string"
+          description: "Fallback strategy (if not supported)"
+
+  # ----------------------------------------------------------
+  # Phase 2: Validation Tools
+  # ----------------------------------------------------------
+  - name: "validate_tcr_input"
+    summary: "Validate TCR input data format"
+    description: |
+      Validates if TCR input data format meets NetTCR-2.2 requirements.
+      Checks native format (peptide/A1-A3/B1-B3) or legacy format (CDR3a/CDR3b + V genes).
+      Validates sequence length, amino acid composition, and V gene parsing.
+    
+    category: "validation"
+    priority: "core"
+    execution_order: 2
+    
+    dependencies:
+      prerequisites: []
+      recommended: ["check_peptide_support"]
+      enables: ["predict_tcr_binding_fast", "predict_tcr_binding_complete", "predict_tcr_binding_ensemble"]
+    
+    when_to_use:
+      - "Validate data format before running prediction (strongly recommended)"
+      - "Troubleshoot prediction failures caused by data format issues"
+      - "When processing a new TCR dataset for the first time"
+    
+    parameters:
+      - name: "test_file"
+        type: "string"
+        required: true
+        description: "Path to TCR data CSV file to validate"
+        example: "/data/sessions/{session_id}/input/tcr_data.csv"
+    
+    returns:
+      type: "object"
+      description: "Validation result"
+      schema:
+        - name: "is_valid"
+          type: "boolean"
+          description: "Whether validation passed"
+        - name: "format"
+          type: "string"
+          description: "Detected input format (native/legacy)"
+        - name: "row_count"
+          type: "integer"
+          description: "Number of data rows"
+        - name: "peptides_found"
+          type: "array"
+          description: "List of detected peptides"
+        - name: "errors"
+          type: "array"
+          description: "List of errors"
+        - name: "warnings"
+          type: "array"
+          description: "List of warnings"
+        - name: "suggestions"
+          type: "array"
+          description: "Fix suggestions"
+
+  # ----------------------------------------------------------
+  # Phase 3: Prediction Tools
+  # ----------------------------------------------------------
+  - name: "predict_tcr_binding_fast"
+    summary: "Fast TCR-peptide binding prediction"
+    description: |
+      Fast TCR-peptide binding prediction tool.
+      Uses pre-trained NetTCR-2.2 models (20 TFLite ensembles) for instant prediction.
+      Supports 26 peptide-specific models with percentile rank and pan-specific model fallback.
+      Automatically detects input format (native 7-CDR format or legacy CDR3+V-gene format).
+    
+    category: "prediction"
+    priority: "core"
+    execution_order: 3
+    
+    dependencies:
+      prerequisites: []
+      recommended: ["check_peptide_support", "validate_tcr_input"]
+      enables: []
+    
+    when_to_use:
+      - "Need fast TCR-peptide binding prediction"
+      - "Already have correctly formatted TCR data file"
+      - "Only need prediction results, not detailed report"
+    
+    parameters:
+      - name: "test_file"
+        type: "string"
+        required: true
+        description: "Path to test CSV file containing TCR sequences"
+        example: "/data/sessions/{session_id}/input/tcr_data.csv"
+      
+      - name: "output_file"
+        type: "string"
+        required: false
+        description: "Output CSV file path, auto-generated if not specified"
+        default: null
+        example: "/data/sessions/{session_id}/output/predictions.csv"
+      
+      - name: "percentile_rank"
+        type: "boolean"
+        required: false
+        description: "Whether to include percentile rank column (only available for pre-trained peptides)"
+        default: true
+    
+    returns:
+      type: "csv"
+      description: "Prediction results CSV file"
+      schema:
+        - name: "peptide"
+          type: "string"
+          description: "Target peptide sequence"
+        - name: "A1"
+          type: "string"
+          description: "TCR alpha chain CDR1"
+        - name: "A2"
+          type: "string"
+          description: "TCR alpha chain CDR2"
+        - name: "A3"
+          type: "string"
+          description: "TCR alpha chain CDR3"
+        - name: "B1"
+          type: "string"
+          description: "TCR beta chain CDR1"
+        - name: "B2"
+          type: "string"
+          description: "TCR beta chain CDR2"
+        - name: "B3"
+          type: "string"
+          description: "TCR beta chain CDR3"
+        - name: "score"
+          type: "number"
+          description: "Binding prediction score (0-1)"
+        - name: "percentile_rank"
+          type: "number"
+          description: "Percentile rank (pre-trained peptides only)"
+    
+    performance:
+      typical_runtime: "1-5 seconds per 100 TCRs"
+      max_batch_size: 10000
+
+  - name: "predict_tcr_binding_complete"
+    summary: "Complete TCR-peptide binding prediction pipeline"
+    description: |
+      Complete NetTCR-2.2 prediction pipeline with statistical analysis and report generation.
+      Full pipeline: validate input → parse CDR1/CDR2 → run 20 model ensemble → 
+      calculate percentile rank → classify binder/non-binder → output prediction CSV, statistics CSV, and summary report.
+    
+    category: "pipeline"
+    priority: "core"
+    execution_order: 3
+    
+    dependencies:
+      prerequisites: []
+      recommended: ["check_peptide_support", "validate_tcr_input"]
+      enables: []
+      alternative_to: ["predict_tcr_binding_fast"]
+    
+    when_to_use:
+      - "Need complete analysis report and statistics"
+      - "First time analyzing a new TCR dataset"
+      - "Need automatic binder/non-binder classification"
+      - "Need summary statistics for downstream analysis"
+    
+    parameters:
+      - name: "test_file"
+        type: "string"
+        required: true
+        description: "Path to TCR sequence test CSV file"
+        example: "/data/sessions/{session_id}/input/tcr_data.csv"
+      
+      - name: "output_dir"
+        type: "string"
+        required: true
+        description: "Output directory (stores all result files),it must be '/data/sessions/{session_id}/output'"
+        example: "/data/sessions/{session_id}/output"
+      
+      - name: "rank_threshold"
+        type: "number"
+        required: false
+        description: "Percentile rank threshold for binary binder classification"
+        default: 2.0
+      
+      - name: "percentile_rank"
+        type: "boolean"
+        required: false
+        description: "Whether to include percentile rank column"
+        default: true
+    
+    returns:
+      type: "files"
+      description: "Multiple output files"
+      schema:
+        - name: "predictions.csv"
+          type: "csv"
+          description: "Detailed prediction results"
+        - name: "statistics.csv"
+          type: "csv"
+          description: "Summary statistics (grouped by peptide)"
+        - name: "report.txt"
+          type: "text"
+          description: "Human-readable analysis report"
+
+  # ----------------------------------------------------------
+  # Compatibility Tools
+  # ----------------------------------------------------------
+  - name: "predict_tcr_binding_ensemble"
+    summary: "Ensemble prediction (legacy API compatibility)"
+    description: |
+      Ensemble TCR-peptide binding prediction (backward compatibility wrapper).
+      In NetTCR-2.2, ensemble size is fixed at 20 models.
+      This tool wraps predict_tcr_binding_fast for API compatibility.
+      Note: predict_tcr_binding_fast is recommended over this tool.
+    
+    category: "prediction"
+    priority: "legacy"
+    execution_order: 3
+    
+    dependencies:
+      prerequisites: []
+      recommended: ["validate_tcr_input"]
+      enables: []
+      deprecated_by: ["predict_tcr_binding_fast"]
+    
+    when_to_use:
+      - "Using legacy API calls"
+      - "Need backward compatibility with old code"
+      - "Transition solution during migration"
+    
+    parameters:
+      - name: "test_file"
+        type: "string"
+        required: true
+        description: "TCR sequence test CSV file"
+        example: "/data/sessions/{session_id}/input/tcr_data.csv"
+      
+      - name: "n_models"
+        type: "integer"
+        required: false
+        description: "Number of models (fixed at 20 in v2.2)"
+        default: 20
+      
+      - name: "output_file"
+        type: "string"
+        required: false
+        description: "Output file path"
+        default: null
+      
+      - name: "percentile_rank"
+        type: "boolean"
+        required: false
+        description: "Whether to include percentile rank"
+        default: true
+    
+    returns:
+      type: "csv"
+      description: "Prediction results CSV file"
+      schema:
+        - name: "peptide"
+          type: "string"
+          description: "Target peptide sequence"
+        - name: "score"
+          type: "number"
+          description: "Binding prediction score (0-1)"
+        - name: "percentile_rank"
+          type: "number"
+          description: "Percentile rank"
+
+# ============================================================
+# FILE_COLUMN_SPECS - Input File Column Specifications
+# ============================================================
+# Defines column name requirements for CSV files passed to test_file parameter.
+# Validation tool: validate_tcr_input
+# Conversion guide: file_convert.md
+# ============================================================
+file_column_specs:
+  description: "Column name requirements for test_file CSV parameter"
+  reference: "file_convert.md"
+  validation_tool: "validate_tcr_input"
+  
+  specs:
+    - name: "native"
+      description: "Native 7-CDR format, highest accuracy"
+      columns: ["peptide", "A1", "A2", "A3", "B1", "B2", "B3"]
+      is_recommended: true
+    
+    - name: "legacy"
+      description: "Legacy CDR3 + V-gene format, better compatibility"
+      columns: ["peptide", "CDR3a", "CDR3b", "TRA_v_gene", "TRB_v_gene"]
+      is_recommended: false
+
+# ============================================================
+# CONSTRAINTS - Constraints and Limitations
+# ============================================================
+constraints:
+  pretrained_peptides:
+    count: 26
+    description: "Pre-trained peptides supporting percentile rank"
+    items:
+      - "GILGFVFTL"
+      - "NLVPMVATV"
+      - "ELAGIGILTV"
+      - "IVTDFSVIK"
+      - "GLCTLVAML"
+      - "RAKFKQLL"
+      - "LLWNGPMAV"
+      - "YLNDHLEPWI"
+      - "CINGVCWTV"
+      - "TSTLQEQIGW"
+      - "LLFGYPVYV"
+      - "KAFSPEVIPMF"
+      - "RPPIFIRRL"
+      - "AVFDRKSDAK"
+      - "TPRVTGGGAM"
+      - "FLRGRAYGL"
+      - "RVRAYTNYSV"
+      - "VTEHDTLLY"
+      - "YYVDRHRKI"
+      - "HSHVKQEFVL"
+      - "QYIKWPWYI"
+      - "EPLPQGQLTAY"
+      - "CLGGLLTMV"
+      - "LLGIVRGYA"
+      - "FLYALALLL"
+      - "VYRLALPPL"
+  
+  sequence_limits:
+    peptide_length: "8-15"
+    cdr3_length: "5-25"
+  
+  supported_chains:
+    - "alpha"
+    - "beta"
+  
+  limitations:
+    - "Only supports MHC-I restricted peptides"
+    - "Percentile rank only available for 26 pre-trained peptides"
+    - "Does not support TCR gamma/delta chain prediction"
+    - "Pan-specific model accuracy is lower than peptide-specific models"
+
+# ============================================================
+# EXTERNAL_REFS - External References
+# ============================================================
+external_refs:
+  dependencies:
+    - service: "tcell"
+      description: "T cell repertoire analysis service with 6 tools for TCR sequencing data"
+  
+  references:
+    - title: "NetTCR-2.2: Improved TCR-peptide binding prediction"
+      authors: "Montemurro et al."
+      journal: "Nucleic Acids Research"
+      year: 2024
+      doi: "10.1093/nar/gkae000"
+    
+    - title: "NetTCR-2.0"
+      authors: "Montemurro et al."
+      journal: "Nucleic Acids Research"
+      year: 2022

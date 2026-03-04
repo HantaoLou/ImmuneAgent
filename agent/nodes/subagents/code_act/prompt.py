@@ -151,12 +151,50 @@ Based on the user's task description, generate complete, executable Python code 
 5. **Must set result variable at the end**, containing execution results
 6. **LLM decides WHAT, code handles HOW data transforms** (keep logic explicit in code)
 
+# ⭐ CRITICAL: Data Exploration Step (REQUIRED for data processing tasks)
+
+Before processing any data files, you MUST first explore and understand the data structure:
+
+```python
+# Step 1: Explore data structure FIRST
+import pandas as pd
+df = pd.read_csv(file_path)
+print(f"[Data Exploration] Columns: {list(df.columns)}")
+print(f"[Data Exploration] Shape: {df.shape}")
+print(f"[Data Exploration] First 3 rows:\\n{df.head(3)}")
+print(f"[Data Exploration] Data types:\\n{df.dtypes}")
+```
+
+This helps you:
+- Identify correct column names (don't guess!)
+- Understand data types
+- Spot potential issues
+
+# ⭐ CRITICAL: Output Validation (REQUIRED for computation tasks)
+
+After computing results, you MUST validate the output is reasonable:
+
+```python
+# Step 2: Validate output before returning
+if output_value == 0 or output_value is None:
+    print(f"[Warning] Output seems unusual: {output_value}")
+    print(f"[Debug] Please verify the computation logic and data columns used")
+    # Consider: Did I use the correct columns? Is the data format correct?
+```
+
+For scoring/metrics tasks (F1, accuracy, etc.):
+- Scores should typically be > 0 (unless data is truly random)
+- Scores should be in valid range (e.g., F1 in [0, 1])
+- If all scores are 0, you likely used wrong columns!
+
 # Output Format
 
 You must only return executable Python code, do not include any explanations, markdown code block markers, or other text.
 Code should:
 - Import necessary libraries
+- **Explore data structure FIRST** (print columns, sample data)
 - Implement functionality required by the task
+- **Validate output is reasonable** before returning
 - Handle possible errors
 - Set result variable (dictionary format, containing status, output, etc.)
 
@@ -165,13 +203,16 @@ Code should:
 - If task involves file operations, ensure proper file path and encoding handling
 - If task involves data processing, ensure data format is correct
 - Code should be able to run independently, not dependent on external state
+- **NEVER guess column names** - always print and explore first!
 """
 
 
 def get_codeact_user_prompt(
     task_description: str,
     inputs: Optional[List[str]] = None,
-    outputs: Optional[List[str]] = None
+    outputs: Optional[List[str]] = None,
+    output_constraints: Optional[Dict[str, Dict[str, Any]]] = None,
+    column_hints: Optional[Dict[str, List[str]]] = None
 ) -> str:
     """
     Generate user prompt for general code
@@ -180,6 +221,8 @@ def get_codeact_user_prompt(
         task_description: Task description
         inputs: Input parameter list
         outputs: Output parameter list
+        output_constraints: Output constraints, format: {"field_name": {"min": 0, "max": 1, "description": "..."}}
+        column_hints: Column hints for semantic matching, format: {"possible_true_labels": [...], "possible_predictions": [...]}
     
     Returns:
         User prompt
@@ -196,12 +239,245 @@ def get_codeact_user_prompt(
     if outputs:
         prompt += f"\n# Output Requirements\n" + "\n".join([f"- {out}" for out in outputs])
     
+    # Add column hints section with semantic matching guidance
+    if column_hints:
+        hints_text = "\n# ⭐ Column Hints (Use SEMANTIC Matching)\n\n"
+        hints_text += "**IMPORTANT: Do NOT use simple keyword matching!**\n\n"
+        hints_text += "Use the following semantic matching function to identify columns:\n\n"
+        hints_text += """```python
+def _semantic_column_match(columns: list, candidates: list, column_data_samples: dict = None) -> tuple:
+    \"\"\"Semantically match columns using strict matching rules.
+    
+    Args:
+        columns: All available column names
+        candidates: Candidate column names from hints
+        column_data_samples: Optional dict mapping column names to sample data for validation
+    
+    Returns:
+        (matched_column, confidence, match_method)
+    \"\"\"
+    # Normalize column names for comparison
+    col_map = {col.lower().strip(): col for col in columns}
+    candidates_lower = [c.lower().strip() for c in candidates]
+    
+    # Priority 1: Exact match (highest confidence)
+    for candidate in candidates_lower:
+        if candidate in col_map:
+            return col_map[candidate], 1.0, "exact_match"
+    
+    # Priority 2: Word boundary match (column contains candidate as whole word)
+    import re
+    for candidate in candidates_lower:
+        pattern = r'\\b' + re.escape(candidate) + r'\\b'
+        for col_lower, col_original in col_map.items():
+            if re.search(pattern, col_lower):
+                return col_original, 0.8, "word_boundary"
+    
+    # Priority 3: Prefix/suffix match
+    for candidate in candidates_lower:
+        for col_lower, col_original in col_map.items():
+            if col_lower.startswith(candidate + '_') or col_lower.endswith('_' + candidate):
+                return col_original, 0.6, "prefix_suffix"
+    
+    # No match found
+    return None, 0.0, "no_match"
+
+# Example usage with column_hints:
+# column_hints = parameters.get("column_hints", {})
+# true_label_candidates = column_hints.get("possible_true_labels", [])
+# pred_candidates = column_hints.get("possible_predictions", [])
+
+# true_col, true_conf, true_method = _semantic_column_match(df.columns, true_label_candidates)
+# pred_col, pred_conf, pred_method = _semantic_column_match(df.columns, pred_candidates)
+
+# if true_conf < 0.5 or pred_conf < 0.5:
+#     print(f"[Warning] Low confidence column matching!")
+#     print(f"  True label: {true_col} (confidence: {true_conf}, method: {true_method})")
+#     print(f"  Prediction: {pred_col} (confidence: {pred_conf}, method: {pred_method})")
+#     print(f"  Available columns: {list(df.columns)}")
+```
+
+"""
+        hints_text += "# Available Column Hints:\n"
+        for hint_type, candidates in column_hints.items():
+            hints_text += f"- **{hint_type}**: {', '.join(candidates)}\n"
+        
+        hints_text += """
+# Matching Rules (FOLLOW STRICTLY):
+1. **Exact match first**: Column name exactly matches a candidate (case-insensitive)
+2. **Word boundary second**: Candidate appears as a complete word in column name
+3. **Prefix/suffix third**: Column starts/ends with candidate + underscore
+4. **NEVER use partial substring matching** (e.g., "label" matching "main_name" is WRONG)
+5. **Validate with data**: Check if matched column contains appropriate data types
+
+# ⭐ CRITICAL: Fallback Strategy When No Match Found
+
+If `_semantic_column_match` returns None (no match), DO NOT raise an error immediately!
+Instead, use **intelligent column selection** based on data analysis:
+
+```python
+# Fallback: Intelligent column selection when semantic matching fails
+def _intelligent_column_selection(df, purpose: str, exclude_cols: list = None) -> tuple:
+    \"\"\"Select appropriate column based on data characteristics.
+    
+    Args:
+        df: DataFrame
+        purpose: 'label' or 'prediction' or 'score'
+        exclude_cols: Columns to exclude
+    
+    Returns:
+        (selected_column, reason)
+    \"\"\"
+    exclude_cols = exclude_cols or []
+    candidates = []
+    
+    for col in df.columns:
+        if col in exclude_cols:
+            continue
+        
+        col_lower = col.lower()
+        dtype = df[col].dtype
+        unique_count = df[col].nunique()
+        total_count = len(df)
+        unique_ratio = unique_count / total_count if total_count > 0 else 0
+        
+        # Score each column based on purpose
+        score = 0
+        reasons = []
+        
+        if purpose == 'label':
+            # Labels should have moderate cardinality (not too many unique values)
+            if 2 <= unique_count <= 20:
+                score += 30
+                reasons.append(f"good cardinality ({unique_count} unique)")
+            elif unique_count <= 100:
+                score += 15
+                reasons.append(f"acceptable cardinality ({unique_count} unique)")
+            
+            # Numeric columns are often labels for classification
+            if dtype in ['int64', 'int32', 'float64']:
+                score += 20
+                reasons.append("numeric type")
+            
+            # Column name hints
+            if any(hint in col_lower for hint in ['class', 'label', 'target', 'binding', 'type']):
+                score += 25
+                reasons.append("name hint")
+        
+        elif purpose == 'prediction':
+            # Predictions can be scores/probabilities
+            if dtype in ['float64', 'float32']:
+                score += 25
+                reasons.append("float type (likely probability/score)")
+            
+            # Column name hints
+            if any(hint in col_lower for hint in ['score', 'pred', 'prob', 'output', 'result']):
+                score += 25
+                reasons.append("name hint")
+            
+            # Binary predictions
+            if unique_count == 2:
+                score += 20
+                reasons.append("binary values")
+        
+        if score > 0:
+            candidates.append((col, score, '; '.join(reasons)))
+    
+    # Sort by score
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    
+    if candidates:
+        return candidates[0][0], candidates[0][2]
+    return None, "No suitable column found"
+
+# Usage example:
+# if true_col is None:
+#     true_col, reason = _intelligent_column_selection(df, 'label')
+#     print(f"[Fallback] Selected '{true_col}' as label column: {reason}")
+# 
+# if pred_col is None:
+#     pred_col, reason = _intelligent_column_selection(df, 'prediction', exclude_cols=[true_col])
+#     print(f"[Fallback] Selected '{pred_col}' as prediction column: {reason}")
+```
+
+# Validation After Matching:
+```python
+# After identifying columns, ALWAYS validate:
+print(f"[Column Matching Result]")
+print(f"  True label column: {true_col}")
+print(f"  Prediction column: {pred_col}")
+
+if true_col is None or pred_col is None:
+    # CRITICAL: If still no match after fallback, provide helpful error
+    print(f"[Error] Could not identify required columns!")
+    print(f"  Available columns: {list(df.columns)}")
+    print(f"  Column dtypes: {df.dtypes.to_dict()}")
+    print(f"  Sample data:\\n{df.head(3)}")
+    result = {{
+        "status": "failed",
+        "error": f"Column identification failed. True: {{true_col}}, Pred: {{pred_col}}. Available: {{list(df.columns)}}",
+        "output": None
+    }}
+else:
+    print(f"  True label unique values: {{df[true_col].nunique()}} unique, sample: {{df[true_col].head(3).tolist()}}")
+    print(f"  Prediction unique values: {{df[pred_col].nunique()}} unique, sample: {{df[pred_col].head(3).tolist()}}")
+    
+    # Data type validation
+    if df[true_col].dtype == 'object':
+        print(f"  [Warning] True label is string type, may need encoding")
+    if df[pred_col].dtype == 'object':
+        print(f"  [Warning] Prediction is string type, may need encoding")
+```
+"""
+        prompt += hints_text
+    
+    # Add output constraints section
+    if output_constraints:
+        constraints_text = "\n# ⭐ Output Constraints (MUST VALIDATE)\n\n"
+        constraints_text += "Your output MUST satisfy these constraints. Add validation code to check:\n\n"
+        
+        for field_name, constraints in output_constraints.items():
+            min_val = constraints.get("min")
+            max_val = constraints.get("max")
+            description = constraints.get("description", "")
+            
+            constraint_line = f"- **{field_name}**: "
+            conditions = []
+            if min_val is not None:
+                conditions.append(f"must be >= {min_val}")
+            if max_val is not None:
+                conditions.append(f"must be <= {max_val}")
+            
+            constraint_line += ", ".join(conditions)
+            if description:
+                constraint_line += f" ({description})"
+            
+            constraints_text += constraint_line + "\n"
+        
+        constraints_text += """
+# Example Validation Code:
+```python
+# Validate output constraints
+validation_warnings = []
+if output.get("f1_score", 0) <= 0:
+    validation_warnings.append("F1 score is 0 or negative - check if correct columns are used")
+if not (0 <= output.get("precision", 0) <= 1):
+    validation_warnings.append("Precision out of valid range [0, 1]")
+    
+if validation_warnings:
+    print("[Validation Warning] " + " | ".join(validation_warnings))
+```
+"""
+        prompt += constraints_text
+    
     prompt += """
 # Requirements
 1. Generate complete, executable Python code
 2. Include all necessary imports
-3. Handle possible errors
-4. Set result variable in the following format:
+3. **Explore data structure FIRST** (print columns, sample data for file-based tasks)
+4. Handle possible errors
+5. **Validate output against constraints** before setting result
+6. Set result variable in the following format:
    result = {
        "status": "success" or "failed",
        "output": <execution_result>,

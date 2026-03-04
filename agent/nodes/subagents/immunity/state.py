@@ -76,6 +76,7 @@ class ImmunityState(BaseModel):
     is_user_provided_plan: bool = Field(default=False, description="Whether user directly provided the plan")
     
     # ========== System Configuration ==========
-    sandbox_dir: str = Field(description="Sandbox directory")
+    sandbox_dir: str = Field(default="", description="Sandbox directory (sandbox_data_dir, e.g., /data/sessions/{session_id})")
+    local_sandbox_dir: str = Field(default="", description="Local sandbox directory for fallback (e.g., D:/path/to/sandbox)")
     parent_state: Optional[Any] = Field(default=None, description="Parent state reference")
 
