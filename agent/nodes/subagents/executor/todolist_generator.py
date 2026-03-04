@@ -396,16 +396,8 @@ def generate_todo_list_markdown(todo_list: TodoList) -> str:
     lines.append("")
     
     for task in todo_list.tasks:
-        # Task header
-        status_emoji = {
-            TodoTaskStatus.PENDING: "⏳",
-            TodoTaskStatus.IN_PROGRESS: "🔄",
-            TodoTaskStatus.COMPLETED: "✅",
-            TodoTaskStatus.FAILED: "❌",
-            TodoTaskStatus.SKIPPED: "⏭️"
-        }.get(task.status, "⏳")
-        
-        lines.append(f"### {status_emoji} Task: {task.id}")
+        # Task header (no emoji for cleaner parsing)
+        lines.append(f"### Task: {task.id}")
         lines.append(f"- id: {task.id}")
         lines.append(f"- type: {task.type.value if hasattr(task.type, 'value') else str(task.type)}")
         lines.append(f"- status: {task.status.value if hasattr(task.status, 'value') else str(task.status)}")

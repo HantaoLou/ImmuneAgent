@@ -570,15 +570,34 @@ def _call_codeact(
                 state.opensandbox_id = new_sandbox_id
                 logger.debug(f"  [_call_codeact] 更新 opensandbox_id: {new_sandbox_id}")
         
-        logger.info(f"  [_call_codeact] 执行完成: {result.get('status')}")
+        # 详细记录执行结果
+        status = result.get('status', 'unknown')
+        if status == 'success':
+            logger.info(f"  [_call_codeact] 执行完成: {status}")
+            output_preview = str(result.get('output', ''))[:200]
+            if output_preview:
+                logger.debug(f"  [_call_codeact] 输出预览: {output_preview}...")
+        else:
+            # 失败时详细记录所有错误信息
+            logger.error(f"  [_call_codeact] 执行完成: {status}")
+            logger.error(f"  [_call_codeact] 错误信息: {result.get('error')}")
+            logger.error(f"  [_call_codeact] 错误类型: {result.get('error_type')}")
+            logger.error(f"  [_call_codeact] 错误类别: {result.get('error_category')}")
+            if result.get('output'):
+                logger.error(f"  [_call_codeact] 输出: {str(result.get('output'))[:500]}")
         return result
         
     except Exception as e:
         logger.error(f"  [_call_codeact] 执行失败: {e}")
+        logger.error(f"  [_call_codeact] 异常类型: {type(e).__name__}")
+        import traceback
+        logger.error(f"  [_call_codeact] 堆栈跟踪:\n{traceback.format_exc()}")
         return {
             "status": "failed",
             "output": None,
-            "error": str(e)
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "error_category": "exception"
         }
 
 
@@ -1225,7 +1244,24 @@ def analyze_files_node(state: SupervisorState) -> SupervisorState:
             logger.debug(f"    行数: {fa.row_count}")
             logger.debug(f"    列名: {fa.column_names[:5] if fa.column_names else []}...")
     else:
-        logger.warning(f"  分析失败: {result.get('error')}")
+        # 失败时详细记录错误信息
+        error_msg = result.get('error', 'Unknown error')
+        error_type = result.get('error_type', 'Unknown')
+        error_category = result.get('error_category', 'Unknown')
+        
+        logger.error(f"  ❌ 分析失败!")
+        logger.error(f"     错误信息: {error_msg}")
+        logger.error(f"     错误类型: {error_type}")
+        logger.error(f"     错误类别: {error_category}")
+        
+        # 如果有输出，也记录下来
+        if result.get('output'):
+            logger.error(f"     输出内容: {str(result.get('output'))[:500]}")
+        
+        # 记录任务描述（便于调试）
+        logger.error(f"     任务描述: {task_description[:200]}...")
+        
+        state.file_analyses_failed = True
     
     logger.info("=" * 60)
     return state
