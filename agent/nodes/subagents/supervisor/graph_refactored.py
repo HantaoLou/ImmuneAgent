@@ -654,13 +654,54 @@ Output strictly in the following JSON format, do not include any other text:
 - Starting with http:// or https:// → "url" (download links)
 - Windows paths (e.g., C:\\, D:/) or relative paths (./, ../) → "local" (local files)
 
-## Parameter Name Normalization Rules
-- Use snake_case format (lowercase letters, underscore separated)
-- Common mappings:
-  - "antigen file" → "antigen_file"
-  - "metadata" → "metadata_file"
-  - "RDS file" → "rds_file"
-  - "output directory" → "output_dir"
+## Parameter Extraction Rules (CRITICAL!)
+
+### 1. Explicit Key-Value Parameters
+Extract any explicit key-value pairs from user input:
+- "peptide: ELAGIGILTV" → {"name": "target_peptide", "value": "ELAGIGILTV"}
+- "HLA: A*02:01" → {"name": "hla_restriction", "value": "A*02:01"}
+- "threshold: 0.5" → {"name": "threshold", "value": 0.5}
+- "metric: F1" → {"name": "primary_metric", "value": "F1"}
+- "model: NetTCR-2.0" → {"name": "prediction_tool", "value": "NetTCR-2.0"}
+
+### 2. Implicit Context-Based Parameters
+Infer parameters from context even if not explicitly stated:
+- "MART-1 cancer epitope" → {"name": "target_peptide", "value": "ELAGIGILTV"} (if MART-1 = ELAGIGILTV is known)
+- "HLA-A*02:01 restriction" → {"name": "hla_restriction", "value": "A*02:01"}
+- "2080 TCRs" → {"name": "sample_count", "value": 2080}
+- "binary prediction (True/False)" → {"name": "output_format", "value": "binary"}
+- "primary metric: F1" → {"name": "primary_metric", "value": "F1"}
+
+### 3. Domain-Specific Parameter Inference
+For bioinformatics tasks, extract domain-specific parameters:
+- TCR/antibody tasks: target_peptide, hla_restriction, cdr3_columns, v_gene_columns, j_gene_columns
+- Prediction tasks: prediction_tool, rank_threshold, output_format, primary_metric
+- Analysis tasks: analysis_type, comparison_method, significance_threshold
+
+### 4. Parameter Name Normalization
+Use snake_case and common naming conventions:
+- "antigen file" → "antigen_file" (but put file paths in "files", not "parameters"!)
+- "metadata CSV" → file entry, not parameter
+- "output directory" → "output_dir"
+- "F1 score" → "primary_metric" with value "F1"
+- "2080 samples" → "sample_count" with value 2080
+
+### 5. Value Type Preservation
+Preserve the correct type:
+- Numbers: "2080" → 2080 (integer), "0.05" → 0.05 (float)
+- Booleans: "true" → true (boolean), "yes" → true
+- Strings: "ELAGIGILTV" → "ELAGIGILTV" (string)
+- Lists: "columns A, B, C" → ["A", "B", "C"]
+
+## Important Notes
+1. File paths must be extracted completely, do not truncate
+2. If user explicitly specifies MCP services, extract the complete service name list
+3. **CRITICAL**: File paths should ONLY be placed in the "files" field, NOT in "parameters"
+   - If user writes "- metadata: /path/to/file.csv", extract it as a file with purpose="metadata", NOT as a parameter
+   - The "parameters" field is ONLY for non-file values like thresholds, model names, counts, etc.
+4. Use notes for user's special requirements (e.g., "All tools must be utilized")
+5. Avoid duplicate information - each piece of information should appear in only one place
+6. **BE THOROUGH**: Extract ALL relevant parameters from the user input, including inferred ones
 """
 
 PARAMETER_EXTRACTION_USER_PROMPT = """Please extract structured information from the following user input:
@@ -1326,7 +1367,19 @@ def build_params_node(state: SupervisorState) -> SupervisorState:
     logger.info(f"    - 目标生物: {param_table.get('target_organism')}")
     logger.info(f"    - MCP 服务: {param_table.get('mcp_services', [])}")
     logger.info(f"    - 文件数量: {len(param_table.get('files', {}))}")
-    logger.info(f"    - 参数数量: {len(param_table.get('params', {}))}")
+    
+    # 显示具体的参数名称和值
+    params = param_table.get('params', {})
+    logger.info(f"    - 参数数量: {len(params)}")
+    if params:
+        logger.info("    - 参数详情:")
+        for param_name, param_value in params.items():
+            # 截断过长的值
+            value_str = str(param_value)
+            if len(value_str) > 100:
+                value_str = value_str[:100] + "..."
+            logger.info(f"        • {param_name}: {value_str}")
+    
     logger.info(f"    - 备注: {param_table.get('notes', [])}")
     
     # 详细日志：完整参数表 JSON
