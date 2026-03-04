@@ -355,9 +355,130 @@ def get_cached_task_guide() -> str:
 
 def clear_cache() -> None:
     """Clear the skills and guide cache"""
-    global _skills_cache, _guide_cache
+    global _skills_cache, _guide_cache, _tool_params_cache
     _skills_cache = None
     _guide_cache = None
+    _tool_params_cache = None
+
+
+# Cache for tool parameters extracted from skills
+_tool_params_cache: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def load_tool_parameters_from_skills() -> Dict[str, Dict[str, Any]]:
+    """
+    从所有 skill.yaml 文件中提取工具参数定义
+    
+    这是工具参数的唯一可信来源（Single Source of Truth）
+    替代 tools_params_table.json
+    
+    Returns:
+        字典：tool_name -> {input_params: [...], output_params: [...]}
+        格式与 tools_params_table.json 兼容
+    """
+    global _tool_params_cache
+    
+    if _tool_params_cache is not None:
+        return _tool_params_cache
+    
+    skills = get_cached_skills()
+    tools_params_map: Dict[str, Dict[str, Any]] = {}
+    
+    for service_name, skill_data in skills.items():
+        tools = skill_data.get("tools", [])
+        
+        for tool in tools:
+            tool_name = tool.get("name", "")
+            if not tool_name:
+                continue
+            
+            # 构建完整工具名：service_tool_name (e.g., "nettcr_predict_tcr_binding_complete")
+            # 也保留纯工具名作为别名
+            full_tool_name = f"{service_name}_{tool_name}"
+            
+            # 提取参数定义
+            parameters = tool.get("parameters", [])
+            input_params = []
+            
+            for param in parameters:
+                param_info = {
+                    "name": param.get("name", ""),
+                    "type": param.get("type", "string"),
+                    "required": param.get("required", False),
+                    "description": param.get("description", ""),
+                    "default": param.get("default"),
+                    "example": param.get("example", ""),
+                    "options": param.get("options", []),
+                }
+                input_params.append(param_info)
+            
+            # 提取返回值信息
+            returns = tool.get("returns", {})
+            output_params = []
+            
+            if returns:
+                output_info = {
+                    "type": returns.get("type", ""),
+                    "description": returns.get("description", ""),
+                    "schema": returns.get("schema", []),
+                }
+                output_params.append(output_info)
+            
+            # 构建工具参数映射
+            tool_params = {
+                "input_params": input_params,
+                "output_params": output_params,
+                "tool_name": tool_name,
+                "service_name": service_name,
+                "full_tool_name": full_tool_name,
+                "summary": tool.get("summary", ""),
+                "category": tool.get("category", ""),
+                "priority": tool.get("priority", ""),
+            }
+            
+            # 存储两种格式的键名
+            # 1. 完整名称 service_tool_name
+            tools_params_map[full_tool_name] = tool_params
+            # 2. 纯工具名 tool_name (允许模糊匹配)
+            if tool_name not in tools_params_map:
+                tools_params_map[tool_name] = tool_params
+    
+    _tool_params_cache = tools_params_map
+    print(f"✓ 从 skill.yaml 加载了 {len(tools_params_map)} 个工具参数定义")
+    return tools_params_map
+
+
+def get_tool_params(tool_name: str, service_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    获取指定工具的参数定义
+    
+    Args:
+        tool_name: 工具名称
+        service_name: 可选的服务名称，用于精确匹配
+        
+    Returns:
+        工具参数定义，如果找不到返回 None
+    """
+    tools_params_map = load_tool_parameters_from_skills()
+    
+    # 如果提供了服务名，优先精确匹配
+    if service_name:
+        full_name = f"{service_name}_{tool_name}"
+        if full_name in tools_params_map:
+            return tools_params_map[full_name]
+    
+    # 尝试直接匹配工具名
+    if tool_name in tools_params_map:
+        return tools_params_map[tool_name]
+    
+    # 模糊匹配
+    tool_name_lower = tool_name.lower()
+    for key in tools_params_map:
+        key_lower = key.lower()
+        if tool_name_lower in key_lower or key_lower in tool_name_lower:
+            return tools_params_map[key]
+    
+    return None
 
 
 if __name__ == "__main__":

@@ -925,12 +925,25 @@ def test_codeact_todo_node(state):
                 if params:
                     logger.json_block("任务参数", params)
             
-            # infer_params 节点 - 记录参数推断
-            elif node_name == 'infer_params':
+            # infer_parameters 节点 - 记录参数推断
+            elif node_name == 'infer_parameters':
                 inferred_params = get_value(node_output, 'inferred_parameters', {})
+                file_param_table = get_value(node_output, 'file_parameter_table')
+                
+                logger._append(f"\n\n### Step {step_count}: 参数推断\n")
+                
+                # 记录文件参数表
+                if file_param_table and hasattr(file_param_table, 'files'):
+                    files = file_param_table.files
+                    if files:
+                        logger.key_value("📁 File Parameter Table", f"{len(files)} files")
+                        for key, fp in files.items():
+                            logger.key_value(f"  - {key}", getattr(fp, 'path', 'N/A'))
+                
                 if inferred_params:
-                    logger._append(f"\n\n### Step {step_count}: 参数推断\n")
                     logger.json_block("推断的参数", inferred_params)
+                else:
+                    logger.key_value("推断结果", "无新参数推断（使用任务参数）")
             
             # generate_code 节点 - 记录生成的代码
             elif node_name == 'generate_code':

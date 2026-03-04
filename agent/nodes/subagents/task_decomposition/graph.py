@@ -217,38 +217,23 @@ def _check_and_add_codeact_to_tasks(raw_tasks: List[Dict[str, Any]], available_t
 
 def _load_tools_params_table() -> Dict[str, Dict[str, Any]]:
     """
-    Load tools parameters table
+    从 skill.yaml 文件加载工具参数定义
+    
+    **重要架构原则**: 工具参数的唯一来源是 skill.yaml，而非 tools_params_table.json
     
     Returns:
         Mapping dictionary from tool name to parameter information
     """
-    tools_params_path = agent_dir / "config" / "tools_params_table.json"
+    # 从 skill.yaml 加载工具参数（唯一可信源）
+    from .skill_loader import load_tool_parameters_from_skills
     
-    if not tools_params_path.exists():
-        print(f"⚠ Tools parameters table file does not exist: {tools_params_path}")
+    tools_params_map = load_tool_parameters_from_skills()
+    
+    if not tools_params_map:
+        print(f"⚠ 无法从 skill.yaml 加载工具参数")
         return {}
     
-    try:
-        with open(tools_params_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        # tools_params_table.json is an array, each element is an object
-        # Each object's key is the tool name, value is parameter information
-        tools_params_map = {}
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict):
-                    for tool_name, params_info in item.items():
-                        tools_params_map[tool_name] = params_info
-        elif isinstance(data, dict):
-            # If it's directly a dictionary, also support
-            tools_params_map = data
-        
-        print(f"✓ Successfully loaded tools parameters table, {len(tools_params_map)} tools in total")
-        return tools_params_map
-    except Exception as e:
-        print(f"⚠ Failed to load tools parameters table: {e}")
-        return {}
+    return tools_params_map
 
 
 def _get_llm_for_inference():
