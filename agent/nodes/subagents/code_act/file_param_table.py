@@ -306,7 +306,9 @@ def get_parameter_inference_prompt(
     tool_parameters: List[Dict[str, Any]],
     user_input: str,
     file_param_table: FileParameterTable,
-    completed_tasks: List[Dict[str, Any]]
+    completed_tasks: List[Dict[str, Any]],
+    semantic_hints: Dict[str, Any] = None,
+    extracted_params: Dict[str, Any] = None
 ) -> str:
     """
     Generate LLM prompt for parameter inference
@@ -318,6 +320,8 @@ def get_parameter_inference_prompt(
         user_input: Original user input
         file_param_table: Current file parameter table
         completed_tasks: List of completed task summaries
+        semantic_hints: Semantic hints from TodoTask.parameters (direct value suggestions)
+        extracted_params: Known actual values from supervisor extraction
     
     Returns:
         Formatted prompt string for LLM
@@ -349,6 +353,22 @@ def get_parameter_inference_prompt(
         if param_desc:
             params_context += f": {param_desc}"
     
+    # Build semantic hints context
+    hints_context = ""
+    if semantic_hints:
+        hints_context = "\n## Semantic Hints from Task Planner\n"
+        hints_context += "These are suggested values from the task planner. Use them as guidance:\n"
+        for key, value in semantic_hints.items():
+            hints_context += f"  - {key}: {value}\n"
+    
+    # Build known values context (high confidence)
+    known_context = ""
+    if extracted_params:
+        known_context = "\n## Known Parameter Values (High Confidence)\n"
+        known_context += "These values were extracted from user input by the supervisor. Use them directly:\n"
+        for key, value in extracted_params.items():
+            known_context += f"  - {key}: {value}\n"
+    
     prompt = f"""You are a parameter inference expert. Your task is to determine the correct parameter values for a tool call based on available context.
 
 # Tool Information
@@ -366,15 +386,16 @@ def get_parameter_inference_prompt(
 ## {file_context}
 
 ## {tasks_context}
-
+{hints_context}{known_context}
 # Your Task
 Analyze the above context and determine the appropriate parameter values for this tool call.
 
 Rules:
-1. For file parameters, use the exact file path from the File Parameter Table
-2. If a parameter should come from a task output, reference the appropriate file from the table
-3. If a required parameter cannot be determined, mark it as "NEEDS_USER_INPUT"
-4. Only include parameters that have values to fill
+1. **Use Known Values First**: If a parameter is in "Known Parameter Values", use that value directly
+2. **Apply Semantic Hints**: Use semantic hints as guidance when no known value exists
+3. **Match File Parameters**: For file parameters, use the exact file path from the File Parameter Table
+4. **Match User Intent**: Extract values from user's original request when possible
+5. **Mark Unknown**: If a required parameter cannot be determined, mark it as "NEEDS_USER_INPUT"
 
 # Output Format
 Return a JSON object with the inferred parameters:

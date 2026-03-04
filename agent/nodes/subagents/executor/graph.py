@@ -2622,7 +2622,8 @@ def _convert_excel_to_delimited_via_codeact(
         executor_state=state,
         task=preprocess_task,
         execution_mode=CodeActExecutionMode.CODEACT,
-        parameters={}
+        parameters={},
+        parent_state=state.parent_state  # Pass parent_state for parameter inference
     )
     codeact_graph = build_codeact_subgraph()
     codeact_output = codeact_graph.invoke(codeact_input)
@@ -7855,7 +7856,8 @@ def _execute_single_task(task: SubTask, state: ExecutorState) -> TaskExecutionRe
                 previous_error=previous_error,
                 error_category=error_category,
                 revision_plan=revision_plan,
-                revision_iteration=revision_iteration
+                revision_iteration=revision_iteration,
+                parent_state=state.parent_state  # Pass parent_state for parameter inference
             )
 
             # Call CodeAct subgraph
