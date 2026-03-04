@@ -170,7 +170,7 @@
   {
     "name": "integrate_tcr_data_complete",
     "service": "tcell",
-    "description": "Complete TCR data integration pipeline. One-step TCR data integration including UMAP, clustering, and cell type annotation for T cell repertoire analysis. This tool MUST be executed before any other tcell analysis tools."
+    "description": "Merge/integrate TCR prediction results (CSV) with RDS data. Combines NetTCR binding predictions, IgBLAST results, or any CSV output with Seurat RDS metadata by barcode matching. Use after any TCR analysis that produces CSV files."
   },
   {
     "name": "immune_celltype_visualization",

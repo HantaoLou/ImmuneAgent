@@ -222,12 +222,14 @@ def _execute_code_direct(
             exec_env["OPENSANDBOX_SKIP_MCP_INSTALL"] = "true"
 
         # 执行代码
+        # 注意: 不再复用沙盒 ID，每次创建新沙盒
+        # 文件通过 session_id 组织在同一目录下，而非沙盒 ID
         result = run_code_in_opensandbox_sync(
             code=code,
             task_id=f"codeact_direct_{int(time.time())}",
             timeout_seconds=timeout_seconds,
-            existing_sandbox_id=sandbox_id,
-            keep_alive=keep_alive,
+            existing_sandbox_id=None,  # 不复用，每次创建新沙盒
+            keep_alive=False,  # 不保持沙盒存活
             env=exec_env
         )
 

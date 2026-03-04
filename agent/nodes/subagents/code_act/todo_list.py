@@ -237,14 +237,19 @@ print(f"__EXISTS__:{{exists}}")
         """Read file content from remote sandbox via CodeAct"""
         try:
             from utils.codeact_executor import execute_code_via_codeact, is_codeact_available
+            from utils.sandbox_paths import get_container_path
             
             if not is_codeact_available():
                 raise RuntimeError("CodeAct not available for remote file reading")
             
-            # Use string path for remote sandbox (Unix-style)
+            # Convert server path to container path for reading
+            # Files are written to /tmp/sessions/... (writable in container)
+            container_file_path = get_container_path(self.todo_list_path_str)
+            
+            # Use container path for remote sandbox
             read_code = f'''
 import os
-path = "{self.todo_list_path_str}"
+path = "{container_file_path}"
 if os.path.exists(path):
     with open(path, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -256,7 +261,7 @@ else:
     print("__NOT_FOUND__")
 '''
             result = execute_code_via_codeact(
-                task_description=f"读取远程文件: {self.todo_list_path}",
+                task_description=f"读取远程文件: {container_file_path} (server: {self.todo_list_path})",
                 code_template=read_code,
                 sandbox_id=self.opensandbox_id,
                 timeout_seconds=30,
@@ -604,23 +609,30 @@ else:
         """Write file content to remote sandbox via CodeAct"""
         try:
             from utils.codeact_executor import execute_code_via_codeact, is_codeact_available
+            from utils.sandbox_paths import get_container_path
             
             if not is_codeact_available():
                 print("⚠️ CodeAct not available for remote file writing")
                 return False
             
+            # Convert server path to container path for writing
+            # Server path: /data/sessions/{session_id}/...  (read-only in container)
+            # Container path: /tmp/sessions/{session_id}/...  (writable in container)
+            container_dir = get_container_path(self.sandbox_dir_str)
+            container_file_path = get_container_path(self.todo_list_path_str)
+            
             # Escape content for Python string
             escaped_content = content.replace('\\', '\\\\').replace('"""', '\\"\\"\\')
             
-            # Use string paths for remote sandbox (Unix-style)
+            # Use container paths for remote sandbox (writable in container)
             write_code = f'''
 import os
 
-# Ensure directory exists
-os.makedirs("{self.sandbox_dir_str}", exist_ok=True)
+# Ensure directory exists (use container path for writing)
+os.makedirs("{container_dir}", exist_ok=True)
 
-# Write file
-file_path = "{self.todo_list_path_str}"
+# Write file (use container path)
+file_path = "{container_file_path}"
 content = """{escaped_content}"""
 
 with open(file_path, 'w', encoding='utf-8') as f:
@@ -629,7 +641,7 @@ with open(file_path, 'w', encoding='utf-8') as f:
 print(f"__WRITTEN__:{{file_path}}")
 '''
             result = execute_code_via_codeact(
-                task_description=f"写入远程文件: {self.todo_list_path_str}",
+                task_description=f"写入远程文件: {container_file_path} (server: {self.todo_list_path_str})",
                 code_template=write_code,
                 sandbox_id=self.opensandbox_id,
                 timeout_seconds=30,
@@ -1064,17 +1076,33 @@ print(f"__WRITTEN__:{{path}}")
 
 # ===================== Code Generation Helpers =====================
 
+def _get_container_path(server_path: str) -> str:
+    """
+    Convert server path to container path for sandbox execution
+    
+    Server path: /data/sessions/{session_id}/...  (read-only in container)
+    Container path: /tmp/sessions/{session_id}/...  (writable in container)
+    """
+    if server_path.startswith("/data/sessions/"):
+        return server_path.replace("/data/sessions/", "/tmp/sessions/", 1)
+    return server_path
+
+
 def generate_code_to_read_todo_list(sandbox_dir: str) -> str:
     """
     Generate Python code to read todo-list.md from sandbox
     
     This code will be executed in the sandbox environment.
+    Note: Uses container path (/tmp/sessions/) for write operations.
     """
+    # Convert server path to container path for sandbox execution
+    container_dir = _get_container_path(sandbox_dir)
+    
     return f'''
 import os
 import json
 
-TODO_PATH = "{sandbox_dir}/todo-list.md"
+TODO_PATH = "{container_dir}/todo-list.md"
 
 if not os.path.exists(TODO_PATH):
     print(json.dumps({{"error": "todo-list.md not found", "path": TODO_PATH}}))
@@ -1090,19 +1118,22 @@ def generate_code_to_update_todo_list(sandbox_dir: str, content: str) -> str:
     Generate Python code to update todo-list.md in sandbox
     
     Args:
-        sandbox_dir: Sandbox directory path
+        sandbox_dir: Sandbox directory path (server path, will be converted to container path)
         content: New markdown content
     """
     # Use base64 encoding to avoid escaping issues
     import base64
     encoded_content = base64.b64encode(content.encode('utf-8')).decode('ascii')
     
+    # Convert server path to container path for sandbox execution
+    container_dir = _get_container_path(sandbox_dir)
+    
     return f'''
 import os
 import json
 import base64
 
-TODO_PATH = "{sandbox_dir}/todo-list.md"
+TODO_PATH = "{container_dir}/todo-list.md"
 CONTENT_B64 = "{encoded_content}"
 CONTENT = base64.b64decode(CONTENT_B64).decode('utf-8')
 

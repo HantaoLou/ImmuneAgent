@@ -338,6 +338,15 @@ def supervisor_node(state: GlobalState) -> GlobalState:
         
         result_state = subgraph.invoke(supervisor_state)
         
+        # 调试：打印 result_state 类型
+        print(f"  [DEBUG] result_state type: {type(result_state).__name__}")
+        if isinstance(result_state, dict):
+            print(f"  [DEBUG] result_state keys: {list(result_state.keys())[:10]}")
+        elif isinstance(result_state, list):
+            print(f"  [DEBUG] result_state is list, len={len(result_state)}")
+            if len(result_state) > 0:
+                print(f"  [DEBUG] first element type: {type(result_state[0]).__name__}")
+        
         # 3. 映射子图结果回全局状态
         print("  [3/3] 映射子图结果到全局状态...")
         state = supervisor_output_mapper(result_state, state)
@@ -349,7 +358,11 @@ def supervisor_node(state: GlobalState) -> GlobalState:
         return state
         
     except Exception as e:
+        import traceback
         print(f"  [错误] 子图执行失败: {e}")
+        print(f"  [错误] 异常类型: {type(e).__name__}")
+        print(f"  [错误] 完整堆栈:")
+        traceback.print_exc()
         print("  [回退] 使用简化版 supervisor")
         return _supervisor_node_fallback(state)
 
@@ -720,7 +733,7 @@ def _codeact_input_mapper(global_state: GlobalState) -> CodeActState:
     )
 
 
-def _codeact_output_mapper(codeact_state: CodeActState | dict, global_state: GlobalState) -> GlobalState:
+def _codeact_output_mapper(codeact_state: CodeActState | dict | list, global_state: GlobalState) -> GlobalState:
     """
     将 CodeActState 结果映射回 GlobalState
     
@@ -729,11 +742,27 @@ def _codeact_output_mapper(codeact_state: CodeActState | dict, global_state: Glo
     - completed_tasks: 已完成的任务
     
     Args:
-        codeact_state: CodeAct 子图返回的状态，可能是 CodeActState 对象或 dict
+        codeact_state: CodeAct 子图返回的状态，可能是 CodeActState 对象、dict 或 list
         global_state: 全局状态
     """
     if not codeact_state:
         return global_state
+    
+    # 处理 list 类型输入（从 LangGraph stream 返回的某些节点）
+    if isinstance(codeact_state, list):
+        # 尝试从 list 中找到包含 todo_list 的元素
+        for item in codeact_state:
+            if isinstance(item, dict):
+                if "todo_list" in item or hasattr(item, 'todo_list'):
+                    codeact_state = item
+                    break
+            elif hasattr(item, 'todo_list'):
+                codeact_state = item
+                break
+        else:
+            # 没有找到有效元素，返回原状态
+            print("  [_codeact_output_mapper] 警告: list 中未找到有效的 todo_list 数据")
+            return global_state
     
     # 处理 dict 类型输入（从 LangGraph stream 返回）
     if isinstance(codeact_state, dict):

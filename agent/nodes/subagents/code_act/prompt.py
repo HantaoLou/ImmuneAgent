@@ -25,6 +25,35 @@ Based on the provided MCP tool information and parameters, generate Python code 
 5. **Must set result variable at the end**, containing execution results
 6. **LLM decides WHAT, code handles HOW data transforms** (keep tool calls simple, move data handling into code)
 
+# ⛔ CRITICAL: FORBIDDEN PATTERNS (ABSOLUTELY NO SIMULATION)
+
+**The following patterns are STRICTLY FORBIDDEN:**
+
+```python
+# ❌ FORBIDDEN - These will cause IMMEDIATE REJECTION
+def call_tool():  # WRONG: Do not define your own call_tool
+    return "Tool called successfully"  # WRONG: No simulation
+
+# ❌ FORBIDDEN - Wrong import
+from mcp import call_tool  # WRONG MODULE!
+
+# ❌ FORBIDDEN - Simulation patterns
+# Simulate the call to a tool
+return "Tool called successfully"
+output = "Mock result"
+```
+
+**YOU MUST USE:**
+```python
+from core.tool_interface import call_tool  # CORRECT import path
+
+tool_result = call_tool(
+    tool_name="actual_tool_name",
+    parameters={"actual": "parameters"}
+)
+# Use tool_result["output"] which contains REAL data from the tool
+```
+
 # MCP Tool Call Method
 
 **Important: Must use `core.tool_interface.call_tool` function to call MCP tools.**
@@ -67,6 +96,7 @@ Code should:
 # Notes
 
 - **Must use `call_tool` function, do not try to directly import `mcp_client` or other non-existent modules**
+- **DO NOT define your own `call_tool` function - import it from `core.tool_interface`**
 - Parameter values should directly use provided parameters, do not modify
 - If parameters contain file paths, ensure proper path handling
 - `call_tool` returns a dictionary containing `status`, `output`, `error`, `error_type`, `execution_time_ms`, `tool_name`, and `service_id`
@@ -150,6 +180,37 @@ Based on the user's task description, generate complete, executable Python code 
 4. **Prioritize Python standard library**, if third-party libraries are necessary, use common ones (such as pandas, numpy, etc.)
 5. **Must set result variable at the end**, containing execution results
 6. **LLM decides WHAT, code handles HOW data transforms** (keep logic explicit in code)
+
+# ⛔ CRITICAL: FORBIDDEN PATTERNS (ABSOLUTELY NO SIMULATION)
+
+**The following patterns are STRICTLY FORBIDDEN and will cause immediate rejection:**
+
+```python
+# ❌ FORBIDDEN - Simulation/placeholder code
+def call_tool():
+    # Simulate the call to a tool
+    return "Tool called successfully"
+
+# ❌ FORBIDDEN - Mock implementations
+output = "Tool called successfully"  # Mock result
+
+# ❌ FORBIDDEN - Placeholder returns
+return "Some placeholder text"
+
+# ❌ FORBIDDEN - Skipping actual work
+result = {"status": "success", "output": "Task completed"}  # Without actual work
+```
+
+**YOU MUST:**
+- Call REAL functions and APIs
+- Process REAL data
+- Return REAL results from actual computations
+- Import from correct modules: `from core.tool_interface import call_tool`
+
+**If you don't know how to do something:**
+- Use standard library functions
+- Make reasonable assumptions based on task description
+- NEVER resort to simulation or mock data
 
 # ⭐ CRITICAL: Data Exploration Step (REQUIRED for data processing tasks)
 

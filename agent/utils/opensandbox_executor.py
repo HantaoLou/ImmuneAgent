@@ -180,43 +180,9 @@ async def _setup_mcp_support_in_sandbox(sandbox: Any) -> None:
                 print(f"  [{label}] stderr:\n{stderr}")
             return stdout, stderr
 
-        # 1. Install required packages (can be skipped if image has pre-installed deps)
-        skip_mcp_install = os.getenv("OPENSANDBOX_SKIP_MCP_INSTALL", "false").lower() == "true"
-        
-        await sandbox.commands.run("mkdir -p /tmp/agent_modules/third_party")
-        
-        if skip_mcp_install:
-            print("  ℹ Skipping MCP dependency install (OPENSANDBOX_SKIP_MCP_INSTALL=true)")
-            print("  ℹ Assuming dependencies are pre-installed in the image")
-        else:
-            print("  ℹ Installing MCP dependencies in OpenSandbox...")
-            install_cmd = (
-                "python3 -m pip install -q -t /tmp/agent_modules/third_party "
-                "langchain-mcp-adapters requests"
-            )
-            try:
-                _stdout, _stderr = await _run_and_capture(install_cmd, "pip-install")
-                if "No module named pip" in (_stderr or ""):
-                    await _run_and_capture("python3 -m ensurepip --upgrade", "ensurepip")
-                    await _run_and_capture(install_cmd, "pip-install-retry")
-                import_check_cmd = (
-                    "python3 - <<'PY'\n"
-                    "import sys\n"
-                    "sys.path.insert(0, '/tmp/agent_modules/third_party')\n"
-                    "try:\n"
-                    "    import langchain_mcp_adapters  # noqa: F401\n"
-                    "    print('IMPORT_OK')\n"
-                    "except Exception as e:\n"
-                    "    print('IMPORT_FAIL:' + repr(e))\n"
-                    "    raise\n"
-                    "PY"
-                )
-                stdout, _stderr = await _run_and_capture(import_check_cmd, "import-check")
-                if "IMPORT_OK" not in stdout:
-                    raise RuntimeError(f"Import check failed: {stdout}")
-                print("  ✓ MCP dependencies installed")
-            except Exception as e:
-                print(f"  ⚠ Failed to install dependencies: {e}, continuing...")
+        # 1. MCP dependencies must be pre-installed in the sandbox image
+        # Removed auto-install logic - image should have langchain-mcp-adapters pre-installed
+        print("  ℹ Assuming MCP dependencies are pre-installed in the sandbox image")
         
         # 2. Create config directory in sandbox
         await sandbox.commands.run("mkdir -p /tmp/agent_config")

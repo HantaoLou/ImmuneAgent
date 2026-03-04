@@ -186,6 +186,9 @@ class SupervisorState(BaseModel):
     codeact_upload_result: Optional[Dict[str, Any]] = Field(default=None, description="CodeAct 上传结果")
     codeact_analysis_result: Optional[Dict[str, Any]] = Field(default=None, description="CodeAct 分析结果")
 
+    # 错误标志
+    file_analyses_failed: bool = Field(default=False, description="文件分析是否失败")
+
 
 # ==================== 核心辅助函数 ====================
 
@@ -556,7 +559,14 @@ def _call_codeact(
         if result_state:
             if isinstance(result_state, dict):
                 er = result_state.get("execution_result")
-                new_sandbox_id = er.get("sandbox_id") if er else None
+                # er 可能是 dict、list 或 None
+                if er and isinstance(er, dict):
+                    new_sandbox_id = er.get("sandbox_id")
+                elif er and isinstance(er, list) and len(er) > 0 and isinstance(er[0], dict):
+                    new_sandbox_id = er[0].get("sandbox_id")
+                else:
+                    new_sandbox_id = None
+                    
                 if not new_sandbox_id and result_state.get("parent_state"):
                     ps = result_state.get("parent_state")
                     if hasattr(ps, 'merged_result'):
@@ -564,7 +574,13 @@ def _call_codeact(
                         new_sandbox_id = mr.get('opensandbox_id') if mr else None
             else:
                 er = getattr(result_state, 'execution_result', None)
-                new_sandbox_id = er.get("sandbox_id") if er else None
+                # er 可能是 dict、list 或 None
+                if er and isinstance(er, dict):
+                    new_sandbox_id = er.get("sandbox_id")
+                elif er and isinstance(er, list) and len(er) > 0 and isinstance(er[0], dict):
+                    new_sandbox_id = er[0].get("sandbox_id")
+                else:
+                    new_sandbox_id = None
             
             if new_sandbox_id and new_sandbox_id != state.opensandbox_id:
                 state.opensandbox_id = new_sandbox_id
@@ -1212,7 +1228,17 @@ def analyze_files_node(state: SupervisorState) -> SupervisorState:
     state.codeact_analysis_result = result
     
     if result.get("status") == "success":
-        analysis_output = result.get("output", {}).get("files", [])
+        # 安全提取 output.files，处理 output 可能是 list/str/dict 的情况
+        output = result.get("output")
+        if isinstance(output, dict):
+            analysis_output = output.get("files", [])
+        elif isinstance(output, list):
+            # 如果 output 本身就是列表，可能是文件列表
+            analysis_output = output
+        else:
+            logger.warning(f"  输出类型异常: {type(output).__name__}, 无法提取文件信息")
+            analysis_output = []
+        
         # 转换为 FileAnalysis 对象
         for file_info in analysis_output:
             original_path = None
@@ -1480,24 +1506,58 @@ def supervisor_input_mapper(global_state: GlobalState) -> SupervisorState:
     )
 
 
-def supervisor_output_mapper(subgraph_output: Union[SupervisorState, Dict[str, Any]], global_state: GlobalState) -> GlobalState:
+def supervisor_output_mapper(subgraph_output: Union[SupervisorState, Dict[str, Any], list], global_state: GlobalState) -> GlobalState:
     """
     子图 → 主图状态映射
     
     将子图的 SupervisorState 结果同步回主图的 GlobalState。
     
     Args:
-        subgraph_output: 子图输出状态（可能是 SupervisorState 对象或 dict）
+        subgraph_output: 子图输出状态（可能是 SupervisorState 对象、dict 或 list）
         global_state: 主图的全局状态（将被更新）
         
     Returns:
         GlobalState: 更新后的主图状态
     """
+    import sys
+    print(f"  [DEBUG supervisor_output_mapper] 输入类型: {type(subgraph_output).__name__}")
+    
+    # 处理 list 类型（LangGraph 在某些情况下返回 list）
+    if isinstance(subgraph_output, list):
+        print(f"  [DEBUG] 输入是 list，长度: {len(subgraph_output)}")
+        # 尝试从 list 中找到有效的元素
+        for i, item in enumerate(subgraph_output):
+            print(f"  [DEBUG] list[{i}] 类型: {type(item).__name__}")
+            if isinstance(item, dict):
+                print(f"  [DEBUG] list[{i}] 是 dict，keys: {list(item.keys())[:5]}")
+                subgraph_output = item
+                break
+            elif hasattr(item, 'session_id'):
+                print(f"  [DEBUG] list[{i}] 有 session_id 属性")
+                subgraph_output = item
+                break
+        else:
+            # 没有找到有效元素，返回原状态
+            print(f"  [DEBUG] list 中未找到有效数据，返回原状态")
+            return global_state
+    
     # 处理 dict 格式状态
     if isinstance(subgraph_output, dict):
-        subgraph_output = SupervisorState(**subgraph_output)
+        print(f"  [DEBUG] 输入是 dict，转换为 SupervisorState")
+        print(f"  [DEBUG] dict keys: {list(subgraph_output.keys())[:10]}")
+        try:
+            subgraph_output = SupervisorState(**subgraph_output)
+            print(f"  [DEBUG] SupervisorState 创建成功")
+        except Exception as e:
+            print(f"  [DEBUG] 创建 SupervisorState 失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return global_state
+    else:
+        print(f"  [DEBUG] 输入是 {type(subgraph_output).__name__}，直接使用")
     
     # 1. 存储任务类型分类结果
+    print(f"  [DEBUG] 开始同步数据...")
     if subgraph_output.user_task_type:
         task_type = subgraph_output.user_task_type
         if isinstance(task_type, str):
@@ -1506,10 +1566,12 @@ def supervisor_output_mapper(subgraph_output: Union[SupervisorState, Dict[str, A
             except (ValueError, KeyError):
                 pass
         global_state.user_task_type = task_type
+        print(f"  [DEBUG] user_task_type: {task_type}")
     
     # 2. 同步执行计划
     if subgraph_output.execution_plan:
         global_state.execution_plan = subgraph_output.execution_plan
+        print(f"  [DEBUG] execution_plan 长度: {len(subgraph_output.execution_plan)}")
     
     # 3. 同步沙箱文件路径
     if subgraph_output.sandbox_file_paths:
@@ -1524,16 +1586,30 @@ def supervisor_output_mapper(subgraph_output: Union[SupervisorState, Dict[str, A
         if global_state.merged_result is None:
             global_state.merged_result = {}
         global_state.merged_result["extracted_parameters"] = subgraph_output.extracted_parameters
-        global_state.merged_result["file_analyses"] = [
-            {
-                "sandbox_path": fa.sandbox_path,
-                "file_type": fa.file_type,
-                "data_type": fa.detected_data_type,
-                "columns": fa.column_names,
-                "summary": fa.content_summary,
-            }
-            for fa in subgraph_output.file_analyses
-        ] if subgraph_output.file_analyses else []
+        
+        # 安全地处理 file_analyses
+        if subgraph_output.file_analyses:
+            file_analyses_list = []
+            for fa in subgraph_output.file_analyses:
+                if isinstance(fa, dict):
+                    file_analyses_list.append({
+                        "sandbox_path": fa.get("sandbox_path"),
+                        "file_type": fa.get("file_type"),
+                        "data_type": fa.get("detected_data_type"),
+                        "columns": fa.get("column_names"),
+                        "summary": fa.get("content_summary"),
+                    })
+                else:
+                    file_analyses_list.append({
+                        "sandbox_path": getattr(fa, 'sandbox_path', None),
+                        "file_type": getattr(fa, 'file_type', None),
+                        "data_type": getattr(fa, 'detected_data_type', None),
+                        "columns": getattr(fa, 'column_names', None),
+                        "summary": getattr(fa, 'content_summary', None),
+                    })
+            global_state.merged_result["file_analyses"] = file_analyses_list
+        else:
+            global_state.merged_result["file_analyses"] = []
     
     # 5. 同步会话 ID 和沙箱目录
     if global_state.merged_result is None:
