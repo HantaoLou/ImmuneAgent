@@ -324,15 +324,29 @@ else:
                     session_info[key] = value
             
             # Detect task header
-            if stripped.startswith("### Task ") and ":" in stripped:
+            # Support both formats:
+            # - New format with emoji: "### ⏳ Task: task_001"
+            # - Old format: "### Task 1: 文件上传"
+            is_task_header = (
+                (stripped.startswith("### ") and "Task:" in stripped) or  # New format with emoji
+                (stripped.startswith("### Task ") and ":" in stripped)    # Old format
+            )
+            
+            if is_task_header:
                 # Save previous task
                 if current_task:
                     if in_parameters and parameters_lines:
                         current_task["parameters"] = self._parse_yaml_block(parameters_lines)
                     tasks.append(self._create_task(current_task))
                 
-                # Start new task
-                task_title = stripped.split(":", 1)[1].strip()
+                # Start new task - extract task ID from header
+                # Format: "### ⏳ Task: test_task_001" or "### Task 1: 文件上传"
+                if "Task:" in stripped:
+                    # New format: extract ID after "Task:"
+                    task_title = stripped.split("Task:", 1)[1].strip()
+                else:
+                    # Old format: extract after first colon
+                    task_title = stripped.split(":", 1)[1].strip()
                 current_task = {"description": task_title}
                 in_parameters = False
                 parameters_lines = []

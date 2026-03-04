@@ -496,6 +496,41 @@ def _build_subprocess_kwargs() -> Dict[str, Any]:
     return kwargs
 
 
+def _strip_code_fences(code: str) -> str:
+    """
+    Remove all markdown code fences from generated code.
+    
+    This handles cases where LLM returns code wrapped in ```python ... ```
+    or where code contains embedded markdown examples.
+    
+    Args:
+        code: Code that may contain markdown code fences
+        
+    Returns:
+        Clean code with all code fences removed
+    """
+    if not code:
+        return code
+    
+    lines = code.split('\n')
+    cleaned_lines = []
+    in_code_block = False
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # Detect code fence start/end
+        if stripped.startswith('```'):
+            # Check if this is a code fence with language tag (like ```python)
+            # or a closing fence (just ```)
+            in_code_block = not in_code_block
+            continue  # Skip the fence line itself
+        
+        cleaned_lines.append(line)
+    
+    return '\n'.join(cleaned_lines).strip()
+
+
 def _ensure_code_executable(code: str, has_sandbox: bool, sandbox_dir: str = None) -> str:
     """
     Ensure code is executable, add necessary wrapping and error handling
@@ -509,6 +544,9 @@ def _ensure_code_executable(code: str, has_sandbox: bool, sandbox_dir: str = Non
         Executable code
     """
     result_marker = "__CODEACT_RESULT__"
+    
+    # First, strip any markdown code fences that LLM might have included
+    code = _strip_code_fences(code)
     
     # Auto-install wrapper for missing dependencies (especially for OpenSandbox)
     # Uses uv for faster installation (10-100x faster than pip)
