@@ -2639,24 +2639,126 @@ def _preprocess_parameters_with_codeact(
     parameters: Dict[str, Any],
     state: "ExecutorState"
 ) -> Dict[str, Any]:
-    """Detect file type mismatches and auto-convert inputs before execution."""
+    """Detect file type mismatches and auto-convert inputs before execution.
+    
+    IMPORTANT: This function also injects actual parameter values from
+    parent_state.extracted_parameters when the input parameters contain
+    schema definitions instead of actual values.
+    """
     # Import at function level to avoid "cannot access local variable" error
     from pathlib import Path as _Path
     
     print(f"  [ParamPreprocess] Called for task {task.task_id}")
     print(f"  [ParamPreprocess] Input parameters: {parameters}")
-    if not parameters:
-        print(f"  [ParamPreprocess] Skipping: parameters is empty")
-        return parameters
+    
+    # ========== CRITICAL FIX: Inject actual values from extracted_parameters ==========
+    # The input `parameters` may contain schema definitions (description, type, required)
+    # instead of actual values. We need to get actual values from parent_state.
+    actual_params = {}
+    
+    # Step 1: Check if parameters contain schema definitions (need actual values)
+    has_schema_defs = any(
+        isinstance(v, dict) and ('type' in v or 'description' in v or 'required' in v)
+        for v in parameters.values()
+    )
+    
+    if has_schema_defs or not parameters:
+        # Parameters contain schema definitions, need to get actual values
+        if state.parent_state:
+            # Get extracted_parameters from parent_state
+            extracted_params = getattr(state.parent_state, 'extracted_parameters', None)
+            if extracted_params:
+                # extracted_parameters has structure: {"params": {...}, "files": {...}}
+                params_section = extracted_params.get("params", {})
+                files_section = extracted_params.get("files", {})
+                
+                # Get tool parameter schema to map extracted values
+                task_result = task.result if isinstance(task.result, dict) else {}
+                tools = task_result.get("tools", [])
+                tool_name = None
+                if tools:
+                    first_tool = tools[0]
+                    if isinstance(first_tool, dict):
+                        tool_name = first_tool.get("tool_name") or first_tool.get("name")
+                    elif isinstance(first_tool, str):
+                        tool_name = first_tool
+                
+                if tool_name:
+                    print(f"  [ParamPreprocess] Tool: {tool_name}, injecting actual values from extracted_parameters")
+                
+                # Map extracted params to tool parameters
+                # Common parameter name mappings
+                param_mappings = {
+                    # TCR-related
+                    "peptides": ["target_peptide", "peptide"],
+                    "peptide": ["target_peptide", "peptides"],
+                    "test_file": ["meta_csv_file", "input_file"],
+                    "input_data": ["meta_csv_file", "test_file"],
+                    # File paths
+                    "input_file": ["meta_csv_file", "test_file"],
+                    "input_csv": ["meta_csv_file"],
+                    "input_rds": ["meta_rds_file"],
+                    # Session info
+                    "output_dir": None,  # Will be set from sandbox_data_dir
+                }
+                
+                # Inject values from params section
+                for param_name, value in params_section.items():
+                    actual_params[param_name] = value
+                    print(f"  [ParamPreprocess] Injected param: {param_name} = {value}")
+                
+                # Inject file paths from files section
+                for file_key, file_info in files_section.items():
+                    if isinstance(file_info, dict):
+                        sandbox_path = file_info.get("sandbox_path", "")
+                        if sandbox_path:
+                            # Map file key to parameter name
+                            mapped = False
+                            for param_name, source_keys in param_mappings.items():
+                                if source_keys and file_key in source_keys:
+                                    if param_name not in actual_params:
+                                        actual_params[param_name] = sandbox_path
+                                        print(f"  [ParamPreprocess] Mapped file: {param_name} = {sandbox_path}")
+                                        mapped = True
+                                        break
+                            if not mapped:
+                                # Use original file key as parameter name
+                                actual_params[file_key] = sandbox_path
+                                print(f"  [ParamPreprocess] Added file: {file_key} = {sandbox_path}")
+                
+                # Add session-specific paths
+                sandbox_data_dir = getattr(state.parent_state, 'sandbox_data_dir', None)
+                if sandbox_data_dir:
+                    actual_params["output_dir"] = f"{sandbox_data_dir}/output"
+                    print(f"  [ParamPreprocess] Set output_dir: {actual_params['output_dir']}")
+                
+                print(f"  [ParamPreprocess] Injected {len(actual_params)} actual parameter values")
+    
+    # Merge: actual_params takes precedence, then original parameters
+    updated = {**parameters, **actual_params}
+    
+    # Filter out schema definitions (keep only actual values)
+    filtered_params = {}
+    for key, value in updated.items():
+        if isinstance(value, dict) and ('type' in value or 'description' in value):
+            # This is a schema definition, not an actual value - skip it
+            print(f"  [ParamPreprocess] Filtering out schema definition: {key}")
+            continue
+        filtered_params[key] = value
+    updated = filtered_params
+    
+    if not updated:
+        print(f"  [ParamPreprocess] Skipping: parameters is empty after filtering")
+        return updated
+    
     task_result = task.result if isinstance(task.result, dict) else {}
     tools = task_result.get("tools", [])
     print(f"  [ParamPreprocess] Tools: {tools}")
     if not tools:
         print(f"  [ParamPreprocess] Skipping: no tools")
-        return parameters
+        return updated
 
     tools_params_map = _load_tools_params_table() or {}
-    updated = dict(parameters)
 
     # Tools that require FASTA input
     fasta_required_tools = [

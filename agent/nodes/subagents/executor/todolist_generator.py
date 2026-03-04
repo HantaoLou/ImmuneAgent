@@ -152,36 +152,66 @@ def _extract_tool_name_from_subtask(subtask: SubTask) -> Optional[str]:
     return None
 
 
-def _extract_parameters_from_subtask(subtask: SubTask) -> Dict[str, Any]:
+def _extract_parameters_from_subtask(
+    subtask, 
+    extracted_parameters: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
-    Extract parameters from SubTask's result metadata
+    Extract actual parameter values from subtask, using extracted_parameters
+    as the source of truth for values.
+    
+    The subtask.result.get("parameters") contains parameter DEFINITIONS (schema),
+    NOT actual values. Actual values come from extracted_parameters which is
+    populated during the parameter extraction phase.
     
     Args:
-        subtask: SubTask object
-    
+        subtask: SubTask containing parameter definitions
+        extracted_parameters: Dict of actual parameter values extracted from context
+        
     Returns:
-        Parameters dictionary
+        Dict of parameter name -> actual value
     """
-    params = {}
+    actual_params = {}
     
-    if not subtask.result:
-        return params
+    if extracted_parameters:
+        # extracted_parameters contains the actual values we need
+        actual_params.update(extracted_parameters)
     
     if isinstance(subtask.result, dict):
-        # Get pre-defined parameters
-        params = subtask.result.get("parameters", {}).copy()
+        # Get parameter DEFINITIONS from the task
+        param_definitions = subtask.result.get("parameters", {})
         
-        # Add inputs as input_file if single file
-        inputs = subtask.result.get("inputs", [])
-        if inputs and len(inputs) == 1 and "input_file" not in params:
-            params["input_file"] = inputs[0]
+        # Filter out schema-only entries (descriptions, types, etc.)
+        # and only keep actual values
+        for param_name, param_value in param_definitions.items():
+            # If it's a dict with type/description keys, it's a schema definition
+            if isinstance(param_value, dict):
+                if 'type' in param_value or 'description' in param_value:
+                    # This is a schema definition, not an actual value
+                    # Check if we have an actual value from extracted_parameters
+                    if param_name not in actual_params:
+                        # No actual value available, skip this schema definition
+                        continue
+                else:
+                    # This might be an actual dict value
+                    if param_name not in actual_params:
+                        actual_params[param_name] = param_value
+            else:
+                # This is an actual value
+                if param_name not in actual_params:
+                    actual_params[param_name] = param_value
         
-        # Add outputs as output_file if single file
-        outputs = subtask.result.get("outputs", [])
-        if outputs and len(outputs) == 1 and "output_file" not in params:
-            params["output_file"] = outputs[0]
+        # Handle inputs/outputs as fallback
+        if not actual_params:
+            inputs = subtask.result.get("inputs", [])
+            if inputs and len(inputs) == 1:
+                actual_params["input"] = inputs[0]
+            
+            outputs = subtask.result.get("outputs", [])
+            if outputs and len(outputs) == 1:
+                actual_params["output"] = outputs[0]
     
-    return params
+    return actual_params
 
 
 # =============================================================================
@@ -247,13 +277,18 @@ def _calculate_topological_priorities(
     return priorities
 
 
-def convert_subtask_to_todotask(subtask: SubTask, priority: int = 5) -> TodoTask:
+def convert_subtask_to_todotask(
+    subtask, 
+    priority: int = 5,
+    extracted_parameters: Optional[Dict[str, Any]] = None
+) -> TodoTask:
     """
     Convert a single SubTask to TodoTask
     
     Args:
         subtask: SubTask from task_decomposition
         priority: Task priority (1=highest, 5=lowest)
+        extracted_parameters: Actual parameter values extracted from context
     
     Returns:
         TodoTask object for codeact execution
@@ -268,8 +303,8 @@ def convert_subtask_to_todotask(subtask: SubTask, priority: int = 5) -> TodoTask
         tool_name=tool_name
     )
     
-    # Extract parameters
-    parameters = _extract_parameters_from_subtask(subtask)
+    # Extract actual parameter values (not schema definitions)
+    parameters = _extract_parameters_from_subtask(subtask, extracted_parameters)
     
     # Add tool name to parameters if available
     if tool_name:
@@ -300,7 +335,8 @@ def convert_subtasks_to_todolist(
     parallel_task_groups: Dict[str, ParallelTaskGroup],
     session_id: str,
     sandbox_dir: str,
-    sandbox_id: Optional[str] = None
+    sandbox_id: Optional[str] = None,
+    extracted_parameters: Optional[Dict[str, Any]] = None
 ) -> TodoList:
     """
     Convert all SubTasks (serial + parallel) to TodoList
@@ -315,6 +351,7 @@ def convert_subtasks_to_todolist(
         session_id: Session ID
         sandbox_dir: Sandbox directory path
         sandbox_id: Optional sandbox instance ID
+        extracted_parameters: Dict of actual parameter values from context
     
     Returns:
         TodoList object containing all tasks
@@ -344,7 +381,12 @@ def convert_subtasks_to_todolist(
     all_todo_tasks = []
     for subtask in all_subtasks:
         priority = priorities.get(subtask.task_id, 5)
-        todo_task = convert_subtask_to_todotask(subtask, priority=priority)
+        # Pass extracted_parameters to get actual values
+        todo_task = convert_subtask_to_todotask(
+            subtask, 
+            priority=priority,
+            extracted_parameters=extracted_parameters
+        )
         all_todo_tasks.append(todo_task)
     
     # Sort tasks by priority for cleaner output
@@ -670,8 +712,12 @@ def generate_and_save_todolist_from_state(
     
     This is the main entry point for executor to generate todo-list.md
     
+    IMPORTANT: Parameter values are extracted from global_state.extracted_parameters
+    which contains actual values (not schema definitions). The subtask.result.parameters
+    contains parameter DEFINITIONS, not values.
+    
     Args:
-        global_state: GlobalState containing subtasks and parallel_task_groups
+        global_state: GlobalState containing subtasks, parallel_task_groups, and extracted_parameters
         sandbox_dir: Optional sandbox directory (defaults to global_state.sandbox_dir)
         opensandbox_id: Optional OpenSandbox instance ID for remote saving
     
@@ -699,13 +745,28 @@ def generate_and_save_todolist_from_state(
     
     print(f"📋 Converting {total_tasks} tasks to TodoList...")
     
-    # Convert to TodoList
+    # Extract actual parameter values from global_state
+    # This is the key fix: use extracted_parameters for actual values
+    extracted_params = global_state.extracted_parameters or {}
+    
+    # Also check merged_result for additional parameters (from supervisor)
+    merged_result = global_state.merged_result or {}
+    if isinstance(merged_result, dict):
+        # Merge params from merged_result
+        merged_params = merged_result.get("extracted_parameters", {}).get("params", {})
+        if merged_params:
+            extracted_params = {**extracted_params, **merged_params}
+    
+    print(f"📋 Using extracted parameters: {list(extracted_params.keys())}")
+    
+    # Convert to TodoList with actual parameter values
     todo_list = convert_subtasks_to_todolist(
         subtasks=global_state.subtasks,
         parallel_task_groups=global_state.parallel_task_groups,
         session_id=global_state.session_id or "unknown",
         sandbox_dir=sandbox,
-        sandbox_id=global_state.session_id
+        sandbox_id=global_state.session_id,
+        extracted_parameters=extracted_params
     )
     
     # Save to sandbox (remote if opensandbox_id available)

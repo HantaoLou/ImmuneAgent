@@ -275,7 +275,17 @@ def _generate_mcp_tool_code_directly(
     # Filter out non-parameter fields (like tool_name, output_file descriptions)
     # These are often included in task parameters but shouldn't be passed to the tool
     filtered_params = {}
-    meta_fields = {'tool_name', 'output_file', 'description', 'type', 'required'}
+    # Meta fields that should NOT be passed to tools
+    meta_fields = {
+        'tool_name',      # Tool identification
+        'output_file',    # Output description (not a real parameter)
+        'description',    # Parameter description
+        'type',           # Parameter type
+        'required',       # Required flag
+        'sandbox_dir',    # Environment parameter (should not be passed to tools)
+        'todo_list_path', # Environment parameter (should not be passed to tools)
+        'session_id',     # Session identifier (should not be passed to tools)
+    }
     
     for key, value in parameters.items():
         # Skip meta fields and description dicts
@@ -2084,7 +2094,33 @@ def select_next_task_node(state: CodeActState) -> CodeActState:
             
             # Map TodoTask to CodeActState fields
             state.task_description = next_task.description
-            state.parameters = {**state.parameters, **next_task.parameters}
+            
+            # Merge parameters carefully:
+            # - Environment parameters (sandbox_dir, todo_list_path, session_id) should be preserved in state
+            # - But should NOT override actual tool parameters from todo-list
+            # - Tool parameters from todo-list should take precedence
+            merged_params = {}
+            
+            # Environment parameters to preserve (for sandbox operations)
+            env_params = {'sandbox_dir', 'todo_list_path', 'session_id', 'opensandbox_id'}
+            
+            # First, preserve environment parameters from current state
+            for key in env_params:
+                if key in state.parameters:
+                    merged_params[key] = state.parameters[key]
+            
+            # Then, add actual task parameters (these are the real tool parameters)
+            # Note: todo-list may contain parameter descriptions, not actual values
+            # The filtering will happen in _generate_mcp_tool_code_directly
+            for key, value in next_task.parameters.items():
+                merged_params[key] = value
+            
+            state.parameters = merged_params
+            
+            # Debug: Log parameter merge
+            print(f"     Parameters: {list(merged_params.keys())}")
+            if env_params.intersection(merged_params.keys()):
+                print(f"     (包含环境参数: {env_params.intersection(merged_params.keys())})")
             
             # Set execution mode based on task type
             if next_task.type == TodoTaskType.MCP_TOOL:
@@ -2274,11 +2310,16 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
     
     if not tool_params:
         print(f"  ⚠ No parameter definitions found for tool: {tool_name}")
-        state.parameters = {**state.parameters, **state.current_todo_task.parameters}
-        return state
+        print(f"  ℹ Will try to use extracted parameters from parameter table")
+        # Don't fallback to schema descriptions! 
+        # Instead, try to get actual values from extracted_params
+        # This will be handled below (extracted_params extraction happens next)
+        # Just skip the LLM inference step and use what we have
+        tool_params = []  # Empty list, but continue to extract params from parameter table
     
-    print(f"  🔧 Tool: {tool_name}")
-    print(f"  📋 Parameters to infer: {[p.get('name') for p in tool_params]}")
+    if tool_params:
+        print(f"  🔧 Tool: {tool_name}")
+        print(f"  📋 Parameters to infer: {[p.get('name') for p in tool_params]}")
     
     # PRIORITY 3: Try to get actual parameter values from parent_state.extracted_parameters
     # These are the actual values extracted by supervisor, not schema definitions
@@ -2352,13 +2393,37 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
     if semantic_hints:
         print(f"  💡 Semantic hints: {semantic_hints}")
     
+    # If no tool_params, skip LLM inference and use extracted_params directly
+    if not tool_params:
+        print("  ℹ No tool parameter definitions, using extracted parameters directly")
+        if extracted_params:
+            print(f"  ✓ Using extracted parameters from parameter table:")
+            for key, value in extracted_params.items():
+                print(f"    - {key}: {value}")
+            # Merge with existing parameters, extracted_params take precedence
+            state.parameters = {**state.parameters, **extracted_params}
+            # Also apply semantic hints if they contain actual values (not schema descriptions)
+            for key, value in semantic_hints.items():
+                if not isinstance(value, dict):
+                    state.parameters[key] = value
+        else:
+            print("  ⚠ No extracted parameters available, keeping existing parameters")
+        return state
+    
     # Use LLM to infer parameters
     try:
         llm = create_code_llm()
         
         if not llm:
-            print("  ⚠ LLM not available, using task parameters directly")
-            state.parameters = {**state.parameters, **state.current_todo_task.parameters}
+            print("  ⚠ LLM not available")
+            # Fallback: use extracted_params first, then semantic hints
+            if extracted_params:
+                print(f"  ✓ Using extracted parameters from parameter table:")
+                for key, value in extracted_params.items():
+                    print(f"    - {key}: {value}")
+                state.parameters = {**state.parameters, **extracted_params}
+            else:
+                print("  ⚠ No extracted parameters available")
             return state
         
         # Build prompt with semantic hints
@@ -2386,31 +2451,30 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
             for key, value in inferred.items():
                 print(f"    - {key}: {value}")
             
-            # Merge parameters: extracted_params > inferred > task params
-            # Priority: extracted_params (actual values from supervisor) > LLM inferred > schema
+            # Merge parameters: extracted_params > inferred > existing params
+            # Priority: extracted_params (actual values from parameter table) > LLM inferred > existing
+            # DO NOT use state.current_todo_task.parameters as base - they are schema descriptions!
             state.inferred_parameters = {**inferred, **extracted_params}  # extracted_params override inferred
-            state.parameters = {**state.current_todo_task.parameters, **state.inferred_parameters}
+            state.parameters = {**state.parameters, **state.inferred_parameters}
         else:
             print("  ⚠ Failed to parse inference response")
             # Still use extracted_params if available
             if extracted_params:
-                print(f"  ✓ Using extracted parameters from parent_state:")
+                print(f"  ✓ Using extracted parameters from parameter table:")
                 for key, value in extracted_params.items():
                     print(f"    - {key}: {value}")
-                state.parameters = {**state.current_todo_task.parameters, **extracted_params}
-            else:
-                state.parameters = {**state.parameters, **state.current_todo_task.parameters}
+                state.parameters = {**state.parameters, **extracted_params}
+            # else: keep existing parameters, don't pollute with schema descriptions
     
     except Exception as e:
         print(f"  ⚠ Parameter inference failed: {e}")
         # Still use extracted_params if available
         if extracted_params:
-            print(f"  ✓ Using extracted parameters from parent_state:")
+            print(f"  ✓ Using extracted parameters from parameter table:")
             for key, value in extracted_params.items():
                 print(f"    - {key}: {value}")
-            state.parameters = {**state.current_todo_task.parameters, **extracted_params}
-        else:
-            state.parameters = {**state.parameters, **state.current_todo_task.parameters}
+            state.parameters = {**state.parameters, **extracted_params}
+        # else: keep existing parameters, don't pollute with schema descriptions
     
     return state
 

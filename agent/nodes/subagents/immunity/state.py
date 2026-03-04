@@ -79,4 +79,9 @@ class ImmunityState(BaseModel):
     sandbox_dir: str = Field(default="", description="Sandbox directory (sandbox_data_dir, e.g., /data/sessions/{session_id})")
     local_sandbox_dir: str = Field(default="", description="Local sandbox directory for fallback (e.g., D:/path/to/sandbox)")
     parent_state: Optional[Any] = Field(default=None, description="Parent state reference")
+    
+    # ========== Mem0 Cache Related ==========
+    cache_hit: bool = Field(default=False, description="Whether cache hit from Mem0")
+    skip_immunity_stages: bool = Field(default=False, description="Whether to skip immunity stages due to cache hit")
+    cache_input_hash: str = Field(default="", description="Hash of the input for cache lookup")
 

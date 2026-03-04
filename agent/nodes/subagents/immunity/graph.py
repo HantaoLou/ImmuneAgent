@@ -29,6 +29,18 @@ from utils.llm_factory import (
 from .state import ImmunityState
 from .prompts import ImmunityPrompts
 
+# Mem0 记忆管理
+try:
+    from utils.mem0_manager import (
+        get_memory_client,
+        check_immunity_cache_sync,
+        generate_input_hash,
+    )
+    MEM0_AVAILABLE = True
+except ImportError as e:
+    MEM0_AVAILABLE = False
+    print(f"[Immunity] 警告: mem0_manager 不可用: {e}")
+
 # Import search tools for LLM binding
 from tools.search import web_search, knowledge_search, read_webpage
 
@@ -440,6 +452,101 @@ def _clean_json_response(response_text: str) -> Dict[str, Any]:
     
     # If all fail, return empty dictionary
     return {}
+
+
+# ===================== Stage 0: Cache Check Node (Mem0) =====================
+
+def cache_check_node(state: ImmunityState) -> ImmunityState:
+    """
+    Stage 0: Cache Check Node (Mem0)
+    
+    检查是否有相似的问题已经在 Mem0 中缓存
+    
+    如果缓存命中：
+    - 直接从缓存加载所有结果
+    - 设置 skip_immunity_stages=True 跳过后续阶段
+    
+    如果缓存未命中：
+    - 继续执行后续阶段
+    """
+    _progress_logger.start_stage("cache_check", "检查 Mem0 缓存")
+    
+    if not MEM0_AVAILABLE:
+        _progress_logger.log_info("Mem0 不可用，跳过缓存检查")
+        _progress_logger.end_stage("cache_check", success=True, details="跳过（Mem0 不可用）")
+        return state
+    
+    if not state.original_question:
+        _progress_logger.log_warning("没有原始问题，跳过缓存检查")
+        _progress_logger.end_stage("cache_check", success=True, details="跳过（无输入）")
+        return state
+    
+    try:
+        _progress_logger.log_info(f"检查缓存: {state.original_question[:100]}...")
+        
+        # 生成输入哈希
+        input_hash = generate_input_hash(state.original_question)
+        state.cache_input_hash = input_hash
+        _progress_logger.log_info(f"输入哈希: {input_hash}")
+        
+        # 检查缓存
+        is_cached, cached_trace = check_immunity_cache_sync(
+            user_input=state.original_question,
+            score_threshold=0.90  # 要求 90% 以上相似度
+        )
+        
+        if is_cached and cached_trace:
+            _progress_logger.log_info("✅ 缓存命中！从 Mem0 加载结果...")
+            
+            # 从缓存加载所有结果
+            state.cache_hit = True
+            state.skip_immunity_stages = True
+            
+            # 加载优化查询
+            state.optimized_questions = cached_trace.optimized_questions or [state.original_question]
+            state.optimized_question = "; ".join(state.optimized_questions)
+            
+            # 加载研究结果
+            state.research_summary = cached_trace.research_summary or ""
+            state.research_confidence = 80.0  # 缓存结果默认高置信度
+            
+            # 加载假设结果
+            state.hypothesis_summary = cached_trace.hypothesis_summary or ""
+            state.hypothesis_confidence = 80.0
+            
+            # 加载计划
+            state.final_enhanced_plan = cached_trace.final_enhanced_plan or ""
+            state.research_informed_plan = cached_trace.final_enhanced_plan or ""
+            state.generated_plan = cached_trace.final_enhanced_plan or ""
+            state.execution_plan = cached_trace.execution_plan or ""
+            
+            # 加载评估
+            state.final_evaluation = cached_trace.final_evaluation or ""
+            
+            # 加载 Todo-List 摘要
+            if cached_trace.todo_list_summary:
+                state.decomposed_tasks = cached_trace.todo_list_summary.get("tasks", [])
+            
+            _progress_logger.log_info(f"  - 优化查询数: {len(state.optimized_questions)}")
+            _progress_logger.log_info(f"  - 研究摘要长度: {len(state.research_summary)}")
+            _progress_logger.log_info(f"  - 计划长度: {len(state.final_enhanced_plan)}")
+            
+            _progress_logger.end_stage("cache_check", success=True, details="✅ 缓存命中")
+        else:
+            _progress_logger.log_info("❌ 缓存未命中，将继续执行 immunity 阶段")
+            state.cache_hit = False
+            state.skip_immunity_stages = False
+            _progress_logger.end_stage("cache_check", success=True, details="缓存未命中")
+    
+    except Exception as e:
+        _progress_logger.log_error("缓存检查失败", e)
+        import traceback
+        traceback.print_exc()
+        state.cache_hit = False
+        state.skip_immunity_stages = False
+        _progress_logger.end_stage("cache_check", success=False, details=str(e)[:50])
+    
+    return state
 
 
 # ===================== Stage 1: Query Decomposition Node =====================
@@ -1370,7 +1477,11 @@ def immunity_input_mapper(global_state: GlobalState) -> ImmunityState:
         parallel_task_groups=global_state.parallel_task_groups,
         sandbox_dir=sandbox_data_dir,  # 主路径：沙盒服务器路径
         local_sandbox_dir=local_sandbox_dir,  # 回退路径：本地路径
-        parent_state=global_state
+        parent_state=global_state,
+        # Mem0 缓存相关字段初始化
+        cache_hit=False,
+        skip_immunity_stages=False,
+        cache_input_hash="",
     )
     
     return immunity_state
@@ -1468,12 +1579,40 @@ def immunity_output_mapper(immunity_state: ImmunityState, global_state: GlobalSt
 
 # ===================== Build Immunity Subgraph =====================
 
+def _should_skip_stages(state: ImmunityState) -> str:
+    """
+    条件路由：判断是否跳过后续阶段
+    
+    Returns:
+        "skip_to_planning": 跳过中间阶段，直接到 planning（用于缓存命中）
+        "continue_retrieval": 继续执行 retrieval 阶段
+    """
+    if state.skip_immunity_stages or state.cache_hit:
+        return "skip_to_planning"
+    return "continue_retrieval"
+
+
+def _should_skip_to_evaluation(state: ImmunityState) -> str:
+    """
+    条件路由：判断是否跳过到 evaluation（缓存命中时跳过 planning）
+    
+    Returns:
+        "skip_to_evaluation": 跳过 planning，直接到 evaluation
+        "continue_planning": 继续执行 planning 阶段
+    """
+    if state.skip_immunity_stages or state.cache_hit:
+        return "skip_to_evaluation"
+    return "continue_planning"
+
+
 def build_immunity_subgraph():
     """
     Build Immunity Agent subgraph
     
     Complete workflow:
-    Query Decomposition → Retrieval → Deep Research → Hypothesis Generation → Planning ⭐ → Evaluation
+    Cache Check → Query Decomposition → Retrieval → Deep Research → Hypothesis Generation → Planning ⭐ → Evaluation
+    
+    如果缓存命中，则跳过中间阶段直接使用缓存结果
     
     Returns:
         Compiled subgraph
@@ -1481,6 +1620,7 @@ def build_immunity_subgraph():
     graph = StateGraph(ImmunityState)
     
     # Add all nodes
+    graph.add_node("cache_check", cache_check_node)  # Stage 0: Cache Check (NEW!)
     graph.add_node("query_decomposition", query_decomposition_node)  # Stage 1
     graph.add_node("retrieval", retrieval_node)  # Stage 2: Retrieval node
     graph.add_node("deep_research", deep_research_node)  # Stage 3
@@ -1489,11 +1629,26 @@ def build_immunity_subgraph():
     graph.add_node("evaluation", evaluation_node)  # Stage 6
     
     # Define flow rules
-    graph.add_edge(START, "query_decomposition")
-    graph.add_edge("query_decomposition", "retrieval")  # After query decomposition, enter retrieval
-    graph.add_edge("retrieval", "deep_research")  # After retrieval, enter deep research
+    graph.add_edge(START, "cache_check")  # 首先检查缓存
+    graph.add_edge("cache_check", "query_decomposition")  # 无论缓存是否命中，都执行 query_decomposition（用于记录）
+    
+    # 条件路由：query_decomposition 后决定是否跳过中间阶段
+    graph.add_conditional_edges(
+        "query_decomposition",
+        _should_skip_stages,
+        {
+            "skip_to_planning": "planning",  # 缓存命中，跳过中间阶段
+            "continue_retrieval": "retrieval"  # 正常流程
+        }
+    )
+    
+    # 正常流程边
+    graph.add_edge("retrieval", "deep_research")
     graph.add_edge("deep_research", "hypothesis_generation")
     graph.add_edge("hypothesis_generation", "planning")
+    
+    # 条件路由：planning 后决定是否跳过到 evaluation
+    # 注意：即使缓存命中，我们也执行 planning 节点（用于生成最终计划）
     graph.add_edge("planning", "evaluation")
     graph.add_edge("evaluation", END)
     
