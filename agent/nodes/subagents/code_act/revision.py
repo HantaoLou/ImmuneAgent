@@ -48,9 +48,12 @@ DATA_TRANSFORM_TOOLS = {
             "Missing required columns: {'A3'", "Missing required columns: {'B1'",
             "Missing required columns: {'B2'", "Missing required columns: {'B3'",
             "Missing required columns: {'peptide'",
-            "NetTCR", "nettcr format", "A1, A2, A3, B1, B2, B3"
+            "Unrecognized format",
+            "format: unknown",
+            "NetTCR", "nettcr format", "A1, A2, A3, B1, B2, B3",
+            "CDR3a", "CDR3b", "cdr3a", "cdr3b",
         ],
-        "description": "Convert TCR data with V gene columns to NetTCR format (A1-A3, B1-B3, peptide)",
+        "description": "Convert TCR data with CDR3a/CDR3b columns to NetTCR format (A1-A3, B1-B3, peptide)",
         "required_columns": ["TRA_v_gene", "TRB_v_gene", "CDR3a", "CDR3b"],
     },
     "format_tcr_for_nettcr": {
@@ -87,10 +90,26 @@ def find_data_transform_tool(error_message: str, tool_context: Optional[str] = N
     """
     error_lower = error_message.lower()
     
-    # Check for NetTCR format mismatches
-    if any(p.lower() in error_lower for p in ["nettcr", "a1", "a2", "a3", "b1", "b2", "b3"]):
-        if "missing required columns" in error_lower:
-            # This is likely a format mismatch for NetTCR
+    # Check for NetTCR format mismatches (including "Unrecognized format" errors)
+    nettcr_indicators = ["nettcr", "a1", "a2", "a3", "b1", "b2", "b3", "peptide"]
+    has_nettcr_indicator = any(p.lower() in error_lower for p in nettcr_indicators)
+    
+    # Check for format-related errors
+    format_error_patterns = [
+        "missing required columns",
+        "unrecognized format",
+        "format: unknown",
+        "invalid format",
+        "expected columns",
+    ]
+    has_format_error = any(p in error_lower for p in format_error_patterns)
+    
+    # If we have NetTCR context and format error, suggest transformation
+    if has_nettcr_indicator or (tool_context and any(t in tool_context for t in ["validate_tcr", "predict_tcr_binding", "nettcr"])):
+        if has_format_error:
+            return DATA_TRANSFORM_TOOLS["tcr_to_nettcr"]
+        # Also check for CDR3 columns which indicate need for NetTCR format conversion
+        if "cdr3" in error_lower:
             return DATA_TRANSFORM_TOOLS["tcr_to_nettcr"]
     
     # Check for FASTA format requirements
@@ -133,7 +152,17 @@ class RevisionAnalyzer:
         """
         # First, check for data format issues using simple analysis (high priority)
         error_message = failed_trajectory.error_message or ""
-        if "Missing required columns" in error_message or "missing columns" in error_message.lower():
+        # Check for various data format mismatch patterns
+        format_mismatch_patterns = [
+            "Missing required columns",
+            "missing columns",
+            "Unrecognized format",
+            "format: unknown",
+            "Invalid input format",
+            "expected format",
+            "column mismatch",
+        ]
+        if any(pattern.lower() in error_message.lower() for pattern in format_mismatch_patterns):
             # Data format mismatch detected - use simple analysis which has tool suggestions
             print("  🔍 Detected data format mismatch, using specialized analysis")
             return self._analyze_failure_simple(failed_trajectory)
@@ -255,8 +284,15 @@ Please generate Revision plan (JSON format)."""
         if failed_trajectory.tools:
             tool_context = failed_trajectory.tools[0].get("tool_name", "") if failed_trajectory.tools else ""
         
-        # Check for data format mismatch errors (e.g., missing required columns)
-        if "Missing required columns" in error_message or "missing columns" in error_message.lower():
+        # Check for data format mismatch errors (e.g., missing required columns, unrecognized format)
+        format_mismatch_patterns = [
+            "Missing required columns",
+            "missing columns",
+            "Unrecognized format",
+            "format: unknown",
+            "Invalid input format",
+        ]
+        if any(pattern.lower() in error_message.lower() for pattern in format_mismatch_patterns):
             # Try to find a suitable transformation tool
             suggested_tool = find_data_transform_tool(error_message, tool_context)
             
