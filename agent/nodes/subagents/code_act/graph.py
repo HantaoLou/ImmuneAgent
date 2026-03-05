@@ -250,6 +250,213 @@ def _save_trajectory_to_pool(state: CodeActState, trajectory: CodeTrajectory):
 
 # ===================== CodeAct Nodes =====================
 
+
+def _infer_param_mapping_with_llm(
+    param_values: Dict[str, Any],
+    tool_param_specs: Dict[str, Dict[str, Any]],
+    tool_name: str,
+    task_description: str
+) -> Dict[str, Any]:
+    """
+    Use LLM to semantically infer parameter value mapping.
+    
+    The LLM analyzes:
+    1. Tool parameter definitions (names, types, descriptions from skill.yaml)
+    2. Available parameter values (from param table)
+    3. Task context
+    
+    Then decides which value maps to which tool parameter.
+    
+    Args:
+        param_values: Parameter values from param table
+        tool_param_specs: Tool param definitions from skill.yaml
+        tool_name: Tool name
+        task_description: Task description for context
+    
+    Returns:
+        Dict with tool param names as keys, mapped values as values
+    """
+    from langchain_core.messages import SystemMessage, HumanMessage
+    from utils.llm_factory import create_llm
+    
+    try:
+        llm = create_llm("reasoning")
+    except Exception as e:
+        print(f"  ⚠ Failed to get LLM for param mapping: {e}")
+        return {}
+    
+    if not llm or not tool_param_specs:
+        return {}
+    
+    # Build tool parameter info for LLM
+    tool_params_info = []
+    for param_name, param_info in tool_param_specs.items():
+        info = f"- {param_name}"
+        info += f" (type: {param_info.get('type', 'string')})"
+        if param_info.get('required'):
+            info += " [REQUIRED]"
+        if param_info.get('description'):
+            info += f": {param_info.get('description')}"
+        if param_info.get('example'):
+            info += f" (example: {param_info.get('example')})"
+        tool_params_info.append(info)
+    
+    # Build available param values info for LLM
+    param_values_info = []
+    for key, value in param_values.items():
+        # Skip complex nested structures for readability
+        if isinstance(value, dict):
+            value_str = f"<dict with keys: {list(value.keys())[:5]}>"
+        elif isinstance(value, list):
+            value_str = f"<list with {len(value)} items>"
+        elif isinstance(value, str) and len(value) > 100:
+            value_str = value[:100] + "..."
+        else:
+            value_str = repr(value)
+        param_values_info.append(f"- {key}: {value_str}")
+    
+    # Build prompt for LLM
+    system_prompt = """You are a parameter mapping expert. Your job is to match parameter VALUES from a param table to tool parameter DEFINITIONS.
+
+CRITICAL RULES:
+1. Analyze the SEMANTIC MEANING of both the tool parameter and available values
+2. Match values to parameters based on meaning, NOT just keyword matching
+3. Only include parameters where you are CONFIDENT about the mapping
+4. If unsure, DO NOT include the parameter - missing parameters are better than wrong ones
+
+SEMANTIC MATCHING EXAMPLES:
+- Tool param "peptides" (description: "comma-separated peptide sequences") 
+  → Match to value "target_peptide: ELAGIGILTV" because it's a peptide sequence
+- Tool param "test_file" (description: "path to TCR data CSV file")
+  → Match to value "csv_file: /path/to/data.csv" because it's a data file path
+- Tool param "output_dir" (description: "output directory")
+  → Match to value "output_path: /data/output" because it specifies where to save results
+
+OUTPUT FORMAT:
+Return a JSON object where keys are TOOL PARAMETER NAMES and values are the MAPPED VALUES.
+Only include parameters you are confident about.
+
+Example output:
+{
+  "peptides": "ELAGIGILTV",
+  "test_file": "/data/sessions/xxx/input/tcr_data.csv"
+}"""
+
+    user_prompt = f"""Please map the following parameter values to tool parameters for tool "{tool_name}".
+
+## Tool: {tool_name}
+
+### Task Context:
+{task_description[:500] if task_description else "N/A"}
+
+### Tool Parameter Definitions:
+{chr(10).join(tool_params_info) if tool_params_info else "No parameters defined"}
+
+### Available Parameter Values (from param table):
+{chr(10).join(param_values_info) if param_values_info else "No values available"}
+
+Please analyze the semantic meaning and return a JSON object mapping tool parameter names to their corresponding values.
+Only include parameters where you are confident about the match.
+Return ONLY the JSON object, no additional text."""
+
+    try:
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        response_text = response.content.strip()
+        
+        # Parse JSON response
+        import json
+        
+        # Try direct parse
+        try:
+            mapped = json.loads(response_text)
+        except json.JSONDecodeError:
+            # Try to extract JSON from code blocks
+            import re
+            json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response_text)
+            if json_match:
+                mapped = json.loads(json_match.group(1))
+            else:
+                # Try to find JSON object in text
+                json_match = re.search(r'\{[\s\S]*\}', response_text)
+                if json_match:
+                    mapped = json.loads(json_match.group())
+                else:
+                    print(f"  ⚠ Failed to parse LLM response as JSON")
+                    return {}
+        
+        # Validate mapped params
+        result = {}
+        for tool_param_name, value in mapped.items():
+            if tool_param_name in tool_param_specs:
+                result[tool_param_name] = value
+                print(f"    ✅ LLM mapped: {tool_param_name} = {repr(value)[:50]}")
+            else:
+                print(f"    ⚠ LLM returned unknown param: {tool_param_name}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"  ⚠ LLM param mapping failed: {e}")
+        return {}
+
+
+def _map_param_values_to_tool_params(
+    param_values: Dict[str, Any],
+    tool_param_specs: Dict[str, Dict[str, Any]],
+    tool_name: str,
+    task_description: str = ""
+) -> Dict[str, Any]:
+    """
+    Map parameter values from param table to tool parameter names.
+    
+    Uses LLM for semantic mapping - infers which value corresponds to which
+    tool parameter based on meaning, not hardcoded rules.
+    
+    Args:
+        param_values: Parameter values from param table
+        tool_param_specs: Tool param definitions from skill.yaml
+        tool_name: Tool name for logging
+        task_description: Task description for context
+    
+    Returns:
+        Dict with tool param names as keys, mapped values as values
+    """
+    # First try exact matches (fast path)
+    exact_matches = {}
+    for tool_param_name in tool_param_specs.keys():
+        if tool_param_name in param_values:
+            value = param_values[tool_param_name]
+            if value is not None and value != "":
+                exact_matches[tool_param_name] = value
+                print(f"    ✅ Exact match: {tool_param_name} = {repr(value)[:50]}")
+    
+    # If all required params are satisfied by exact matches, skip LLM
+    required_params = {name for name, info in tool_param_specs.items() if info.get("required")}
+    if required_params.issubset(exact_matches.keys()):
+        print(f"  📋 All required params satisfied by exact matches")
+        return exact_matches
+    
+    # Use LLM for semantic mapping
+    print(f"  🤖 Using LLM for semantic parameter mapping...")
+    
+    llm_mapped = _infer_param_mapping_with_llm(
+        param_values,
+        tool_param_specs,
+        tool_name,
+        task_description
+    )
+    
+    # Merge results (LLM results take precedence, then exact matches)
+    result = {**exact_matches, **llm_mapped}
+    
+    return result
+
+
 def _generate_mcp_tool_code_directly(
     tool_name: str,
     parameters: Dict[str, Any],
@@ -260,45 +467,95 @@ def _generate_mcp_tool_code_directly(
     
     This ensures:
     1. Correct import: from core.tool_interface import call_tool
-    2. Proper parameter passing
+    2. Proper parameter passing - values from param table, names from skill.yaml
     3. No simulation or placeholder code
     4. Real tool execution
     
+    CRITICAL ARCHITECTURE:
+    - Tool parameter DEFINITIONS come from skill.yaml (parameter names, types, descriptions)
+    - Tool parameter VALUES come from parameters dict (extracted by task decomposition)
+    - This function does SEMANTIC MAPPING between the two
+    
+    Example:
+    - skill.yaml defines: peptides (string, required, "comma-separated peptide sequences")
+    - parameters dict has: target_peptide="ELAGIGILTV"
+    - Mapping: target_peptide -> peptides
+    
     Args:
         tool_name: Name of the MCP tool to call
-        parameters: Parameters to pass to the tool
+        parameters: Parameter values from task context (param table)
         task_description: Optional task description for context
     
     Returns:
         Generated Python code that calls the MCP tool
     """
-    # Filter out non-parameter fields (like tool_name, output_file descriptions)
-    # These are often included in task parameters but shouldn't be passed to the tool
-    filtered_params = {}
-    # Meta fields that should NOT be passed to tools
-    meta_fields = {
-        'tool_name',      # Tool identification
-        'output_file',    # Output description (not a real parameter)
-        'description',    # Parameter description
-        'type',           # Parameter type
-        'required',       # Required flag
-        'sandbox_dir',    # Environment parameter (should not be passed to tools)
-        'todo_list_path', # Environment parameter (should not be passed to tools)
-        'session_id',     # Session identifier (should not be passed to tools)
-    }
+    from nodes.subagents.task_decomposition.skill_loader import get_tool_params
     
-    for key, value in parameters.items():
-        # Skip meta fields and description dicts
-        if key in meta_fields:
-            continue
-        if isinstance(value, dict) and 'description' in value and 'type' in value:
-            # This is a parameter schema, not actual parameter value
-            continue
-        filtered_params[key] = value
+    # ============================================================
+    # STEP 1: Get tool's parameter definition from skill.yaml
+    # This defines WHAT parameters the tool accepts
+    # ============================================================
+    tool_params_def = get_tool_params(tool_name)
     
-    # Generate the code
-    # Note: Use string formatting carefully - we want the tool_name value to be embedded,
-    # not a variable reference in the generated code
+    # Build mapping: tool_param_name -> param_info (type, description, required)
+    tool_param_specs: Dict[str, Dict[str, Any]] = {}
+    required_param_names = set()
+    
+    if tool_params_def:
+        input_params = tool_params_def.get("input_params", [])
+        for param in input_params:
+            param_name = param.get("name", "")
+            if param_name:
+                tool_param_specs[param_name] = {
+                    "type": param.get("type", "string"),
+                    "description": param.get("description", "").lower(),
+                    "required": param.get("required", False),
+                    "example": param.get("example", ""),
+                }
+                if param.get("required", False):
+                    required_param_names.add(param_name)
+        print(f"  📋 Tool '{tool_name}' expects params: {set(tool_param_specs.keys())}")
+        print(f"  📋 Required params: {required_param_names}")
+    else:
+        print(f"  ⚠ No skill.yaml definition found for tool '{tool_name}'")
+    
+    # ============================================================
+    # STEP 2: Extract values from parameters dict and map to tool params
+    # SEMANTIC MAPPING: Match param values to tool param names
+    # ============================================================
+    tool_call_params = {}
+    
+    if tool_params_def:
+        # We have tool definition - do semantic mapping with LLM
+        tool_call_params = _map_param_values_to_tool_params(
+            parameters, 
+            tool_param_specs,
+            tool_name,
+            task_description  # Pass task description for LLM context
+        )
+    else:
+        # Fallback: No tool definition, pass through filtered params
+        meta_fields = {
+            'tool_name', 'output_file', 'description', 'type', 'required',
+            'sandbox_dir', 'todo_list_path', 'session_id', 'task_description',
+            'target_organism', 'mcp_services', 'analysis_type', 'notes',
+            'files', 'params',
+        }
+        for key, value in parameters.items():
+            if key not in meta_fields:
+                if not (isinstance(value, dict) and 'description' in value):
+                    tool_call_params[key] = value
+    
+    # ============================================================
+    # STEP 3: Check for missing required parameters
+    # ============================================================
+    missing_required = required_param_names - set(tool_call_params.keys())
+    if missing_required:
+        print(f"  ⚠ Missing required params for '{tool_name}': {missing_required}")
+    
+    # ============================================================
+    # STEP 4: Generate the Python code
+    # ============================================================
     code = f'''# MCP Tool Call: {tool_name}
 # Task: {task_description[:100] if task_description else "N/A"}
 # Generated by direct template (no LLM simulation)
@@ -307,11 +564,11 @@ from core.tool_interface import call_tool
 import json
 
 # Tool: {tool_name}
-# Parameters: {json.dumps(filtered_params, ensure_ascii=False, default=str)[:200]}
+# Parameters (mapped from param table to tool schema): {json.dumps(tool_call_params, ensure_ascii=False, default=str)[:200]}
 
 tool_result = call_tool(
     tool_name="{tool_name}",
-    parameters={repr(filtered_params)}
+    parameters={repr(tool_call_params)}
 )
 
 # Process result

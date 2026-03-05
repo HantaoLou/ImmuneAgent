@@ -445,7 +445,7 @@ register_pre_call_hook(_csv_to_fasta_hook)
 
 # ==================== MCP Output Parsing ====================
 
-def _parse_mcp_tool_output(output: Any) -> tuple[Any, Optional[str], Optional[str]]:
+def _parse_mcp_tool_output(output: Any, service_id: Optional[str] = None) -> tuple[Any, Optional[str], Optional[str]]:
     """
     Parse MCP tool output to extract inner status/error information.
     
@@ -454,8 +454,15 @@ def _parse_mcp_tool_output(output: Any) -> tuple[Any, Optional[str], Optional[st
     
     This function extracts the inner status/error from the nested payload.
     
+    **IMPORTANT**: When streaming_task is detected, this function automatically
+    establishes SSE connection and waits for actual results.
+    
+    **ALL MCP TOOLS ARE STREAMING**: This function ensures we wait for complete
+    results before returning, handling the SSE connection transparently.
+    
     Args:
         output: Raw output from MCP tool (usually a list of content blocks)
+        service_id: Optional service ID for SSE connection
         
     Returns:
         Tuple of (parsed_output, error_message, error_type)
@@ -492,11 +499,65 @@ def _parse_mcp_tool_output(output: Any) -> tuple[Any, Optional[str], Optional[st
                 error_msg = inner_error or parsed.get("message", "Tool execution failed")
                 return parsed, error_msg, inner_error_type
             
-            # Check for streaming_task response (task submitted successfully)
+            # Check for streaming_task response - establish SSE connection and wait for results
             if parsed.get("type") == "streaming_task":
-                return parsed, None, None
+                task_id = parsed.get("task_id")
+                detected_service_id = parsed.get("service_id", service_id)
+                
+                print(f"  [ToolInterface] Detected streaming_task: {task_id}")
+                print(f"  [ToolInterface] Service: {detected_service_id}")
+                print(f"  [ToolInterface] Establishing SSE connection and waiting for results...")
+                
+                # Import SSE handler
+                try:
+                    from utils.sse_handler import handle_streaming_task_response
+                    
+                    # Handle streaming task with 1 hour timeout
+                    # This will BLOCK until the task completes
+                    sse_result = handle_streaming_task_response(
+                        tool_output=output,
+                        service_id=detected_service_id,
+                        timeout=3600
+                    )
+                    
+                    if sse_result is not None:
+                        sse_status = sse_result.get("status")
+                        sse_elapsed = sse_result.get("elapsed_seconds", 0)
+                        sse_progress = sse_result.get("progress", 0)
+                        n_messages = len(sse_result.get("messages", []))
+                        
+                        if sse_status == "success":
+                            # SSE completed successfully, return the actual result
+                            actual_output = sse_result.get("output")
+                            print(f"  [ToolInterface] ✓ SSE completed successfully")
+                            print(f"  [ToolInterface]   - Elapsed: {sse_elapsed:.1f}s")
+                            print(f"  [ToolInterface]   - Messages: {n_messages}")
+                            print(f"  [ToolInterface]   - Final progress: {sse_progress}%")
+                            return actual_output, None, None
+                        else:
+                            # SSE failed
+                            error_msg = sse_result.get("error", "SSE processing failed")
+                            print(f"  [ToolInterface] ✗ SSE failed: {error_msg}")
+                            print(f"  [ToolInterface]   - Elapsed: {sse_elapsed:.1f}s")
+                            print(f"  [ToolInterface]   - Messages: {n_messages}")
+                            return sse_result.get("output"), error_msg, "SSEError"
+                    else:
+                        # Not a streaming task (shouldn't happen if type is streaming_task)
+                        print(f"  [ToolInterface] ⚠ SSE handler returned None, returning raw streaming_task info")
+                        return parsed, None, None
+                        
+                except ImportError as e:
+                    print(f"  [ToolInterface] ✗ SSE handler not available: {e}")
+                    # Fallback: return streaming_task info without waiting
+                    # This is a degraded mode - results will be incomplete
+                    return parsed, "SSE handler not available - results incomplete", "SSENotAvailable"
+                except Exception as e:
+                    import traceback
+                    print(f"  [ToolInterface] ✗ SSE handling error: {e}")
+                    print(f"  [ToolInterface] {traceback.format_exc()[:500]}")
+                    return parsed, f"SSE handling error: {str(e)}", "SSEError"
             
-            # Normal success response
+            # Normal success response (non-streaming)
             return parsed, None, None
         
         return parsed, None, None
@@ -508,6 +569,58 @@ def _parse_mcp_tool_output(output: Any) -> tuple[Any, Optional[str], Optional[st
 
 # ==================== Main Tool Call Function ====================
 
+def _infer_service_id_from_tool_name(tool_name: str) -> Optional[str]:
+    """
+    Infer service_id from tool_name using common patterns.
+    
+    NetTCR tools: check_peptide_support, predict_tcr_binding_*, etc. -> "nettcr"
+    IGBlas tools: analyze_vdj_batch, vquest_analysis -> "igblast"
+    TCell tools: integrate_tcr_data_* -> "tcell"
+    
+    Args:
+        tool_name: Tool name (e.g., "check_peptide_support", "nettcr_check_peptide_support")
+    
+    Returns:
+        Inferred service_id or None
+    """
+    # Common tool name patterns to service_id mappings
+    tool_prefixes = {
+        "nettcr": ["nettcr", "tcr_binding", "peptide_support", "predict_tcr"],
+        "igblast": ["igblast", "vdj", "vquest", "analyze_vdj"],
+        "tcell": ["tcell", "integrate_tcr", "tcr_data"],
+        "bcell": ["bcell", "antibody", "bcr"],
+        "immune": ["immune", "immunology"],
+        "metabcr": ["metabcr", "meta_bcr"],
+        "flu": ["flu", "influenza"],
+        "mixtcrpred": ["mixtcrpred", "tcr_prediction"],
+        "ribonn": ["ribonn", "rna"],
+        "gemorna": ["gemorna", "mrna"],
+    }
+    
+    tool_lower = tool_name.lower()
+    
+    # 1. Check if tool_name starts with a known service prefix
+    for service_id, prefixes in tool_prefixes.items():
+        for prefix in prefixes:
+            if tool_lower.startswith(prefix) or f"_{prefix}" in tool_lower:
+                return service_id
+    
+    # 2. Extract prefix from tool_name (format: service_tool_name)
+    if "_" in tool_name:
+        potential_service = tool_name.split("_")[0].lower()
+        if potential_service in tool_prefixes:
+            return potential_service
+    
+    # 3. Try to match using mcp_tools.json if available
+    try:
+        from utils.mcp_helper import _get_service_id_for_tool
+        return _get_service_id_for_tool(tool_name)
+    except Exception:
+        pass
+    
+    return None
+
+
 def call_tool(
     tool_name: str,
     parameters: Dict[str, Any],
@@ -518,12 +631,21 @@ def call_tool(
     Call an MCP tool with a unified response schema.
     
     Supports pre-call and post-call hooks for parameter/result transformation.
+    
+    IMPORTANT: All MCP tools use streaming. This function automatically:
+    1. Detects streaming_task responses
+    2. Establishes SSE connection if needed
+    3. Waits for complete results before returning
 
     Returns a dict with:
     status/output/error/error_type/execution_time_ms/tool_name/service_id
     """
     start_time = time.monotonic()
     result: Dict[str, Any] = {}
+    
+    # Infer service_id if not provided
+    if not service_id:
+        service_id = _infer_service_id_from_tool_name(tool_name)
     
     # Execute pre-call hooks
     modified_params = parameters.copy()
@@ -540,11 +662,17 @@ def call_tool(
         error = result.get("error")
         error_type = result.get("error_type")
         
+        # Extract service_id for SSE handling (may be needed for streaming_task)
+        actual_service_id = service_id or (result.get("service_id") if isinstance(result, dict) else None)
+        if not actual_service_id:
+            actual_service_id = _infer_service_id_from_tool_name(tool_name)
+        
         # CRITICAL: Parse nested MCP tool response to detect tool-level errors
         # MCP returns: [{"type": "text", "text": "{\"status\": \"error\", \"error\": \"...\"}"}]
         # We need to extract the inner status/error from the payload
         if status == "success" and output is not None:
-            parsed_output, inner_error, inner_error_type = _parse_mcp_tool_output(output)
+            # Pass service_id to enable SSE handling for streaming_task
+            parsed_output, inner_error, inner_error_type = _parse_mcp_tool_output(output, actual_service_id)
             if inner_error:
                 # Tool communication succeeded but tool execution failed
                 status = "failed"
@@ -552,6 +680,9 @@ def call_tool(
                 error_type = inner_error_type or "ToolExecutionError"
                 output = parsed_output
                 print(f"  [ToolInterface] MCP tool {tool_name} execution failed: {error[:200]}...")
+            else:
+                # SSE completed successfully or normal response
+                output = parsed_output
         
         if status != "success" and not error_type:
             error_type = "ToolError"
@@ -569,7 +700,7 @@ def call_tool(
         "error_type": error_type,
         "execution_time_ms": execution_time_ms,
         "tool_name": tool_name,
-        "service_id": service_id or (result.get("service_id") if isinstance(result, dict) else None)
+        "service_id": service_id or actual_service_id
     }
     
     # Execute post-call hooks

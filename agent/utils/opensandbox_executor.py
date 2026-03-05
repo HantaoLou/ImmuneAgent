@@ -213,9 +213,9 @@ async def _setup_mcp_support_in_sandbox(sandbox: Any) -> None:
                 sandbox_file = f"/tmp/agent_modules/core/{py_file.name}"
                 write_entries.append(WriteEntry(path=sandbox_file, data=content, mode=0o644))
         
-        # Copy utils module (selective - only mcp_helper)
+        # Copy utils module (selective - only mcp_helper and sse_handler)
         utils_dir = agent_dir / "utils"
-        utils_files_to_copy = ["mcp_helper.py"]
+        utils_files_to_copy = ["mcp_helper.py", "sse_handler.py"]
         if utils_dir.exists():
             for py_file in utils_files_to_copy:
                 utils_file = utils_dir / py_file
@@ -242,6 +242,13 @@ async def _setup_mcp_support_in_sandbox(sandbox: Any) -> None:
                         r'mcp_servers_path\s*=\s*agent_dir\s*/\s*"config"\s*/\s*"mcp_servers\.json"',
                         'mcp_servers_path = Path("/tmp/agent_config") / "mcp_servers.json"',
                         content
+                    )
+                    # Replace _get_agent_dir function for sse_handler.py
+                    content = re.sub(
+                        r'def _get_agent_dir\(\) -> Path:.*?return Path\(__file__\)\.parent\.parent',
+                        'def _get_agent_dir() -> Path:\n    """Get the agent directory path."""\n    return Path("/tmp")  # Sandbox: config is at /tmp/agent_config',
+                        content,
+                        flags=re.DOTALL
                     )
                     sandbox_file = f"/tmp/agent_modules/utils/{py_file}"
                     write_entries.append(WriteEntry(path=sandbox_file, data=content, mode=0o644))

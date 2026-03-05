@@ -212,6 +212,22 @@ except ImportError as e:
 
 
 # =============================================================================
+# Mem0 记忆管理导入
+# =============================================================================
+try:
+    from utils.mem0_manager import (
+        save_immunity_trace_sync,
+        check_all_tasks_completed_successfully,
+        get_memory_client,
+    )
+    MEM0_MANAGER_AVAILABLE = True
+    print("[Main Graph] Mem0 记忆管理可用")
+except ImportError as e:
+    MEM0_MANAGER_AVAILABLE = False
+    print(f"[Main Graph] 警告: 无法导入 mem0_manager: {e}")
+
+
+# =============================================================================
 # Supervisor 节点 - 回退实现（当子图不可用时）
 # =============================================================================
 
@@ -1083,6 +1099,91 @@ def result_evaluator_node(state: GlobalState) -> GlobalState:
 
 
 # =============================================================================
+# Memory Saver 节点 - 流程结束后存储 Mem0 记忆
+# =============================================================================
+
+def memory_saver_node(state: GlobalState) -> GlobalState:
+    """
+    Memory Saver 节点 - 在流程结束后存储 Mem0 记忆
+    
+    📋 执行逻辑：
+    1. 检查所有任务是否完美完成（所有任务成功，无失败）
+    2. 如果完美完成，将 Immunity 产出存储到 Mem0
+    3. 存储内容包括：
+       - 用户输入（向量化）
+       - 优化查询
+       - 研究摘要
+       - 假设摘要
+       - 实验计划
+       - 评估结果
+       - Todo-List 执行摘要
+    """
+    print("=" * 60)
+    print("Memory Saver 节点启动")
+    print("=" * 60)
+    
+    if not MEM0_MANAGER_AVAILABLE:
+        print("  [跳过] Mem0 管理器不可用")
+        return state
+    
+    try:
+        # 1. 检查是否所有任务完美完成
+        is_perfect, summary = check_all_tasks_completed_successfully(state.merged_result or {})
+        
+        print(f"  任务执行统计:")
+        print(f"    - 总任务数: {summary['total_tasks']}")
+        print(f"    - 完成任务: {summary['completed_tasks']}")
+        print(f"    - 失败任务: {summary['failed_tasks']}")
+        print(f"    - 成功率: {summary['success_rate']*100:.1f}%")
+        print(f"    - 是否完美: {is_perfect}")
+        
+        if not is_perfect:
+            print("  [跳过] 任务未完美完成，不存储记忆")
+            return state
+        
+        # 2. 获取 Immunity 产出
+        immunity_plan = state.merged_result.get("immunity_plan", {})
+        if not immunity_plan:
+            print("  [跳过] 没有 Immunity 产出，不存储记忆")
+            return state
+        
+        # 3. 存储到 Mem0
+        print("  [存储] 正在将 Immunity 产出存储到 Mem0...")
+        
+        trace_id = save_immunity_trace_sync(
+            user_input=state.user_input,
+            optimized_questions=immunity_plan.get("optimized_questions", []),
+            research_summary=immunity_plan.get("research_summary", ""),
+            hypothesis_summary=immunity_plan.get("hypothesis_summary", ""),
+            final_enhanced_plan=immunity_plan.get("final_enhanced_plan", ""),
+            final_evaluation=immunity_plan.get("evaluation", ""),
+            execution_plan=immunity_plan.get("experimental_plan", state.execution_plan or ""),
+            todo_list_summary=summary,
+            tool_calls=[],  # 可以后续从 executor_results 中提取
+            output_paths=list(state.file_paths.values()) if state.file_paths else [],
+            execution_time_seconds=0.0,  # 可以后续添加
+            session_id=state.session_id,
+            status="success"
+        )
+        
+        if trace_id:
+            print(f"  ✅ 记忆存储成功: {trace_id}")
+        else:
+            print("  ⚠️ 记忆存储失败")
+        
+        print("=" * 60)
+        print("Memory Saver 节点完成")
+        print("=" * 60)
+        
+    except Exception as e:
+        print(f"  [错误] Memory Saver 执行失败: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return state
+
+
+# =============================================================================
 # 构建主图
 # =============================================================================
 
@@ -1109,36 +1210,18 @@ def build_main_graph():
     ================================================================================
     
     START → supervisor → [路由]
-           ├── immunity → task_decomposition → executor (CodeAct Todo) → result_evaluator → END
-           ├── task_decomposition → executor (CodeAct Todo) → result_evaluator → END
+           ├── immunity → task_decomposition → executor (CodeAct Todo) → result_evaluator → memory_saver → END
+           ├── task_decomposition → executor (CodeAct Todo) → result_evaluator → memory_saver → END
            └── general_qa → END
     
     ================================================================================
-    子图沙盒职责
+    Mem0 记忆存储
     ================================================================================
     
-    - supervisor: 
-        • 生成 session_id
-        • 初始化沙盒目录结构
-        • 上传用户文件到 input/
-        
-    - immunity: 
-        • 生成实验计划
-        • 保存报告到 output/reports/
-        
-    - task_decomposition: 
-        • 分解任务
-        • 生成 SubTask 列表
-        
-    - executor (CodeAct Todo 模式): 
-        • 将 SubTask 转换为 todo-list.md
-        • 循环读取和执行任务
-        • 更新任务状态
-        • 保存输出到 output/
-        
-    - result_evaluator: 
-        • 收集 output/ 下所有文件
-        • 生成最终报告
+    在 result_evaluator 完成后，memory_saver 节点会检查：
+    - 是否所有任务都完美完成（成功率 100%）
+    - 如果是，则将 Immunity 产出存储到 Mem0
+    - 下次遇到相似问题时，可以从缓存直接获取结果
     
     ================================================================================
     """
@@ -1150,6 +1233,7 @@ def build_main_graph():
     graph.add_node("task_decomposition", task_decomposition_node)
     graph.add_node("executor", executor_node)
     graph.add_node("result_evaluator", result_evaluator_node)
+    graph.add_node("memory_saver", memory_saver_node)  # 新增: Mem0 记忆存储节点
     graph.add_node("general_qa", general_qa_node)
     
     # 添加边: START → supervisor
@@ -1173,8 +1257,10 @@ def build_main_graph():
     graph.add_edge("task_decomposition", "executor")
     # executor 完成后流转到 result_evaluator (任务执行 → 结果评估)
     graph.add_edge("executor", "result_evaluator")
-    # result_evaluator 完成后结束
-    graph.add_edge("result_evaluator", END)
+    # result_evaluator 完成后流转到 memory_saver (结果评估 → 记忆存储)
+    graph.add_edge("result_evaluator", "memory_saver")
+    # memory_saver 完成后结束
+    graph.add_edge("memory_saver", END)
     # general_qa 直接结束
     graph.add_edge("general_qa", END)
     
