@@ -5,6 +5,10 @@ from enum import Enum
 if TYPE_CHECKING:
     from nodes.subagents.code_act.todo_list import TodoList
 
+# 运行时占位符 - 在 ensure_global_state_rebuilt() 调用后会被替换为真实的 TodoList 类
+# 这是为了让 get_type_hints() 在解析前向引用时能找到 "TodoList"
+TodoList = None
+
 
 # User task type enum
 class UserTaskType(str, Enum):
@@ -97,6 +101,26 @@ class GlobalState(BaseModel):
     sandbox_data_dir: Optional[str] = Field(default=None, description="Data directory in sandbox")
     extracted_parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameter table extracted from user input")
     file_analyses: List[Dict[str, Any]] = Field(default_factory=list, description="File analysis results")
+    
+    # ==================== Iterative Executor 新增字段 ====================
+    
+    # 迭代执行历史记录
+    iteration_history: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="迭代执行历史记录 (由 IterativeExecutor 生成)"
+    )
+    
+    # 已完成的输出文件列表
+    completed_output_files: List[str] = Field(
+        default_factory=list,
+        description="已完成的输出文件路径列表"
+    )
+    
+    # MCP 工具调用记录
+    mcp_call_records: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="MCP 工具调用记录"
+    )
 
 
 # Lazy rebuild of GlobalState to resolve forward references (Pydantic v2 requirement)
@@ -109,13 +133,19 @@ def ensure_global_state_rebuilt() -> None:
     
     This must be called before using the todo_list field with a TodoList object.
     It's safe to call multiple times - subsequent calls are no-ops.
+    
+    Note: This also injects TodoList into the module's global namespace so that
+    get_type_hints() can resolve the forward reference "TodoList" in GlobalState.
     """
-    global _global_state_rebuilt
+    global _global_state_rebuilt, TodoList
     if _global_state_rebuilt:
         return
     
     try:
-        from nodes.subagents.code_act.todo_list import TodoList
+        from nodes.subagents.code_act.todo_list import TodoList as _TodoList
+        # 将 TodoList 注入到模块的全局命名空间，让 get_type_hints() 能解析前向引用
+        globals()['TodoList'] = _TodoList
+        TodoList = _TodoList
         GlobalState.model_rebuild()
         _global_state_rebuilt = True
     except ImportError as e:

@@ -165,6 +165,15 @@ class ImmunityMemory:
         if self._memory is not None:
             return self._memory
         
+        # 首先检查 mem0 模块是否可用
+        try:
+            import mem0
+        except ImportError:
+            logger.warning("mem0 module not installed, memory features disabled")
+            self._memory = None
+            self._use_async = False
+            return None
+        
         async with self._init_lock:
             if self._memory is not None:
                 return self._memory
@@ -193,27 +202,32 @@ class ImmunityMemory:
                 logger.info("Initialized AsyncMemory client for immunity")
             except Exception as e:
                 logger.warning(f"AsyncMemory failed, falling back to sync: {e}")
-                from mem0 import Memory
-                self._memory = Memory.from_config({
-                    "llm": self.config.get("llm", {
-                        "provider": "openai",
-                        "config": {"model": "gpt-4o-mini"}
-                    }),
-                    "embedder": self.config.get("embedder", {
-                        "provider": "openai",
-                        "config": {"model": "text-embedding-3-small"}
-                    }),
-                    "vector_store": {
-                        "provider": "qdrant",
-                        "config": {
-                            "collection_name": "immunity_traces",
-                            "host": self.config.get("qdrant_host", "localhost"),
-                            "port": self.config.get("qdrant_port", 6333)
+                try:
+                    from mem0 import Memory
+                    self._memory = Memory.from_config({
+                        "llm": self.config.get("llm", {
+                            "provider": "openai",
+                            "config": {"model": "gpt-4o-mini"}
+                        }),
+                        "embedder": self.config.get("embedder", {
+                            "provider": "openai",
+                            "config": {"model": "text-embedding-3-small"}
+                        }),
+                        "vector_store": {
+                            "provider": "qdrant",
+                            "config": {
+                                "collection_name": "immunity_traces",
+                                "host": self.config.get("qdrant_host", "localhost"),
+                                "port": self.config.get("qdrant_port", 6333)
+                            }
                         }
-                    }
-                })
-                self._use_async = False
-                logger.info("Initialized sync Memory client (fallback)")
+                    })
+                    self._use_async = False
+                    logger.info("Initialized sync Memory client (fallback)")
+                except Exception as e2:
+                    logger.error(f"Failed to initialize Memory (sync fallback): {e2}")
+                    self._memory = None
+                    self._use_async = False
         
         return self._memory
     
@@ -235,6 +249,11 @@ class ImmunityMemory:
             (is_cached, trace): 是否命中缓存，以及缓存内容
         """
         memory = await self._get_memory()
+        
+        # 如果 memory 未初始化（mem0 模块不可用），直接返回未命中
+        if memory is None:
+            logger.info("Memory not available, skipping cache check")
+            return (False, None)
         
         # 生成输入哈希用于精确匹配
         input_hash = generate_input_hash(user_input)

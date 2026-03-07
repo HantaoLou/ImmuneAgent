@@ -73,6 +73,20 @@ from nodes.subagents.code_act.graph import (
     codeact_output_mapper
 )
 
+# IterativeExecutor 导入 - 用于自动生成 tasks.md 并迭代执行
+try:
+    from coding_agent.iterative_executor import (
+        IterativeOpenCodeExecutor,
+        IterativeOpenCodeExecutorSync,
+        IterationStatus,
+        EvaluationCriteria,
+    )
+    ITERATIVE_EXECUTOR_AVAILABLE = True
+    logger.info("[Supervisor] IterativeOpenCodeExecutor 可用")
+except ImportError as e:
+    ITERATIVE_EXECUTOR_AVAILABLE = False
+    logger.warning(f"[Supervisor] IterativeOpenCodeExecutor 不可用: {e}")
+
 # LLM 相关导入
 try:
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -475,6 +489,131 @@ def _build_file_analysis_task(sandbox_file_paths: Dict[str, str]) -> str:
 }
 """
     return task_desc
+
+
+def _call_iterative_executor(
+    state: SupervisorState,
+    task_description: str,
+    input_files: List[str] = None,
+    params: Dict[str, Any] = None,
+    max_iterations: int = 2,
+    task_scope: str = "general",  # 新增：任务范围限制
+) -> Dict[str, Any]:
+    """
+    调用 IterativeExecutor 执行任务
+    
+    核心能力：
+    - 根据任务描述自动生成 tasks.md
+    - 迭代执行 + 自动处理依赖缺失等问题
+    - 失败时自动重试优化
+    
+    Args:
+        state: Supervisor 状态
+        task_description: 任务描述（自然语言）
+        input_files: 输入文件列表
+        params: 额外参数
+        max_iterations: 最大迭代次数
+        task_scope: 任务范围限制，可选值：
+            - "file_transfer": 仅文件转存，不执行用户任务
+            - "file_analysis": 仅文件分析，不执行用户任务
+            - "general": 通用任务执行
+        
+    Returns:
+        Dict: 执行结果 {"status": "success"/"failed", "output": ..., "error": ...}
+    """
+    logger.info(f"  [_call_iterative_executor] 开始执行任务 (scope: {task_scope})")
+    logger.debug(f"    任务描述: {task_description[:200]}...")
+    
+    if not ITERATIVE_EXECUTOR_AVAILABLE:
+        logger.warning("  IterativeExecutor 不可用，回退到 CodeAct")
+        return _call_codeact(
+            state=state,
+            task_description=task_description,
+            task_type="file_processing",
+            parameters=params,
+        )
+    
+    try:
+        from coding_agent.config import OpenCodeConfig
+
+        config = OpenCodeConfig.from_env()
+
+        # 使用同步包装器 IterativeOpenCodeExecutorSync
+        executor = IterativeOpenCodeExecutorSync(
+            config=config,
+            max_iterations=max_iterations,
+            evaluation_criteria=EvaluationCriteria(
+                min_quality_score=0.6,
+                early_stop_on_success=True,
+            ),
+            early_stop_on_success=True,
+        )
+
+        # 准备输入数据
+        # 【关键修改】根据 task_scope 限制 input_data 内容
+        # 避免将完整的 user_input 传递给 executor，防止执行超出范围的任务
+        if task_scope == "file_transfer":
+            # 文件转存任务：只传递文件和转存相关的信息
+            input_data = {
+                "session_id": state.session_id,
+                "user_input": "【系统内部任务】仅执行文件转存，不执行任何用户任务。" + task_description,
+                "input_files": input_files or [],
+                "params": params or {},
+            }
+        elif task_scope == "file_analysis":
+            # 文件分析任务：只传递文件和分析相关的信息
+            input_data = {
+                "session_id": state.session_id,
+                "user_input": "【系统内部任务】仅执行文件分析，不执行任何用户任务。" + task_description,
+                "input_files": input_files or [],
+                "params": params or {},
+            }
+        else:
+            # 通用任务：保留原有行为
+            input_data = {
+                "session_id": state.session_id,
+                "user_input": task_description,
+                "input_files": input_files or [],
+                "params": params or {},
+            }
+
+        # 执行（同步包装器已处理异步逻辑）
+        result = executor.execute(input_data)
+        
+        if result.final_status == IterationStatus.SUCCESS:
+            logger.info(f"  [_call_iterative_executor] 执行成功，迭代 {result.total_iterations} 次")
+            return {
+                "status": "success",
+                "output": {
+                    "output_files": result.final_output_files,
+                    "iterations": result.total_iterations,
+                },
+                "iteration_history": [
+                    {
+                        "iteration": h.iteration,
+                        "status": h.status.value,
+                        "errors": h.errors,
+                    }
+                    for h in result.iteration_history
+                ],
+            }
+        else:
+            all_errors = []
+            for h in result.iteration_history:
+                all_errors.extend(h.errors or [])
+            logger.error(f"  [_call_iterative_executor] 执行失败: {all_errors}")
+            return {
+                "status": "failed",
+                "error": "; ".join(all_errors) if all_errors else "Unknown error",
+                "iterations": result.total_iterations,
+            }
+            
+    except Exception as e:
+        logger.error(f"  [_call_iterative_executor] 异常: {e}")
+        return {
+            "status": "failed",
+            "error": str(e),
+        }
 
 
 def _call_codeact(
@@ -1024,7 +1163,27 @@ def detect_files_node(state: SupervisorState) -> SupervisorState:
             ))
             seen_paths.add(uploaded_file)
     
-    # 4. 分类统计
+    # 4. 从 extracted_parameters 中提取文件路径（重要：参数表可能包含预定义的文件路径）
+    # 例如：{"h5ad_file": "/data/benchmark_data/xxx.h5ad", "meta_csv_file": "/data/xxx.csv"}
+    if state.extracted_parameters:
+        for param_name, param_value in state.extracted_parameters.items():
+            # 跳过非字符串值
+            if not isinstance(param_value, str):
+                continue
+            # 跳过已处理的路径
+            if param_value in seen_paths:
+                continue
+            # 检查是否为有效文件路径
+            if _is_valid_file_path(param_value):
+                source_type = _classify_file_source(param_value)
+                detected_files.append(DetectedFile(
+                    path=param_value,
+                    source_type=source_type
+                ))
+                seen_paths.add(param_value)
+                logger.debug(f"  从参数表提取文件: {param_name} -> {param_value}")
+    
+    # 5. 分类统计
     local_count = sum(1 for f in detected_files if f.source_type == FileSourceType.LOCAL)
     remote_count = sum(1 for f in detected_files if f.source_type == FileSourceType.REMOTE)
     url_count = sum(1 for f in detected_files if f.source_type == FileSourceType.URL)
@@ -1051,17 +1210,21 @@ def detect_files_node(state: SupervisorState) -> SupervisorState:
 
 def upload_files_node(state: SupervisorState) -> SupervisorState:
     """
-    文件转存节点（重构后）
+    文件转存节点（重构后 - 使用 IterativeExecutor）
     
     重要原则：所有文件都统一转存到沙盒会话目录！
     - LOCAL 文件：上传到沙盒
     - REMOTE 文件：复制到会话目录
     - URL 文件：下载到会话目录
     
-    通过 execute_code_via_codeact 直接执行转存代码
+    核心改进：
+    - 优先使用 IterativeExecutor（自动生成 tasks.md 并迭代执行）
+    - 自动处理依赖缺失等问题
+    - 失败时自动重试
+    - 如果不可用，回退到 CodeAct
     """
     logger.info("=" * 60)
-    logger.info("Upload Files Node (调用 CodeAct)")
+    logger.info("Upload Files Node (调用 IterativeExecutor)")
     logger.info("=" * 60)
     
     if not state.preprocess_result or not state.preprocess_result.detected_files:
@@ -1076,8 +1239,92 @@ def upload_files_node(state: SupervisorState) -> SupervisorState:
             unique_files[f.path] = f
     
     logger.info(f"  需要转存 {len(unique_files)} 个文件")
+    logger.info(f"  检测到 {len(unique_files)} 个文件， prepare transfer...")
     
-    # 1. 使用 execute_code_via_codeact 直接执行文件转存
+    sandbox_input_dir = f"/data/sessions/{state.session_id}/input"
+    
+    # 优先使用 IterativeExecutor（如果可用）
+    if ITERATIVE_EXECUTOR_AVAILABLE:
+        logger.info("  使用 IterativeExecutor 处理文件转存")
+        
+        # 构建任务描述
+        file_list = "\n".join([
+            f"- {f.path} ({f.source_type.value})"
+            for f in unique_files.values()
+        ])
+        
+        task_description = f"""请将以下文件转存到沙盒会话目录：
+
+{file_list}
+
+## 目标目录
+{sandbox_input_dir}
+
+## 任务要求
+
+1. 创建目标目录（如果不存在）
+2. 按来源类型处理文件：
+   - REMOTE 文件：从 /data/ 路径复制到 {sandbox_input_dir}
+     注意：容器内 /data/ 对应 /tmp/，需要先转换路径
+   - LOCAL 文件：标记为不可访问
+   - URL 文件：使用 curl 或 wget 下载
+
+3. 处理完所有文件后，输出结果列表，4. 如果有文件处理失败，输出错误信息
+
+5. 确保所有 REMOTE 类型的文件都被正确转存
+
+"""
+
+        # 调用 IterativeExecutor（限制范围：仅文件转存）
+        result = _call_iterative_executor(
+            state=state,
+            task_description=task_description,
+            input_files=list(unique_files.keys()),
+            params={
+                "files": [{"path": p, "source_type": f.source_type.value} for p, f in unique_files.items()],
+                "sandbox_input_dir": sandbox_input_dir,
+            },
+            max_iterations=2,
+            task_scope="file_transfer",  # 【关键】限制只做文件转存，不执行用户任务
+        )
+        
+        # 解析结果
+        if result.get("status") == "success":
+            # 构建转存映射
+            uploaded_files = {}
+            for path, f in unique_files.items():
+                target_name = Path(path).name
+                sandbox_path = f"{sandbox_input_dir}/{target_name}"
+                uploaded_files[path] = sandbox_path
+            
+            # 更新状态
+            if not state.sandbox_file_paths:
+                state.sandbox_file_paths = {}
+            state.sandbox_file_paths.update(uploaded_files)
+            
+            output = result.get("output", {})
+            iterations = output.get("iterations", 1)
+            logger.info(f"  转存完成: {len(uploaded_files)} 个文件 (迭代 {iterations} 次)")
+            
+            state.codeact_upload_result = {
+                "status": "success",
+                "uploaded_files": uploaded_files,
+                "iterations": iterations,
+            }
+        else:
+            logger.error(f"  文件转存失败: {result.get('error')}")
+            state.codeact_upload_result = {
+                "status": "failed",
+                "error": result.get("error"),
+                "iterations": result.get("iterations", 0),
+            }
+        
+        logger.info("=" * 60)
+        return state
+    
+    # 回退： 使用 CodeAct
+    logger.info("  IterativeExecutor 不可用，回退到 CodeAct...")
+    
     try:
         from utils.codeact_executor import execute_code_via_codeact, is_codeact_available
         
@@ -1097,9 +1344,6 @@ def upload_files_node(state: SupervisorState) -> SupervisorState:
         
         import json
         files_json_str = json.dumps(files_json, ensure_ascii=False)
-        
-        sandbox_input_dir = f"/data/sessions/{state.session_id}/input"
-        container_input_dir = f"/tmp/sessions/{state.session_id}/input"
         
         # 构建转存代码 - 使用字符串拼接避免 f-string 转义问题
         transfer_code = '''
@@ -1235,18 +1479,145 @@ print("__FILE_TRANSFER_END__")
 
 def analyze_files_node(state: SupervisorState) -> SupervisorState:
     """
-    分析文件节点（重构后）
+    分析文件节点（重构后 - 使用 IterativeExecutor）
     
-    通过调用 CodeAct 子图来完成文件分析任务
+    核心改进：
+    - 优先使用 IterativeExecutor（自动生成 tasks.md 并迭代执行）
+    - 自动处理依赖缺失等问题（如 anndata）
+    - 失败时自动重试优化
     """
     logger.info("=" * 60)
-    logger.info("Analyze Files Node (调用 CodeAct)")
+    logger.info("Analyze Files Node (调用 IterativeExecutor)")
     logger.info("=" * 60)
     
     if not state.sandbox_file_paths:
         logger.info("  没有需要分析的文件")
         state.codeact_analysis_result = {"status": "skipped", "files": []}
         return state
+    
+    sandbox_input_dir = f"/data/sessions/{state.session_id}/input"
+    
+    # 1. 优先使用 IterativeExecutor（如果可用）
+    if ITERATIVE_EXECUTOR_AVAILABLE:
+        logger.info("  使用 IterativeExecutor 分析文件...")
+        
+        # 构建任务描述
+        file_list = "\n".join([
+            f"- {name}: {path}"
+            for name, path in state.sandbox_file_paths.items()
+        ])
+        
+        task_description = f"""请分析以下文件的内容和结构：
+
+{file_list}
+
+## 目标目录
+{sandbox_input_dir}
+
+## 分析要求
+
+1. 识别文件类型：
+   - 检查文件扩展名
+   - 读取文件头部内容验证格式
+   - 识别为 CSV、JSON、H5AD、FASTA、TXT 等
+
+2. 提取文件结构信息：
+   **CSV/TSV 文件:**
+   - 列名列表
+   - 行数统计
+   - 数据类型推断
+   - 前几行数据预览
+
+   **H5AD 文件 (单细胞数据):**
+   - .obs 列名
+   - .var 列名
+   - obsm 键
+   - 细胞/基因数量
+
+   **FASTA 文件:**
+   - 序列数量
+   - 序列长度统计
+
+3. 输出分析结果到 {sandbox_input_dir}/.agent/file_params.json：
+   格式示例：
+   {{
+     "files": {{
+       "metadata.csv": {{
+         "path": "{sandbox_input_dir}/metadata.csv",
+         "type": "csv",
+         "columns": ["col1", "col2"],
+         "rows": 100,
+         "detected_data_type": "antibody_metadata"
+       }}
+     }}
+   }}
+
+## 重要提示
+- 对于 H5AD 文件，使用 `anndata` 库读取
+- 对于 CSV 文件，使用 `pandas` 读取
+- 如果缺少依赖包（如 anndata），使用 `pip install` 或 `uv pip install` 安装后重试
+"""
+
+        # 调用 IterativeExecutor（限制范围：仅文件分析）
+        # 【重要】使用 task_scope="file_analysis" 限制任务范围，避免执行用户任务
+        result = _call_iterative_executor(
+            state=state,
+            task_description=task_description,
+            input_files=list(state.sandbox_file_paths.values()),
+            params={
+                "file_paths": state.sandbox_file_paths,
+                "output_path": f"{sandbox_input_dir}/.agent/file_params.json",
+            },
+            max_iterations=2,
+            task_scope="file_analysis",  # 限制：仅文件分析
+        )
+        
+        # 解析结果
+        if result.get("status") == "success":
+            output = result.get("output", {})
+            analysis_output = output.get("files", []) if isinstance(output, dict) else []
+            
+            # 转换为 FileAnalysis 对象
+            for file_info in analysis_output:
+                original_path = None
+                for orig, sandbox in state.sandbox_file_paths.items():
+                    if sandbox == file_info.get("path"):
+                        original_path = orig
+                        break
+                
+                if original_path:
+                    state.file_analyses.append(FileAnalysis(
+                        original_path=original_path,
+                        sandbox_path=file_info.get("path", ""),
+                        file_type=file_info.get("file_type", "unknown"),
+                        column_names=file_info.get("column_names", []),
+                        detected_data_type=file_info.get("detected_data_type"),
+                        content_summary=file_info.get("summary"),
+                        row_count=file_info.get("row_count")
+                    ))
+            
+            iterations = output.get("iterations", 1)
+            logger.info(f"  分析完成: {len(state.file_analyses)} 个文件 (迭代 {iterations} 次)")
+            
+            state.codeact_analysis_result = {
+                "status": "success",
+                "files": [fa.__dict__ for fa in state.file_analyses],
+                "iterations": iterations,
+            }
+        else:
+            logger.error(f"  文件分析失败: {result.get('error')}")
+            state.codeact_analysis_result = {
+                "status": "failed",
+                "error": result.get("error"),
+                "iterations": result.get("iterations", 0),
+            }
+            state.file_analyses_failed = True
+        
+        logger.info("=" * 60)
+        return state
+    
+    # 2. 回退： 使用 CodeAct
+    logger.info("  IterativeExecutor 不可用，回退到 CodeAct...")
     
     # 1. 构建分析任务描述
     logger.debug("  构建分析任务描述...")
@@ -1300,34 +1671,8 @@ def analyze_files_node(state: SupervisorState) -> SupervisorState:
                 ))
         
         logger.info(f"  分析完成: {len(state.file_analyses)} 个文件")
-        
-        # 详细日志：文件分析结果
-        logger.debug("【文件分析结果】")
-        for fa in state.file_analyses:
-            logger.debug(f"  文件: {fa.original_path}")
-            logger.debug(f"    沙箱路径: {fa.sandbox_path}")
-            logger.debug(f"    类型: {fa.file_type}")
-            logger.debug(f"    数据类型: {fa.detected_data_type}")
-            logger.debug(f"    行数: {fa.row_count}")
-            logger.debug(f"    列名: {fa.column_names[:5] if fa.column_names else []}...")
     else:
-        # 失败时详细记录错误信息
-        error_msg = result.get('error', 'Unknown error')
-        error_type = result.get('error_type', 'Unknown')
-        error_category = result.get('error_category', 'Unknown')
-        
-        logger.error(f"  ❌ 分析失败!")
-        logger.error(f"     错误信息: {error_msg}")
-        logger.error(f"     错误类型: {error_type}")
-        logger.error(f"     错误类别: {error_category}")
-        
-        # 如果有输出，也记录下来
-        if result.get('output'):
-            logger.error(f"     输出内容: {str(result.get('output'))[:500]}")
-        
-        # 记录任务描述（便于调试）
-        logger.error(f"     任务描述: {task_description[:200]}...")
-        
+        logger.error(f"  文件分析失败: {result.get('error')}")
         state.file_analyses_failed = True
     
     logger.info("=" * 60)
@@ -1406,10 +1751,20 @@ def classify_user_description_node(state: SupervisorState) -> SupervisorState:
     任务分类节点
     
     根据用户输入和提取的信息，分类任务类型
+    
+    注意：如果调用方已经设置了 user_task_type，则尊重该设置，不再重新分类。
+    这允许测试代码或其他模块通过预设 user_task_type 来跳过某些流程。
     """
     logger.info("=" * 60)
     logger.info("Classify User Description Node")
     logger.info("=" * 60)
+    
+    # 检查是否已设置 user_task_type（允许调用方跳过分类）
+    if state.user_task_type is not None:
+        task_type_str = state.user_task_type.value if hasattr(state.user_task_type, 'value') else str(state.user_task_type)
+        logger.info(f"  已预设任务类型，跳过分类: {task_type_str}")
+        logger.info("=" * 60)
+        return state
     
     # 使用 LLM 进行分类（如果有）
     llm = _get_llm()

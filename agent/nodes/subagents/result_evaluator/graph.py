@@ -1340,11 +1340,13 @@ def result_evaluator_output_mapper(evaluator_state: ResultEvaluatorState, global
         }
     }
 
-    # 存储输出文件路径
+    # 存储输出文件路径到专门的列表字段（file_paths 的值必须是 str 类型）
     if output_files:
-        if "output_files" not in global_state.file_paths:
-            global_state.file_paths["output_files"] = []
-        global_state.file_paths["output_files"].extend(output_files)
+        # 去重后添加到 completed_output_files
+        existing = set(global_state.completed_output_files)
+        for f in output_files:
+            if f not in existing:
+                global_state.completed_output_files.append(f)
 
     print(f"✅ Result Evaluator 子图完成")
     print(f"  - 总结报告长度: {len(summary_report)} 字符")

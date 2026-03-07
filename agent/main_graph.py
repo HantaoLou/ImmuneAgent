@@ -85,7 +85,7 @@ agent_dir = Path(__file__).parent
 if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
-from state import GlobalState, UserTaskType, SubTask
+from state import GlobalState, UserTaskType, SubTask, ensure_global_state_rebuilt
 
 
 # =============================================================================
@@ -209,6 +209,26 @@ except ImportError as e:
     RESULT_EVALUATOR_SUBGRAPH_AVAILABLE = False
     print(f"[Main Graph] 警告: 无法导入 result_evaluator 子图: {e}")
     print("[Main Graph] 将使用简化版 result_evaluator 节点")
+
+
+# =============================================================================
+# Iterative Executor 子图导入（新增 - 替代 task_decomposition + executor）
+# =============================================================================
+try:
+    from nodes.subagents.iterative_executor import (
+        iterative_executor_node,
+        iterative_executor_input_mapper,
+        iterative_executor_output_mapper,
+        IterativeExecutorState,
+        ITERATIVE_EXECUTOR_AVAILABLE,
+    )
+    ITERATIVE_EXECUTOR_SUBGRAPH_AVAILABLE = True
+    print(f"[Main Graph] 使用 iterative_executor 子图 (可用性: {ITERATIVE_EXECUTOR_AVAILABLE})")
+except ImportError as e:
+    ITERATIVE_EXECUTOR_SUBGRAPH_AVAILABLE = False
+    ITERATIVE_EXECUTOR_AVAILABLE = False
+    print(f"[Main Graph] 警告: 无法导入 iterative_executor 子图: {e}")
+    print("[Main Graph] 将使用 task_decomposition + executor 流程")
 
 
 # =============================================================================
@@ -1187,7 +1207,7 @@ def memory_saver_node(state: GlobalState) -> GlobalState:
 # 构建主图
 # =============================================================================
 
-def build_main_graph():
+def build_main_graph(use_iterative_executor: bool = None):
     """
     构建主图
     
@@ -1206,57 +1226,110 @@ def build_main_graph():
     └── workspace/          # 工作空间
     
     ================================================================================
-    流程
+    流程（根据 use_iterative_executor 选择）
     ================================================================================
     
+    **原流程** (use_iterative_executor=False):
     START → supervisor → [路由]
            ├── immunity → task_decomposition → executor (CodeAct Todo) → result_evaluator → memory_saver → END
            ├── task_decomposition → executor (CodeAct Todo) → result_evaluator → memory_saver → END
            └── general_qa → END
     
+    **新流程** (use_iterative_executor=True):
+    START → supervisor → [路由]
+           ├── immunity → iterative_executor → result_evaluator → memory_saver → END
+           ├── iterative_executor → result_evaluator → memory_saver → END
+           └── general_qa → END
+    
     ================================================================================
-    Mem0 记忆存储
+    参数
     ================================================================================
     
-    在 result_evaluator 完成后，memory_saver 节点会检查：
-    - 是否所有任务都完美完成（成功率 100%）
-    - 如果是，则将 Immunity 产出存储到 Mem0
-    - 下次遇到相似问题时，可以从缓存直接获取结果
+    Args:
+        use_iterative_executor: 是否使用 IterativeExecutor 替代 task_decomposition + executor
+                               - None: 自动检测（根据 ITERATIVE_EXECUTOR_AVAILABLE）
+                               - True: 强制使用 iterative_executor
+                               - False: 使用原流程
     
     ================================================================================
     """
+    # 确保 GlobalState 模型已重建，以解析 TodoList 等前向引用
+    # 这是 Pydantic v2 + LangGraph 的必要步骤
+    ensure_global_state_rebuilt()
+    
+    # 决定是否使用 iterative_executor
+    if use_iterative_executor is None:
+        use_iterative = ITERATIVE_EXECUTOR_SUBGRAPH_AVAILABLE and ITERATIVE_EXECUTOR_AVAILABLE
+    else:
+        use_iterative = use_iterative_executor
+    
+    print(f"[Main Graph] 构建 {'iterative_executor' if use_iterative else 'task_decomposition + executor'} 流程")
+    
     graph = StateGraph(GlobalState)
     
-    # 添加节点
+    # 添加公共节点
     graph.add_node("supervisor", supervisor_node)
     graph.add_node("immunity", immunity_node)
-    graph.add_node("task_decomposition", task_decomposition_node)
-    graph.add_node("executor", executor_node)
     graph.add_node("result_evaluator", result_evaluator_node)
-    graph.add_node("memory_saver", memory_saver_node)  # 新增: Mem0 记忆存储节点
+    graph.add_node("memory_saver", memory_saver_node)
     graph.add_node("general_qa", general_qa_node)
     
-    # 添加边: START → supervisor
-    graph.add_edge(START, "supervisor")
+    if use_iterative:
+        # ================================================================
+        # 新流程：使用 iterative_executor
+        # ================================================================
+        graph.add_node("iterative_executor", iterative_executor_node)
+        
+        # 添加边: START → supervisor
+        graph.add_edge(START, "supervisor")
+        
+        # 条件边: supervisor → 根据任务类型路由
+        graph.add_conditional_edges(
+            "supervisor",
+            supervisor_router,
+            {
+                "immunity": "immunity",
+                "task_decomposition": "iterative_executor",  # 重定向到 iterative_executor
+                "general_qa": "general_qa"
+            }
+        )
+        
+        # 执行流程边
+        # immunity 完成后流转到 iterative_executor
+        graph.add_edge("immunity", "iterative_executor")
+        # iterative_executor 完成后流转到 result_evaluator
+        graph.add_edge("iterative_executor", "result_evaluator")
+        
+    else:
+        # ================================================================
+        # 原流程：使用 task_decomposition + executor
+        # ================================================================
+        graph.add_node("task_decomposition", task_decomposition_node)
+        graph.add_node("executor", executor_node)
+        
+        # 添加边: START → supervisor
+        graph.add_edge(START, "supervisor")
+        
+        # 条件边: supervisor → 根据任务类型路由
+        graph.add_conditional_edges(
+            "supervisor",
+            supervisor_router,
+            {
+                "immunity": "immunity",
+                "task_decomposition": "task_decomposition",
+                "general_qa": "general_qa"
+            }
+        )
+        
+        # 执行流程边
+        # immunity 完成后流转到 task_decomposition (实验计划 → 任务分解)
+        graph.add_edge("immunity", "task_decomposition")
+        # task_decomposition 完成后流转到 executor (任务分解 → 任务执行)
+        graph.add_edge("task_decomposition", "executor")
+        # executor 完成后流转到 result_evaluator (任务执行 → 结果评估)
+        graph.add_edge("executor", "result_evaluator")
     
-    # 条件边: supervisor → 根据任务类型路由
-    graph.add_conditional_edges(
-        "supervisor",
-        supervisor_router,
-        {
-            "immunity": "immunity",
-            "task_decomposition": "task_decomposition",
-            "general_qa": "general_qa"
-        }
-    )
-    
-    # 执行流程边
-    # immunity 完成后流转到 task_decomposition (实验计划 → 任务分解)
-    graph.add_edge("immunity", "task_decomposition")
-    # task_decomposition 完成后流转到 executor (任务分解 → 任务执行)
-    graph.add_edge("task_decomposition", "executor")
-    # executor 完成后流转到 result_evaluator (任务执行 → 结果评估)
-    graph.add_edge("executor", "result_evaluator")
+    # 公共结束流程
     # result_evaluator 完成后流转到 memory_saver (结果评估 → 记忆存储)
     graph.add_edge("result_evaluator", "memory_saver")
     # memory_saver 完成后结束

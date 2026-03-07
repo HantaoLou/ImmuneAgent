@@ -50,11 +50,31 @@ class OpenSandboxHelper:
             connection_config: 连接配置（可选）
             ready_timeout_seconds: 健康检查超时时间（秒）
         """
-        self.image = os.getenv(
-            "OPENSANDBOX_IMAGE",
-            "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.1",
-        )
+    def __init__(
+        self,
+        timeout: Optional[int] = 600,
+        connection_config: Optional[Any] = None,
+        ready_timeout: Optional[int] = 10,
+    ):
+        """
+        初始化 OpenSandboxHelper
+        
+        Args:
+            image: Docker 镜像名称（默认从环境变量获取)
+            timeout_seconds: 沙盒自动终止超时时间（秒)
+            env: 环境变量字典
+            connection_config: 连接配置(可选)
+            ready_timeout_seconds: 健康检查超时时间(秒)
+        """
+        self.image = self._get_image_from_env()
         print(f"  [opensandbox] 使用镜像: {self.image}")
+        self.timeout = timeout
+        self.connection_config = connection_config or self._get_connection_config()
+        self.ready_timeout = ready_timeout
+        
+        self.sandbox: Optional[Any] = None
+        self.sandbox_id: Optional[str] = None
+        self._is_context_manager = False
         self.timeout = timeout
         self.connection_config = connection_config or self._get_connection_config()
         self.ready_timeout = ready_timeout

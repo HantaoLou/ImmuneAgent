@@ -945,6 +945,13 @@ def _ensure_common_dependencies():
         ("numpy", "numpy"),
         ("sklearn", "scikit-learn"),
         ("scipy", "scipy"),
+        ("anndata", "anndata"),
+        ("scanpy", "scanpy"),
+        ("matplotlib", "matplotlib"),
+        ("seaborn", "seaborn"),
+        ("requests", "requests"),
+        ("httpx", "httpx"),
+        ("aiohttp", "aiohttp"),
     ]
     for module, package in common_packages:
         _auto_install_if_missing(module, package)
@@ -955,6 +962,7 @@ _ensure_common_dependencies()
 '''
 
     # Check if code has common imports that might need auto-installation
+    # Extended list to cover more bioinformatics/data science packages
     needs_auto_install = any([
         "import pandas" in code,
         "from pandas" in code,
@@ -964,6 +972,18 @@ _ensure_common_dependencies()
         "from sklearn" in code,
         "import scipy" in code,
         "from scipy" in code,
+        "import anndata" in code,
+        "from anndata" in code,
+        "import scanpy" in code,
+        "from scanpy" in code,
+        "import matplotlib" in code,
+        "from matplotlib" in code,
+        "import seaborn" in code,
+        "from seaborn" in code,
+        "import requests" in code,
+        "from requests" in code,
+        "import httpx" in code,
+        "from httpx" in code,
     ])
 
     # If code already contains result setting, return directly
