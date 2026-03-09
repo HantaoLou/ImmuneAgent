@@ -1,0 +1,71 @@
+# =============================================================================
+# Backend Core Dependencies
+# =============================================================================
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.11.4
+sse-starlette>=2.1.0
+python-multipart>=0.0.9
+python-dotenv>=1.0.1
+
+# =============================================================================
+# Agent Core Dependencies (from agent/pyproject.toml)
+# =============================================================================
+
+# LangGraph 核心
+langgraph>=1.0.0
+langchain>=0.2.0
+langchain-core>=1.0.0
+
+# LLM 提供商
+langchain-openai>=1.0.0
+
+# MCP 工具支持
+langchain-mcp-adapters>=0.1.0
+
+# Token 计算
+tiktoken>=0.12.0
+
+# 向量检索和嵌入模型（Deep Research 模块必需）
+langchain-community>=0.3.0
+langchain-qdrant>=0.1.0
+qdrant-client>=1.7.0
+
+# 异步 HTTP 客户端（多处使用）
+httpx>=0.27.0
+aiohttp>=3.9.0
+
+# 缓存支持（向量检索缓存）
+diskcache>=5.6.0
+
+# 沙盒执行支持（CodeAct 模块必需）
+opensandbox>=0.1.0
+
+# =============================================================================
+# Optional Agent Dependencies
+# =============================================================================
+# Note: zai library requires Python <3.12, use OpenAI-compatible API instead
+# For ZhipuAI, set ZHIPU_API_KEY and use OpenAI-compatible endpoint
+
+# Tavily 网络搜索（Immunity 子图必需）
+tavily-python>=0.3.0
+
+# Mem0 记忆管理支持（用于缓存历史执行结果）
+mem0ai>=0.1.0
+
+# 智谱 AI 支持（LLM 提供商）
+zhipuai>=1.0.0
+
+# 通义千问支持（DashScope）
+dashscope>=1.0.0
+
+# Ollama 本地嵌入模型支持
+ollama>=1.0.0
+
+# 本地嵌入模型支持
+local-embedding>=1.0.0
+
+# 本地嵌入模型支持
+local-embedding>=1.0.0
+
+langchain-deepseek>=1.0.1

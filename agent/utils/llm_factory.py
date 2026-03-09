@@ -9,18 +9,18 @@ Categorized by model purpose, supports the following types:
 
 Usage:
     from agent.utils.llm_factory import create_reasoning_llm, create_bioinformatics_llm, create_code_llm
-    
+
     # Create reasoning model
     llm = create_reasoning_llm()
-    
+
     # Create bioinformatics model
     llm = create_bioinformatics_llm()
-    
+
     # Create code model
     llm = create_code_llm()
 """
 
-from typing import Optional, Any, Dict, List, Tuple
+from typing import Optional, Any, Dict, List, Tuple, Callable
 from enum import Enum
 import os
 
@@ -38,9 +38,10 @@ if load_dotenv is not None and find_dotenv is not None:
         load_dotenv(dotenv_path, override=False)
 
 try:
-    from zai import ZhipuAiClient
+    from zhipuai import ZhipuAI as ZhipuAiClient
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import HumanMessage, SystemMessage
+
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
@@ -50,14 +51,28 @@ except ImportError:
     SystemMessage = None
 
 if not LLM_AVAILABLE:
-    print("Warning: langchain-related libraries not installed, LLM functionality will be unavailable")
+    print(
+        "Warning: langchain-related libraries not installed, LLM functionality will be unavailable"
+    )
+
+# 🔥 Import progress context
+try:
+    from utils.progress_context import get_progress_callback
+
+    PROGRESS_CONTEXT_AVAILABLE = True
+except ImportError:
+    PROGRESS_CONTEXT_AVAILABLE = False
+    print("Warning: progress_context not available, SSE streaming will be disabled")
 
 
 # ===================== Model Purpose Enum =====================
 class ModelPurpose(str, Enum):
     """Model purpose enumeration"""
+
     REASONING = "reasoning"  # Reasoning model: For logical reasoning, task classification, decision-making, etc.
-    BIOINFORMATICS = "bioinformatics"  # Bioinformatics model: For bioinformatics-related tasks
+    BIOINFORMATICS = (
+        "bioinformatics"  # Bioinformatics model: For bioinformatics-related tasks
+    )
     REASONING_ADVANCED = "reasoning_advanced"  # Advanced reasoning model: Specifically for complex reasoning tasks
     CODE = "code"  # Code model: For code generation and analysis
 
@@ -69,21 +84,18 @@ MODEL_CONFIGS: Dict[ModelPurpose, List[Tuple[str, str, float]]] = {
         ("dashscope", "qwen-max", 0.2),  # Qwen Max - preferred
         ("dashscope", "qwen-turbo", 0.1),  # Qwen Turbo - preferred
     ],
-    
     # Bioinformatics model: Prefer Qwen, then use models with good scientific literature understanding
     ModelPurpose.BIOINFORMATICS: [
         ("zhipu", "glm-4.5", 0.2),
         ("dashscope", "qwen-max", 0.2),  # Qwen Max - preferred
         ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.2),
     ],
-    
     # Advanced reasoning model: Prefer Qwen for complex reasoning tasks
     ModelPurpose.REASONING_ADVANCED: [
         ("zhipu", "glm-4.5", 0.1),
         ("dashscope", "qwen-max", 0.1),
         ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.1),  # Zhipu AI
     ],
-    
     # Code model: Prefer Qwen, then use models with strong code generation capabilities
     ModelPurpose.CODE: [
         ("zhipu", "glm-4.5", 0.1),
@@ -106,15 +118,15 @@ def _create_openai_llm(
     model: str,
     temperature: float = 0.1,
     base_url: Optional[str] = None,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
 ) -> Optional[Any]:
     """Internal function: Create OpenAI GPT LLM instance"""
     if not LLM_AVAILABLE or ChatOpenAI is None:
         return None
-    
+
     if api_key is None:
         api_key = os.getenv("OPENAI_API_KEY")
-    
+
     if not api_key:
         return None
 
@@ -127,7 +139,7 @@ def _create_openai_llm(
         f"model={model}, temperature={temperature}, base_url={base_url}, "
         f"timeout={timeout}, max_retries={max_retries}, api_key={masked_key}"
     )
-    
+
     try:
         return ChatOpenAI(
             model=model,
@@ -135,162 +147,170 @@ def _create_openai_llm(
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,  # Add timeout setting
-            max_retries=max_retries  # Maximum retry count
+            max_retries=max_retries,  # Maximum retry count
         )
     except Exception as e:
         print(f"Error: Failed to create OpenAI LLM ({model}): {e}")
         return None
 
+
 def _create_zhipu_llm(
     model: str,
     temperature: float = 0.1,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    progress_callback: Optional[Callable] = None,
 ) -> Optional[Any]:
-    """Internal function: Create Zhipu AI LLM instance (using adapter)"""
+    """Internal function: Create Zhipu AI LLM instance"""
     if not LLM_AVAILABLE or ZhipuAiClient is None:
         return None
-    
+
     if api_key is None:
-        api_key = os.getenv("ZHIPU_API_KEY")
-    
+        # 支持两种环境变量名
+        api_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
+
     if not api_key:
+        print("Warning: ZHIPU_API_KEY or ZHIPUAI_API_KEY not found")
         return None
-    
-    # Get timeout setting (default 120 seconds)
-    timeout = int(os.getenv("LLM_TIMEOUT", "120"))
-    print(f"Creating Zhipu AI LLM instance: {model}, temperature={temperature}, timeout={timeout}")
+
+    # 确保环境变量设置正确（ChatZhipuAI 需要 ZHIPUAI_API_KEY）
+    if not os.getenv("ZHIPUAI_API_KEY"):
+        os.environ["ZHIPUAI_API_KEY"] = api_key
+
+    # 🔥 如果没有提供progress_callback，尝试从context获取
+    if not progress_callback and PROGRESS_CONTEXT_AVAILABLE:
+        progress_callback = get_progress_callback()
+        if progress_callback:
+            print(f"[LLM Factory] Auto-detected progress_callback from context")
+
     try:
-        # Use adapter to create instance compatible with OpenAI interface
-        from .zhipu_adapter import ZhipuAIAdapter
-        return ZhipuAIAdapter(
+        from agent.utils.sse_callback_handler import (
+            create_llm_with_sse,
+            attach_sse_to_llm,
+        )
+
+        llm = create_llm_with_sse(
             model=model,
             temperature=temperature,
-            api_key=api_key,
-            timeout=timeout
+            progress_callback=progress_callback,
+            streaming=bool(progress_callback),  # 🔥 如果有callback，启用streaming
         )
-    except ImportError as e:
-        print(f"Error: Failed to import ZhipuAI adapter: {e}")
-        return None
+
+        return llm
     except Exception as e:
         print(f"Error: Failed to create Zhipu AI LLM ({model}): {e}")
         return None
+
 
 def _create_llm_with_tools(
     model: str = "qwen-max",
     base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
     temperature: float = 0.1,
-    tools: List[BaseTool] = None
+    tools: List[BaseTool] = None,
 ) -> Optional[Any]:
     """Internal function: Create LLM instance with tools"""
     if not LLM_AVAILABLE or ChatOpenAI is None:
         return None
-    return ChatOpenAI(model=model, base_url=base_url, temperature=temperature).bind_tools(tools)
+    return ChatOpenAI(
+        model=model, base_url=base_url, temperature=temperature
+    ).bind_tools(tools)
+
+
 # ===================== Create LLM by Purpose =====================
 def create_reasoning_llm(
-    temperature: Optional[float] = None,
-    custom_model: Optional[str] = None
+    temperature: Optional[float] = None, custom_model: Optional[str] = None
 ) -> Optional[Any]:
     """
     Create reasoning model instance
-    
+
     For logical reasoning, task classification, decision-making, etc. Prefer models with good reasoning performance.
-    
+
     Args:
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model, e.g., "anthropic:claude-3-opus-20240229")
-    
+
     Returns:
         LLM instance, returns None if creation fails
-    
+
     Examples:
         >>> llm = create_reasoning_llm()
         >>> llm = create_reasoning_llm(temperature=0.2)
         >>> llm = create_reasoning_llm(custom_model="anthropic:claude-3-opus-20240229")
     """
     return _create_llm_by_purpose(
-        ModelPurpose.REASONING,
-        temperature=temperature,
-        custom_model=custom_model
+        ModelPurpose.REASONING, temperature=temperature, custom_model=custom_model
     )
 
 
 def create_bioinformatics_llm(
-    temperature: Optional[float] = None,
-    custom_model: Optional[str] = None
+    temperature: Optional[float] = None, custom_model: Optional[str] = None
 ) -> Optional[Any]:
     """
     Create bioinformatics model instance
-    
+
     For bioinformatics-related tasks such as literature analysis, data interpretation, etc. Prefer models with good scientific literature understanding.
-    
+
     Args:
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model, e.g., "anthropic:claude-3-opus-20240229")
-    
+
     Returns:
         LLM instance, returns None if creation fails
-    
+
     Examples:
         >>> llm = create_bioinformatics_llm()
         >>> llm = create_bioinformatics_llm(temperature=0.3)
     """
     return _create_llm_by_purpose(
-        ModelPurpose.BIOINFORMATICS,
-        temperature=temperature,
-        custom_model=custom_model
+        ModelPurpose.BIOINFORMATICS, temperature=temperature, custom_model=custom_model
     )
 
 
 def create_reasoning_advanced_llm(
-    temperature: Optional[float] = None,
-    custom_model: Optional[str] = None
+    temperature: Optional[float] = None, custom_model: Optional[str] = None
 ) -> Optional[Any]:
     """
     Create advanced reasoning model instance
-    
+
     Specifically for complex reasoning tasks, prefer models with the strongest reasoning capabilities.
-    
+
     Args:
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model, e.g., "anthropic:claude-3-opus-20240229")
-    
+
     Returns:
         LLM instance, returns None if creation fails
-    
+
     Examples:
         >>> llm = create_reasoning_advanced_llm()
     """
     return _create_llm_by_purpose(
         ModelPurpose.REASONING_ADVANCED,
         temperature=temperature,
-        custom_model=custom_model
+        custom_model=custom_model,
     )
 
 
 def create_code_llm(
-    temperature: Optional[float] = None,
-    custom_model: Optional[str] = None
+    temperature: Optional[float] = None, custom_model: Optional[str] = None
 ) -> Optional[Any]:
     """
     Create code model instance
-    
+
     For code generation, code analysis, code review, etc. Prefer models with strong code generation capabilities.
-    
+
     Args:
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model, e.g., "openai:gpt-4o")
-    
+
     Returns:
         LLM instance, returns None if creation fails
-    
+
     Examples:
         >>> llm = create_code_llm()
         >>> llm = create_code_llm(temperature=0.2)
     """
     return _create_llm_by_purpose(
-        ModelPurpose.CODE,
-        temperature=temperature,
-        custom_model=custom_model
+        ModelPurpose.CODE, temperature=temperature, custom_model=custom_model
     )
 
 
@@ -298,40 +318,49 @@ def create_code_llm(
 def _create_llm_by_purpose(
     purpose: ModelPurpose,
     temperature: Optional[float] = None,
-    custom_model: Optional[str] = None
+    custom_model: Optional[str] = None,
 ) -> Optional[Any]:
     """
     Create LLM instance by purpose (core function)
-    
+
     Args:
         purpose: Model purpose
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model)
-    
+
     Returns:
         LLM instance, returns None if creation fails
     """
     if not LLM_AVAILABLE:
-        print("Warning: LLM-related libraries not installed, cannot create LLM instance")
+        print(
+            "Warning: LLM-related libraries not installed, cannot create LLM instance"
+        )
         return None
-    
+
     # If custom model is specified, use it first
     if custom_model:
         try:
             provider, model = custom_model.split(":", 1)
             temp = temperature if temperature is not None else 0.1
-            
+
             if provider == "openai":
                 llm = _create_openai_llm(model, temp, base_url="https://xiaoai.plus/v1")
             elif provider == "dashscope":
                 # DashScope uses DASHSCOPE_API_KEY
-                dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY")
+                dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv(
+                    "QIANFAN_API_KEY"
+                )
                 if dashscope_key:
-                    llm = _create_openai_llm(model, temp, base_url="https://dashscope.aliyuncs.com/compatible-mode/v1", api_key=dashscope_key)
+                    llm = _create_openai_llm(
+                        model,
+                        temp,
+                        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        api_key=dashscope_key,
+                    )
                 else:
                     llm = None
             elif provider == "zhipu":
-                zhipu_key = os.getenv("ZHIPU_API_KEY")
+                zhipu_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
                 if zhipu_key:
                     llm = _create_zhipu_llm(model, temp, api_key=zhipu_key)
                 else:
@@ -339,55 +368,72 @@ def _create_llm_by_purpose(
             else:
                 print(f"Warning: Unknown provider '{provider}', ignoring custom model")
                 llm = None
-            
+
             if llm is not None:
                 print(f"Successfully created custom {provider} LLM instance ({model})")
                 return llm
         except ValueError:
-            print(f"Warning: Custom model format error '{custom_model}', should be 'provider:model'")
-    
+            print(
+                f"Warning: Custom model format error '{custom_model}', should be 'provider:model'"
+            )
+
     # Try to create model by priority
     configs = MODEL_CONFIGS.get(purpose, [])
     if not configs:
         print(f"Warning: No model configuration found for purpose '{purpose.value}'")
         return None
-    
+
     failed_attempts = []
     for provider, model, default_temp in configs:
         temp = temperature if temperature is not None else default_temp
-        
+
         if provider == "openai":
             llm = _create_openai_llm(model, temp, base_url="https://xiaoai.plus/v1")
             if llm is None:
-                failed_attempts.append(f"{provider}:{model} (missing OPENAI_API_KEY or creation failed)")
+                failed_attempts.append(
+                    f"{provider}:{model} (missing OPENAI_API_KEY or creation failed)"
+                )
         elif provider == "dashscope":
             # DashScope uses DASHSCOPE_API_KEY
-            dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY")
+            dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv(
+                "QIANFAN_API_KEY"
+            )
             if dashscope_key:
-                llm = _create_openai_llm(model, temp, base_url="https://dashscope.aliyuncs.com/compatible-mode/v1", api_key=dashscope_key)
+                llm = _create_openai_llm(
+                    model,
+                    temp,
+                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    api_key=dashscope_key,
+                )
                 if llm is None:
                     failed_attempts.append(f"{provider}:{model} (creation failed)")
             else:
                 llm = None
-                failed_attempts.append(f"{provider}:{model}:{dashscope_key} (missing DASHSCOPE_API_KEY or QIANFAN_API_KEY)")
+                failed_attempts.append(
+                    f"{provider}:{model}:{dashscope_key} (missing DASHSCOPE_API_KEY or QIANFAN_API_KEY)"
+                )
         elif provider == "zhipu":
-            # Zhipu uses ZHIPU_API_KEY
-            zhipu_key = os.getenv("ZHIPU_API_KEY")
+            # Zhipu uses ZHIPU_API_KEY (also supports ZHIPUAI_API_KEY for compatibility)
+            zhipu_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
             if zhipu_key:
                 llm = _create_zhipu_llm(model, temp, api_key=zhipu_key)
                 if llm is None:
-                    failed_attempts.append(f"{provider}:{model} (creation failed or adapter unavailable)")
+                    failed_attempts.append(
+                        f"{provider}:{model} (creation failed or adapter unavailable)"
+                    )
             else:
                 llm = None
                 failed_attempts.append(f"{provider}:{model} (missing ZHIPU_API_KEY)")
         else:
             failed_attempts.append(f"{provider}:{model} (unknown provider)")
             continue
-        
+
         if llm is not None:
-            print(f"Successfully created {provider} {purpose.value} model instance ({model})")
+            print(
+                f"Successfully created {provider} {purpose.value} model instance ({model})"
+            )
             return llm
-    
+
     # Provide detailed error information
     error_msg = f"Warning: Cannot create {purpose.value} model, all configured models are unavailable"
     if failed_attempts:
@@ -401,19 +447,19 @@ def _create_llm_by_purpose(
 def create_llm(
     purpose: str = "reasoning",
     temperature: Optional[float] = None,
-    custom_model: Optional[str] = None
+    custom_model: Optional[str] = None,
 ) -> Optional[Any]:
     """
     Generic LLM creation function (backward compatible)
-    
+
     Args:
         purpose: Model purpose, options: "reasoning", "bioinformatics", "reasoning_advanced", "code"
         temperature: Temperature parameter
         custom_model: Custom model name
-    
+
     Returns:
         LLM instance, returns None if creation fails
-    
+
     Examples:
         >>> llm = create_llm("reasoning")
         >>> llm = create_llm("bioinformatics", temperature=0.2)
@@ -422,7 +468,9 @@ def create_llm(
         purpose_enum = ModelPurpose(purpose)
         return _create_llm_by_purpose(purpose_enum, temperature, custom_model)
     except ValueError:
-        print(f"Warning: Unknown model purpose '{purpose}', using default reasoning model")
+        print(
+            f"Warning: Unknown model purpose '{purpose}', using default reasoning model"
+        )
         return _create_llm_by_purpose(ModelPurpose.REASONING, temperature, custom_model)
 
 
@@ -430,7 +478,7 @@ def create_llm(
 def is_llm_available() -> bool:
     """
     Check if LLM functionality is available
-    
+
     Returns:
         True if LLM-related libraries are installed, False otherwise
     """
@@ -440,7 +488,7 @@ def is_llm_available() -> bool:
 def get_available_providers() -> List[str]:
     """
     Get list of available LLM providers (based on environment variables)
-    
+
     Returns:
         List of available providers, e.g., ["openai", "dashscope"]
     """
@@ -448,20 +496,23 @@ def get_available_providers() -> List[str]:
 
     if os.getenv("OPENAI_API_KEY"):
         providers.append("openai")
-    
+
     if os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY"):
         providers.append("dashscope")
-    
+
+    if os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY"):
+        providers.append("zhipu")
+
     return providers
 
 
 def get_model_configs(purpose: Optional[ModelPurpose] = None) -> Dict:
     """
     Get model configuration information
-    
+
     Args:
         purpose: Model purpose, if None returns all configurations
-    
+
     Returns:
         Model configuration dictionary
     """
@@ -481,3 +532,112 @@ def get_model_configs(purpose: Optional[ModelPurpose] = None) -> Dict:
                 for provider, model, temp in configs
             ]
         }
+
+
+def get_current_llm_config() -> Dict[str, str]:
+    """
+    Get current LLM configuration
+
+    Returns the currently available LLM configuration info including model name and provider
+
+    Returns:
+        Dict containing 'model' and 'provider' fields
+    """
+    if os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY"):
+        return {"model": "glm-4.5", "provider": "zhipu"}
+    elif os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY"):
+        return {"model": "qwen-max", "provider": "dashscope"}
+    elif os.getenv("OPENAI_API_KEY"):
+        return {"model": "gpt-4", "provider": "openai"}
+    else:
+        return {"model": "", "provider": ""}
+
+
+def create_llm_with_callback(
+    purpose: str = "reasoning",
+    temperature: Optional[float] = None,
+    custom_model: Optional[str] = None,
+    progress_callback: Optional[Callable] = None,
+) -> Optional[Any]:
+    """
+    Create LLM instance with progress callback for thinking capture
+
+    This is a convenience function that creates an LLM with thinking capture support.
+    The progress_callback will be called during LLM invocation to report thinking process.
+
+    Args:
+        purpose: Model purpose, options: "reasoning", "bioinformatics", "reasoning_advanced", "code"
+        temperature: Temperature parameter
+        custom_model: Custom model name
+        progress_callback: Callback function for reporting thinking process
+
+    Returns:
+        LLM instance with thinking capture, returns None if creation fails
+
+    Examples:
+        >>> from agent.state import GlobalState
+        >>> state = GlobalState(user_input="test", progress_callback=my_callback)
+        >>> llm = create_llm_with_callback("reasoning", progress_callback=state.progress_callback)
+        >>> response = llm.invoke([HumanMessage(content="Hello")])
+    """
+    try:
+        purpose_enum = ModelPurpose(purpose)
+    except ValueError:
+        print(
+            f"Warning: Unknown model purpose '{purpose}', using default reasoning model"
+        )
+        purpose_enum = ModelPurpose.REASONING
+
+    # Get model configuration
+    configs = MODEL_CONFIGS.get(purpose_enum, [])
+    if not configs:
+        print(
+            f"Warning: No model configuration found for purpose '{purpose_enum.value}'"
+        )
+        return None
+
+    # Try to create model with progress_callback
+    for provider, model, default_temp in configs:
+        temp = temperature if temperature is not None else default_temp
+
+        if provider == "zhipu":
+            zhipu_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
+            if zhipu_key:
+                llm = _create_zhipu_llm(
+                    model, temp, api_key=zhipu_key, progress_callback=progress_callback
+                )
+                if llm is not None:
+                    print(
+                        f"Successfully created {provider} {purpose_enum.value} model with callback ({model})"
+                    )
+                    return llm
+        # 其他provider暂时不支持progress_callback，使用标准创建方式
+        elif provider == "dashscope":
+            dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv(
+                "QIANFAN_API_KEY"
+            )
+            if dashscope_key:
+                llm = _create_openai_llm(
+                    model,
+                    temp,
+                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    api_key=dashscope_key,
+                )
+                if llm is not None:
+                    print(
+                        f"Successfully created {provider} {purpose_enum.value} model ({model}) without callback"
+                    )
+                    return llm
+        elif provider == "openai":
+            llm = _create_openai_llm(model, temp, base_url="https://xiaoai.plus/v1")
+            if llm is not None:
+                print(
+                    f"Successfully created {provider} {purpose_enum.value} model ({model}) without callback"
+                )
+                return llm
+
+    # Fallback to standard creation without callback
+    print(
+        f"Warning: Could not create LLM with callback, falling back to standard creation"
+    )
+    return _create_llm_by_purpose(purpose_enum, temperature, custom_model)

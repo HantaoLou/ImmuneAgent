@@ -5,46 +5,84 @@ description = "生物信息学智能Agent系统"
 requires-python = ">=3.12,<3.13"
 keywords = ["agent", "llm", "bioinformatics", "langgraph"]
 
-# 核心依赖
+# 核心依赖 - main_graph 及其子图运行所需
 dependencies = [
+    # LangGraph 核心
     "langgraph>=1.0.0",
-    "langchain>=0.2.0",  # Deep research 模块需要 langchain.chat_models.init_chat_model (0.2.0+ 引入)
+    "langchain>=0.2.0",
     "langchain-core>=1.0.0",
+    
+    # LLM 提供商
+    "langchain-openai>=1.0.0",
+    
+    # MCP 工具支持
+    "langchain-mcp-adapters>=0.1.0",
+    
+    # 数据模型和配置
     "pydantic>=2.11.4",
     "python-dotenv>=1.0.1",
-    "langchain-openai>=1.0.0",
-    "langchain-mcp-adapters>=0.1.0",
-    "tiktoken>=0.12.0",  # 指定更新版本以支持 Python 3.12 预编译 wheel
+    
+    # Token 计算
+    "tiktoken>=0.12.0",
+    
+    # 向量检索和嵌入模型（Deep Research 模块必需）
+    "langchain-community>=0.3.0",
+    "langchain-qdrant>=0.1.0",
+    "qdrant-client>=1.7.0",
+    
+    # 异步 HTTP 客户端（多处使用）
+    "httpx>=0.27.0",
+    "aiohttp>=3.9.0",
+    
+    # 缓存支持（向量检索缓存）
+    "diskcache>=5.6.0",
+    
+    # 沙盒执行支持（CodeAct 模块必需）
+    "opensandbox>=0.1.0",
 ]
 
 # 可选依赖
 [project.optional-dependencies]
+# 智谱 AI 支持
+zhipu = [
+    "zai>=1.0.0",
+]
+
 # 通义千问支持（DashScope）
 dashscope = [
     "langchain-dashscope>=0.1.0",
 ]
-# Qdrant 向量数据库检索支持
-qdrant = [
-    "langchain-qdrant>=0.1.0",
-    "qdrant-client>=1.7.0",
-    "langchain-ollama>=0.1.0",  # 用于本地嵌入模型（可选）
+
+# Ollama 本地嵌入模型支持
+ollama = [
+    "langchain-ollama>=0.1.0",
 ]
+
+# HuggingFace 本地嵌入模型支持（PubMedBERT 等）
+huggingface = [
+    "sentence-transformers>=2.0.0",
+]
+
 # Tavily API 网络搜索支持
 tavily = [
     "tavily-python>=0.3.0",
 ]
-# OpenSandbox 远程沙盒执行支持
-opensandbox = [
-    "opensandbox>=0.1.0",
-    "opensandbox-code-interpreter>=0.1.0",
+
+# Mem0 记忆管理支持（用于缓存历史执行结果）
+mem0 = [
+    "mem0ai>=0.1.0",
 ]
-# 完整检索支持（包含所有检索方式）
-retrieval = [
-    "langchain-qdrant>=0.1.0",
-    "qdrant-client>=1.7.0",
+
+# 完整功能支持（包含所有可选功能）
+full = [
+    "zai>=1.0.0",
+    "langchain-dashscope>=0.1.0",
     "langchain-ollama>=0.1.0",
+    "sentence-transformers>=2.0.0",
     "tavily-python>=0.3.0",
+    "mem0ai>=0.1.0",
 ]
+
 # 开发依赖（测试工具）
 dev = [
     "pytest>=8.3.4",
