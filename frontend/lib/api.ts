@@ -4,7 +4,7 @@ import { AgentResponse, SSEEvent, ProgressEvent, Message } from '@/lib/types';
 import { SessionStorage, createMessage } from '@/lib/storage';
 import { Terminal } from 'lucide-react';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:41000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export function getFileDownloadUrl(sessionId: string, filename: string): string {
   return `${API_BASE_URL}/api/download/${sessionId}/${filename}`;

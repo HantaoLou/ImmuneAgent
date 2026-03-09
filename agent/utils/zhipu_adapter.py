@@ -333,9 +333,16 @@ class ZhipuAIAdapter(BaseChatModel):
                     # 设置当前模型
                     request_params["model"] = current_model
 
-                    # 调用 ZhipuAI SDK（仅限 Unix/Linux 系统）
-                    # Windows 不支持 signal.alarm，使用普通调用
-                    if platform.system() != "Windows":
+                    # 调用 ZhipuAI SDK
+                    # Windows 和非主线程不支持 signal.alarm，直接调用（依赖 SDK 的超时）
+                    import threading
+
+                    use_signal_timeout = (
+                        platform.system() != "Windows"
+                        and threading.current_thread() is threading.main_thread()
+                    )
+
+                    if use_signal_timeout:
                         # 设置超时
                         old_handler = signal.signal(signal.SIGALRM, timeout_handler)
                         signal.alarm(self.timeout)
@@ -344,7 +351,7 @@ class ZhipuAIAdapter(BaseChatModel):
                         **request_params
                     )
 
-                    if platform.system() != "Windows":
+                    if use_signal_timeout:
                         # 取消超时
                         signal.alarm(0)
                         signal.signal(signal.SIGALRM, old_handler)
