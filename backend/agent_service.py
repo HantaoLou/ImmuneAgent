@@ -68,9 +68,14 @@ def create_global_state(
 
     from agent.state import GlobalState, UserTaskType
 
+    # 创建沙盒目录路径
+    sandbox_dir = os.path.join(PROJECT_ROOT, "sandbox", "sessions", session_id)
+
     state = GlobalState(
         session_id=session_id,
+        user_input=message,
         user_query=message,
+        sandbox_dir=sandbox_dir,
         user_task_type=UserTaskType.GENERAL_QA,
     )
 
@@ -88,11 +93,32 @@ def invoke_agent_sync(state: Any) -> Any:
         }
 
     import asyncio
+    from agent.utils.console_output_redirector import (
+        ConsoleOutputRedirector,
+        set_global_redirector,
+    )
 
     async def run_agent():
         graph = build_main_graph()
         result = await graph.ainvoke(state)
         return result
+
+    # 启动控制台输出重定向器
+    redirector = None
+    progress_callback = getattr(state, "progress_callback", None)
+
+    if progress_callback:
+        try:
+            redirector = ConsoleOutputRedirector(
+                progress_callback=progress_callback,
+                capture_print=True,
+                min_interval_ms=200,
+            )
+            redirector.start_capture()
+            set_global_redirector(redirector)
+            print("[agent_service] Console output capture started")
+        except Exception as e:
+            print(f"[agent_service] Failed to start console capture: {e}")
 
     try:
         loop = asyncio.get_event_loop()
@@ -106,6 +132,15 @@ def invoke_agent_sync(state: Any) -> Any:
             return loop.run_until_complete(run_agent())
     except RuntimeError:
         return asyncio.run(run_agent())
+    finally:
+        # 停止控制台输出重定向
+        if redirector:
+            try:
+                redirector.stop_capture()
+                set_global_redirector(None)
+                print("[agent_service] Console output capture stopped")
+            except Exception as e:
+                print(f"[agent_service] Failed to stop console capture: {e}")
 
 
 def collect_sandbox_output_files(sandbox_dir: str) -> List[Dict[str, Any]]:

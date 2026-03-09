@@ -115,6 +115,46 @@ const ExecSection = ({ events }: { events: ProgressEvent[] }) => {
   );
 };
 
+// 控制台输出折叠卡片
+const ConsoleSection = ({ events }: { events: ProgressEvent[] }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  if (!events || events.length === 0) return null;
+
+  const consoleOutput = events
+    .map(e => e.message)
+    .join('\n');
+
+  return (
+    <div className="mb-3 border border-gray-200 rounded-lg bg-gray-50">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between p-2 hover:bg-gray-100 transition-colors text-left rounded-t-lg"
+      >
+        <div className="flex items-center gap-2">
+          <Terminal className="w-4 h-4 text-gray-600" />
+          <span className="text-xs font-medium text-gray-700">
+            控制台输出
+          </span>
+          <span className="text-xs text-gray-400">
+            {events.length} 条
+          </span>
+        </div>
+        <ChevronDown 
+          className={`w-3.5 h-3.5 text-gray-400 transition-transform ${
+            isExpanded ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+      {isExpanded && (
+        <div className="border-t border-gray-200 bg-gray-900 text-green-400 p-3 max-h-60 overflow-y-auto font-mono text-xs">
+          <pre className="whitespace-pre-wrap break-words">{consoleOutput}</pre>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   
@@ -123,6 +163,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   let taskType: string | null = null;
   let thinkingEvents: ProgressEvent[] = [];
   let execEvents: ProgressEvent[] = [];
+  let consoleEvents: ProgressEvent[] = [];
   let outputFiles: OutputFile[] = [];
   
   if (!isUser) {
@@ -158,6 +199,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             thinkingEvents.push(event);
           } else if (event.event_type === 'sandbox_exec' || event.event_type === 'iteration_start') {
             execEvents.push(event);
+          } else if (event.event_type === 'console_output') {
+            consoleEvents.push(event);
           }
         });
       }
@@ -214,6 +257,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         {/* 沙盒执行折叠卡片 */}
         {!isUser && execEvents.length > 0 && (
           <ExecSection events={execEvents} />
+        )}
+
+        {/* 控制台输出折叠卡片 */}
+        {!isUser && consoleEvents.length > 0 && (
+          <ConsoleSection events={consoleEvents} />
         )}
 
         {/* 主要内容 */}
