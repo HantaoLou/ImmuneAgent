@@ -14,6 +14,7 @@ export default function Home() {
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const loadedSessions = SessionStorage.getSessions();
@@ -62,7 +63,16 @@ export default function Home() {
 
   const handleTemplateSelect = (template: Template) => {
     if (!activeSession) {
-      handleNewSession();
+      const newSession = createSession();
+      const updatedSessions = [newSession, ...sessions];
+      setSessions(updatedSessions);
+      setActiveSession(newSession);
+      SessionStorage.saveSession(newSession);
+      setTimeout(() => {
+        setPendingMessage(template.content);
+      }, 100);
+    } else {
+      setPendingMessage(template.content);
     }
   };
 
@@ -134,6 +144,8 @@ export default function Home() {
             <ChatContainer
               session={activeSession}
               onSessionUpdate={handleSessionUpdate}
+              pendingMessage={pendingMessage}
+              onPendingMessageSent={() => setPendingMessage(null)}
             />
           </>
         ) : (

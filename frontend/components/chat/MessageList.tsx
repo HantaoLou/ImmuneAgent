@@ -30,12 +30,12 @@ export function MessageList({ messages, isStreaming, streamingStatus }: MessageL
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0">
+    <>
       {messages.map((message) => (
         <MessageBubble key={message.id} message={message} />
       ))}
       {isStreaming && <StreamingMessage status={streamingStatus} />}
       <div ref={bottomRef} />
-    </div>
+    </>
   );
 }

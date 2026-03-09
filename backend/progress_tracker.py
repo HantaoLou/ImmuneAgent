@@ -35,6 +35,7 @@ class ProgressEventType(str, Enum):
     ANALYSIS_PROGRESS = "analysis_progress"
     FILE_CONTENT = "file_content"
     CONSOLE_OUTPUT = "console_output"
+    SANDBOX_EXEC = "sandbox_exec"
 
 
 class ProgressEvent(BaseModel):

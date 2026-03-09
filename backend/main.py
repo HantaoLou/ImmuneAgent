@@ -14,11 +14,12 @@ import threading
 
 from config import CORS_ORIGINS, API_HOST, API_PORT, API_RELOAD
 from agent_service import (
-    create_global_state,
+    AGENT_AVAILABLE,
     invoke_agent_sync,
-    format_agent_response,
-    generate_session_id,
+    create_global_state,
     collect_sandbox_output_files,
+    collect_files_from_new_sandbox,
+    format_agent_response,
 )
 from progress_tracker import (
     create_progress_tracker,
@@ -28,6 +29,7 @@ from progress_tracker import (
 from session_storage import get_session_storage
 
 _session_metadata_cache = {}
+_current_opensandbox_id = None  # 全局存储当前活跃的沙盒 ID
 
 
 def save_session_metadata(session_id: str, metadata: dict):
@@ -180,21 +182,39 @@ async def chat(request: ChatRequest):
             }
 
             response = format_agent_response(agent_result)
+            print(f"[chat] Response session_id: {response.get('session_id')}")
+            print(
+                f"[chat] Response result keys: {list(response.get('result', {}).keys())}"
+            )
 
             if response.get("session_id"):
+                merged_result = response.get("result", {}).get("merged_result", {})
+                print(
+                    f"[chat] Merged result keys: {list(merged_result.keys()) if merged_result else 'None'}"
+                )
+                print(
+                    f"[chat] opensandbox_id from merged_result: {merged_result.get('opensandbox_id')}"
+                )
+                print(
+                    f"[chat] sandbox_data_dir from merged_result: {merged_result.get('sandbox_data_dir')}"
+                )
+
                 session_metadata = {
-                    "opensandbox_id": response.get("result", {})
-                    .get("merged_result", {})
-                    .get("opensandbox_id"),
-                    "sandbox_data_dir": response.get("result", {})
-                    .get("merged_result", {})
-                    .get("sandbox_data_dir"),
-                    "sandbox_output_dir": response.get("result", {})
-                    .get("merged_result", {})
-                    .get("sandbox_output_dir"),
+                    "opensandbox_id": merged_result.get("opensandbox_id"),
+                    "sandbox_data_dir": merged_result.get("sandbox_data_dir"),
+                    "sandbox_output_dir": merged_result.get("sandbox_output_dir"),
                     "session_id": response.get("session_id"),
                 }
+                print(f"[chat] Saving session metadata: {session_metadata}")
                 save_session_metadata(response["session_id"], session_metadata)
+
+                # 同时保存到全局变量
+                global _current_opensandbox_id
+                if merged_result.get("opensandbox_id"):
+                    _current_opensandbox_id = merged_result.get("opensandbox_id")
+                    print(
+                        f"[chat] Updated global opensandbox_id: {_current_opensandbox_id}"
+                    )
 
             # 发送输出文件列表
             if response.get("output_files"):
@@ -258,15 +278,212 @@ async def delete_session(session_id: str):
 
 @app.get("/api/sessions/{session_id}/files")
 async def get_session_files(session_id: str):
-    """Get list of output files for a session"""
+    """
+    Get list of output files for a session
+
+    查询沙盒 output 目录下的所有文件，支持本地和远程（OpenSandbox）模式。
+
+    Args:
+        session_id: Session ID
+
+    Returns:
+        {
+            "session_id": "xxx",
+            "files": [...],
+            "count": 10,
+            "source": "local" | "remote"
+        }
+    """
+    files = []
+    source = "unknown"
+
+    # 1. 尝试从本地沙盒目录收集文件
     sandbox_dir = f"./sandbox/sessions/{session_id}"
+    print(
+        f"[get_session_files] Checking local dir: {sandbox_dir}, exists: {os.path.exists(sandbox_dir)}"
+    )
+    if os.path.exists(sandbox_dir):
+        files = collect_sandbox_output_files(sandbox_dir)
+        source = "local"
 
-    if not os.path.exists(sandbox_dir):
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    # 2. 尝试从服务器挂载目录读取（OpenSandbox 挂载的目录）
+    if not files:
+        # 检查 Windows 和 Linux 路径
+        server_mount_paths = [
+            f"/data/sessions/{session_id}",  # Linux 服务器挂载路径
+            f"D:/data/sessions/{session_id}",  # Windows 可能的路径
+            f"C:/data/sessions/{session_id}",
+        ]
 
-    files = collect_sandbox_output_files(sandbox_dir)
+        for mount_path in server_mount_paths:
+            if os.path.exists(mount_path):
+                print(f"[get_session_files] Found mounted dir: {mount_path}")
+                files = collect_sandbox_output_files(mount_path)
+                source = "mounted"
+                break
 
-    return {"session_id": session_id, "files": files, "count": len(files)}
+    # 3. 通过创建临时沙盒读取挂载目录
+    if not files:
+        print(f"[get_session_files] Trying to read via new sandbox...")
+        try:
+            files = await collect_files_from_new_sandbox(session_id)
+            if files:
+                source = "sandbox"
+        except Exception as e:
+            print(f"[get_session_files] Error reading from sandbox: {e}")
+
+    # 3. 如果还是没有文件，检查会话是否存在
+    if not files and not os.path.exists(sandbox_dir):
+        # 检查是否有元数据（说明会话存在，只是在远程）
+        metadata = get_session_metadata(session_id)
+        if not metadata:
+            # 检查 SessionStorage 中是否存在该 session
+            storage = get_session_storage()
+            messages = storage.get_messages(session_id)
+            if not messages:
+                raise HTTPException(
+                    status_code=404, detail=f"Session {session_id} not found"
+                )
+
+    print(f"[get_session_files] Returning {len(files)} files, source: {source}")
+    return {
+        "session_id": session_id,
+        "files": files,
+        "count": len(files),
+        "source": source,
+    }
+
+
+@app.get("/api/download/{session_id}/{file_path:path}")
+async def download_file(session_id: str, file_path: str):
+    """
+    Download a file from sandbox output directory
+
+    Uses temporary sandbox to read files from mounted volume.
+    """
+    from agent_service import collect_files_from_new_sandbox, _get_cmd_stdout
+    from fastapi.responses import Response
+    import base64
+
+    # 尝试从本地读取
+    sandbox_dir = Path(f"./sandbox/sessions/{session_id}")
+    full_path = sandbox_dir / file_path
+
+    if full_path.exists() and full_path.is_file():
+        ext = full_path.suffix.lower()
+        content_type = _get_content_type(ext)
+        return FileResponse(
+            path=str(full_path),
+            media_type=content_type,
+            filename=full_path.name,
+        )
+
+    # 从远程沙盒读取
+    try:
+        from opensandbox.sandbox import Sandbox
+        from opensandbox.config import ConnectionConfig
+        import urllib.request
+
+        domain = os.getenv("SANDBOX_DOMAIN", "localhost:8080")
+        api_key = os.getenv("SANDBOX_API_KEY") or os.getenv("OPEN_SANDBOX_API_KEY")
+
+        connection_config = ConnectionConfig(
+            domain=domain, api_key=api_key, debug=False
+        )
+
+        image = os.getenv("OPENSANDBOX_IMAGE", "python:3.11-slim")
+        volume_bindings_env = os.getenv(
+            "OPENSANDBOX_VOLUME_BINDINGS", "/data/sessions:/tmp/sessions,/data:/data:ro"
+        )
+        volume_bindings = []
+        for binding in volume_bindings_env.split(","):
+            binding = binding.strip()
+            if binding:
+                parts = binding.split(":")
+                if len(parts) >= 2:
+                    volume_bindings.append(
+                        {"hostPath": parts[0], "containerPath": parts[1]}
+                    )
+
+        base_url = f"http://{domain}" if not domain.startswith("http") else domain
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+
+        create_body = {
+            "image": {"uri": image},
+            "timeout": 300,
+            "resourceLimits": {"cpu": "1", "memory": "2Gi"},
+            "entrypoint": ["tail", "-f", "/dev/null"],
+        }
+        if volume_bindings:
+            create_body["volumeBindings"] = volume_bindings
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        req = urllib.request.Request(
+            f"{base_url}/sandboxes",
+            data=json.dumps(create_body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+
+        sandbox_id = payload.get("id")
+        print(f"[download_file] Sandbox created: {sandbox_id}")
+
+        sandbox = await Sandbox.connect(sandbox_id, connection_config=connection_config)
+
+        # 尝试两个路径
+        possible_paths = [
+            f"/tmp/sessions/{session_id}/output/{file_path}",
+            f"/data/sessions/{session_id}/output/{file_path}",
+        ]
+
+        file_content = None
+        actual_path = None
+
+        for sandbox_file_path in possible_paths:
+            try:
+                # 使用 base64 编码来避免二进制文件问题
+                cmd = f"cat {sandbox_file_path} | base64 2>/dev/null || echo ''"
+                result = await sandbox.commands.run(cmd)
+                stdout = _get_cmd_stdout(result)
+
+                if stdout and stdout.strip():
+                    file_content = base64.b64decode(stdout.strip())
+                    actual_path = sandbox_file_path
+                    break
+            except Exception as e:
+                print(f"[download_file] Error reading {sandbox_file_path}: {e}")
+                continue
+
+        try:
+            await sandbox.kill()
+        except:
+            pass
+
+        if file_content:
+            filename = os.path.basename(file_path)
+            ext = os.path.splitext(filename)[1].lower()
+            content_type = _get_content_type(ext)
+
+            return Response(
+                content=file_content,
+                media_type=content_type,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+
+    except Exception as e:
+        print(f"[download_file] Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+
+    raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
 
 
 @app.get("/api/sessions/{session_id}/files/download")

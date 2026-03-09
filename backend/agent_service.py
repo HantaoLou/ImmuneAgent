@@ -1,8 +1,37 @@
 import sys
 import os
 import uuid
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable, List
+
+
+def _collect_log_text(log_entries: Optional[Any]) -> str:
+    if not log_entries:
+        return ""
+    if isinstance(log_entries, str):
+        return log_entries
+    texts = []
+    for entry in log_entries:
+        text = getattr(entry, "text", None)
+        if text is None:
+            text = str(entry)
+        texts.append(text)
+    return "\n".join(texts)
+
+
+def _get_cmd_stdout(result: Any) -> str:
+    """获取命令执行的标准输出"""
+    logs = getattr(result, "logs", None)
+    if not logs:
+        return ""
+    stdout = getattr(logs, "stdout", None)
+    if not stdout:
+        return ""
+    if isinstance(stdout, str):
+        return stdout
+    return "\n".join(getattr(entry, "text", str(entry)) for entry in stdout)
+
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 AGENT_DIR = os.path.join(PROJECT_ROOT, "agent")
@@ -19,141 +48,77 @@ try:
 
     AGENT_AVAILABLE = True
 except ImportError as e:
-    print(f"Warning: Agent modules not available: {e}")
-    print("Running in demo mode without agent integration")
+    print(f"[agent_service] Agent not available: {e}")
     AGENT_AVAILABLE = False
     GlobalState = None
 
+    def build_main_graph(*args, **kwargs):
+        raise ImportError("Agent module not available")
+
 
 def generate_session_id() -> str:
-    """Generate a unique session ID"""
-    return str(uuid.uuid4())
+    return f"{int(__import__('time').time() * 1000)}-{uuid.uuid4().hex[:12]}"
 
 
 def create_global_state(
-    user_input: str,
-    session_id: Optional[str] = None,
-    progress_callback: Optional[Callable] = None,
-) -> Dict[str, Any]:
-    """Create a state dictionary for the agent"""
-    if not session_id:
-        session_id = generate_session_id()
+    message: str, session_id: str, progress_callback: Optional[Callable] = None
+) -> Any:
+    if not AGENT_AVAILABLE:
+        return None
 
-    sandbox_dir = f"./sandbox/sessions/{session_id}"
+    from agent.state import GlobalState, UserTaskType
 
-    if AGENT_AVAILABLE:
-        return GlobalState(
-            user_input=user_input,
-            sandbox_dir=sandbox_dir,
-            session_id=session_id,
-            progress_callback=progress_callback,
-        )
-    else:
-        return {
-            "user_input": user_input,
-            "sandbox_dir": sandbox_dir,
-            "session_id": session_id,
-            "progress_callback": progress_callback,
-        }
+    state = GlobalState(
+        session_id=session_id,
+        user_query=message,
+        user_task_type=UserTaskType.GENERAL_QA,
+    )
+
+    if progress_callback:
+        state.progress_callback = progress_callback
+
+    return state
 
 
 def invoke_agent_sync(state: Any) -> Any:
-    """Invoke the agent synchronously and return the final state"""
     if not AGENT_AVAILABLE:
         return {
-            **state,
-            "merged_result": {
-                "message": "Agent is running in demo mode",
-                "note": "Install agent dependencies to enable full functionality",
-                "user_input": state.get("user_input", ""),
-            },
-            "user_task_type": "DEMO_MODE",
+            "session_id": state.session_id,
+            "merged_result": {"message": "Agent not available"},
         }
 
-    progress_callback = None
-    if hasattr(state, "progress_callback"):
-        progress_callback = state.progress_callback
-    elif isinstance(state, dict):
-        progress_callback = state.get("progress_callback")
+    import asyncio
 
-    console_redirector = None
-    if progress_callback:
-        try:
-            from agent.utils.console_output_redirector import (
-                ConsoleOutputRedirector,
-            )
-
-            console_redirector = ConsoleOutputRedirector(
-                progress_callback=progress_callback,
-                capture_print=True,
-                min_interval_ms=100,
-            )
-            console_redirector.start_capture()
-            if progress_callback:
-                progress_callback(
-                    event_type="console_output",
-                    message="🎮 控制台输出捕获已启动",
-                    details={"phase": "console_capture_started"},
-                )
-        except Exception as e:
-            print(f"[agent_service] Failed to start console capture: {e}")
+    async def run_agent():
+        graph = build_main_graph()
+        result = await graph.ainvoke(state)
+        return result
 
     try:
-        graph = build_main_graph()
-        result = graph.invoke(state)
-        return result
-    except Exception as e:
-        if hasattr(state, "merged_result"):
-            state.merged_result = {
-                "error": str(e),
-                "status": "failed",
-            }
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, run_agent())
+                return future.result()
         else:
-            state["merged_result"] = {
-                "error": str(e),
-                "status": "failed",
-            }
-        return state
-    finally:
-        if console_redirector:
-            try:
-                console_redirector.stop_capture()
-                if progress_callback:
-                    progress_callback(
-                        event_type="console_output",
-                        message="🛑 控制台输出捕获已停止",
-                        details={"phase": "console_capture_stopped"},
-                    )
-            except Exception as e:
-                print(f"[agent_service] Error stopping console capture: {e}")
+            return loop.run_until_complete(run_agent())
+    except RuntimeError:
+        return asyncio.run(run_agent())
 
 
 def collect_sandbox_output_files(sandbox_dir: str) -> List[Dict[str, Any]]:
-    """
-    Collect output files from sandbox directory
-
-    Args:
-        sandbox_dir: Path to sandbox directory
-
-    Returns:
-        List of file info dicts with name, path, size, type
-    """
     files = []
-
-    if not sandbox_dir:
-        return files
-
     sandbox_path = Path(sandbox_dir)
+
+    if not sandbox_path.exists():
+        return files
+
     output_dir = sandbox_path / "output"
-
-    # 如果 output 目录不存在，尝试直接在 sandbox_dir 下查找
-    if not output_dir.exists():
-        output_dir = sandbox_path
-
     if not output_dir.exists():
         return files
 
-    # 支持的文件类型
     supported_extensions = {
         ".csv": "CSV Data",
         ".json": "JSON Data",
@@ -176,24 +141,23 @@ def collect_sandbox_output_files(sandbox_dir: str) -> List[Dict[str, Any]]:
     try:
         for file_path in output_dir.rglob("*"):
             if file_path.is_file():
+                file_name = file_path.name
                 ext = file_path.suffix.lower()
-                if ext in supported_extensions or ext == "":
-                    try:
-                        rel_path = file_path.relative_to(output_dir)
-                    except ValueError:
-                        rel_path = file_path.name
 
+                if ext in supported_extensions or ext == "":
                     file_size = file_path.stat().st_size
+                    rel_path = str(file_path.relative_to(output_dir))
 
                     files.append(
                         {
-                            "name": file_path.name,
+                            "name": file_name,
                             "path": str(file_path),
-                            "relative_path": str(rel_path),
+                            "relative_path": rel_path,
                             "size": file_size,
                             "size_formatted": _format_file_size(file_size),
                             "type": supported_extensions.get(ext, "Unknown"),
                             "extension": ext,
+                            "source": "local",
                         }
                     )
     except Exception as e:
@@ -203,13 +167,219 @@ def collect_sandbox_output_files(sandbox_dir: str) -> List[Dict[str, Any]]:
 
 
 def _format_file_size(size: int) -> str:
-    """Format file size in human-readable format"""
-    size_float = float(size)
-    for unit in ["B", "KB", "MB", "GB"]:
-        if size_float < 1024:
-            return f"{size_float:.1f} {unit}"
-        size_float /= 1024
-    return f"{size_float:.1f} TB"
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
+
+
+def _parse_file_size(size_str: str) -> int:
+    try:
+        size_str = size_str.strip().upper()
+        if not size_str:
+            return 0
+
+        units = {
+            "B": 1,
+            "K": 1024,
+            "KB": 1024,
+            "M": 1024**2,
+            "MB": 1024**2,
+            "G": 1024**3,
+            "GB": 1024**3,
+            "T": 1024**4,
+            "TB": 1024**4,
+        }
+
+        for unit, multiplier in units.items():
+            if size_str.endswith(unit):
+                num = float(size_str[: -len(unit)])
+                return int(num * multiplier)
+
+        return int(float(size_str))
+    except (ValueError, TypeError):
+        return 0
+
+
+async def collect_files_from_new_sandbox(session_id: str) -> List[Dict[str, Any]]:
+    """
+    Create a temporary sandbox and collect output files from mounted directory
+    """
+    files = []
+
+    try:
+        try:
+            from opensandbox.sandbox import Sandbox
+            from opensandbox.config import ConnectionConfig
+        except ImportError as e:
+            print(
+                f"[collect_files_from_new_sandbox] OpenSandbox SDK not available: {e}"
+            )
+            return files
+
+        domain = os.getenv("SANDBOX_DOMAIN", "localhost:8080")
+        api_key = os.getenv("SANDBOX_API_KEY") or os.getenv("OPEN_SANDBOX_API_KEY")
+
+        connection_config = ConnectionConfig(
+            domain=domain, api_key=api_key, debug=False
+        )
+        print(f"[collect_files_from_new_sandbox] Creating temporary sandbox...")
+
+        image = os.getenv("OPENSANDBOX_IMAGE", "python:3.11-slim")
+
+        volume_bindings_env = os.getenv(
+            "OPENSANDBOX_VOLUME_BINDINGS", "/data/sessions:/tmp/sessions,/data:/data:ro"
+        )
+        volume_bindings = []
+        for binding in volume_bindings_env.split(","):
+            binding = binding.strip()
+            if binding:
+                parts = binding.split(":")
+                if len(parts) >= 2:
+                    vb = {"hostPath": parts[0], "containerPath": parts[1]}
+                    volume_bindings.append(vb)
+
+        print(f"[collect_files_from_new_sandbox] Volume bindings: {volume_bindings}")
+
+        base_url = f"http://{domain}" if not domain.startswith("http") else domain
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+
+        create_body = {
+            "image": {"uri": image},
+            "timeout": 300,
+            "resourceLimits": {"cpu": "1", "memory": "2Gi"},
+            "entrypoint": ["tail", "-f", "/dev/null"],
+        }
+        if volume_bindings:
+            create_body["volumeBindings"] = volume_bindings
+
+        import urllib.request
+        import urllib.error
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        req = urllib.request.Request(
+            f"{base_url}/sandboxes",
+            data=json.dumps(create_body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+
+        sandbox_id = payload.get("id")
+        print(f"[collect_files_from_new_sandbox] Sandbox created: {sandbox_id}")
+
+        sandbox = await Sandbox.connect(sandbox_id, connection_config=connection_config)
+        print(f"[collect_files_from_new_sandbox] Connected to sandbox")
+
+        possible_paths = [
+            f"/tmp/sessions/{session_id}/output",
+            f"/data/sessions/{session_id}/output",
+        ]
+
+        supported_extensions = {
+            ".csv": "CSV Data",
+            ".json": "JSON Data",
+            ".txt": "Text File",
+            ".md": "Markdown",
+            ".tsv": "TSV Data",
+            ".fasta": "FASTA Sequence",
+            ".fa": "FASTA Sequence",
+            ".airr": "AIRR TSV Data",
+            ".h5ad": "AnnData Object",
+            ".rds": "R Data Object",
+            ".pdf": "PDF Report",
+            ".png": "Image",
+            ".jpg": "Image",
+            ".jpeg": "Image",
+            ".svg": "Image",
+            ".html": "HTML Report",
+        }
+
+        for sandbox_internal_dir in possible_paths:
+            print(f"[collect_files_from_new_sandbox] Checking: {sandbox_internal_dir}")
+
+            try:
+                # 先用 ls 看看目录结构
+                ls_result = await sandbox.commands.run(
+                    f"ls -la {sandbox_internal_dir} 2>&1 || echo 'NOT_FOUND'"
+                )
+                ls_stdout = _get_cmd_stdout(ls_result)
+                print(f"[collect_files_from_new_sandbox] ls output: {ls_stdout[:500]}")
+
+                cmd = f"find {sandbox_internal_dir} -type f 2>/dev/null || true"
+                result = await sandbox.commands.run(cmd)
+
+                stdout = _get_cmd_stdout(result)
+                print(f"[collect_files_from_new_sandbox] find output: {stdout[:500]}")
+
+                file_paths = [
+                    p.strip() for p in stdout.strip().split("\n") if p.strip()
+                ]
+
+                if not file_paths:
+                    continue
+
+                print(f"[collect_files_from_new_sandbox] Found {len(file_paths)} files")
+
+                for file_path in file_paths:
+                    file_name = os.path.basename(file_path)
+                    ext = os.path.splitext(file_name)[1].lower()
+
+                    if ext in supported_extensions or ext == "":
+                        size_cmd = f"stat -c %s {file_path} 2>/dev/null || stat -f %z {file_path} 2>/dev/null || echo 0"
+                        size_result = await sandbox.commands.run(size_cmd)
+                        size_stdout = getattr(size_result, "stdout", "0") or "0"
+                        file_size = (
+                            int(size_stdout.strip().split("\n")[0])
+                            if size_stdout.strip()
+                            else 0
+                        )
+
+                        rel_path = file_path.replace(sandbox_internal_dir + "/", "")
+
+                        files.append(
+                            {
+                                "name": file_name,
+                                "path": file_path,
+                                "relative_path": rel_path,
+                                "size": file_size,
+                                "size_formatted": _format_file_size(file_size),
+                                "type": supported_extensions.get(ext, "Unknown"),
+                                "extension": ext,
+                                "source": "remote",
+                            }
+                        )
+
+                if files:
+                    print(
+                        f"[collect_files_from_new_sandbox] Returning {len(files)} files"
+                    )
+                    break
+
+            except Exception as e:
+                print(f"[collect_files_from_new_sandbox] Error: {e}")
+                continue
+
+        try:
+            await sandbox.kill()
+            print(f"[collect_files_from_new_sandbox] Sandbox killed")
+        except Exception as e:
+            print(f"[collect_files_from_new_sandbox] Error killing sandbox: {e}")
+
+    except Exception as e:
+        print(f"[collect_files_from_new_sandbox] Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+
+    return files
 
 
 def format_agent_response(result: Any) -> Dict[str, Any]:
@@ -246,11 +416,9 @@ def format_agent_response(result: Any) -> Dict[str, Any]:
                 "reasoning": result.supervisor_reasoning,
             }
 
-        # 生成用户友好的摘要
         summary = _generate_user_friendly_summary(result)
         response["summary"] = summary
 
-        # 将answer也放在顶层，方便前端访问
         if summary.get("answer"):
             response["answer"] = summary["answer"]
 
@@ -270,126 +438,20 @@ def format_agent_response(result: Any) -> Dict[str, Any]:
         merged_result = result.get("merged_result", {})
         response["summary"] = {
             "answer": merged_result.get("general_qa_answer")
-            or merged_result.get("message", "执行完成"),
+            or merged_result.get("message", "Execution completed"),
             "task_type": "DEMO_MODE",
             "status": "completed",
         }
         response["answer"] = response["summary"]["answer"]
 
-    # 收集沙盒输出文件
     output_files = []
 
-    # 1. 首先检查 result.merged_result 中是否已有文件信息（由 result_evaluator 收集）
     if hasattr(result, "merged_result") and result.merged_result:
         if "output_files" in result.merged_result:
             output_files = result.merged_result["output_files"]
 
-    # 2. 如果没有，尝试从本地沙盒目录收集（本地模式）
     if not output_files and sandbox_dir:
         output_files = collect_sandbox_output_files(sandbox_dir)
-
-    # 3. 如果还是没有，尝试从远程沙盒收集
-    if not output_files and hasattr(result, "merged_result") and result.merged_result:
-        sandbox_data_dir = result.merged_result.get(
-            "sandbox_data_dir"
-        ) or result.merged_result.get("sandbox_output_dir", "").rstrip("/output")
-        opensandbox_id = result.merged_result.get("opensandbox_id")
-
-        if sandbox_data_dir and opensandbox_id:
-            try:
-                import sys
-                import os
-                import asyncio
-
-                agent_utils_dir = os.path.join(
-                    os.path.dirname(__file__), "..", "agent", "utils"
-                )
-                if agent_utils_dir not in sys.path:
-                    sys.path.insert(0, agent_utils_dir)
-
-                from opensandbox_helper import OpenSandboxHelper
-
-                helper = OpenSandboxHelper()
-
-                async def collect_remote_files():
-                    try:
-                        remote_files = await helper.list_files(
-                            f"{sandbox_data_dir}/output",
-                            recursive=True,
-                            sandbox_id=opensandbox_id,
-                        )
-                        return remote_files
-                    except Exception as e:
-                        print(f"[collect_remote_files] Error: {e}")
-                        return []
-
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-
-                if loop and loop.is_running():
-                    import concurrent.futures
-
-                    with concurrent.futures.ThreadPoolExecutor() as pool:
-                        remote_files = loop.run_in_executor(
-                            pool, asyncio.run, collect_remote_files()
-                        )
-                        remote_files = asyncio.get_event_loop().run_until_complete(
-                            remote_files
-                        )
-                else:
-                    remote_files = asyncio.run(collect_remote_files())
-
-                supported_extensions = {
-                    ".csv": "CSV Data",
-                    ".json": "JSON Data",
-                    ".txt": "Text File",
-                    ".md": "Markdown",
-                    ".tsv": "TSV Data",
-                    ".fasta": "FASTA Sequence",
-                    ".fa": "FASTA Sequence",
-                    ".airr": "AIRR TSV Data",
-                    ".h5ad": "AnnData Object",
-                    ".rds": "R Data Object",
-                    ".pdf": "PDF Report",
-                    ".png": "Image",
-                    ".jpg": "Image",
-                    ".jpeg": "Image",
-                    ".svg": "Image",
-                    ".html": "HTML Report",
-                }
-
-                for file_path in remote_files:
-                    if file_path.endswith("/"):
-                        continue
-                    ext = os.path.splitext(file_path)[1].lower()
-                    if ext in supported_extensions or ext == "":
-                        rel_path = file_path.replace(
-                            f"{sandbox_data_dir}/output/", ""
-                        ).replace(f"{sandbox_data_dir}/", "")
-                        output_files.append(
-                            {
-                                "name": os.path.basename(file_path),
-                                "path": file_path,
-                                "relative_path": rel_path,
-                                "size": 0,
-                                "size_formatted": "Unknown",
-                                "type": supported_extensions.get(ext, "Unknown"),
-                                "extension": ext,
-                            }
-                        )
-
-                print(
-                    f"[format_agent_response] Collected {len(output_files)} files from remote sandbox"
-                )
-            except Exception as e:
-                print(
-                    f"[format_agent_response] Failed to collect files from remote sandbox: {e}"
-                )
-                import traceback
-
-                traceback.print_exc()
 
     if output_files:
         response["output_files"] = output_files
@@ -399,52 +461,26 @@ def format_agent_response(result: Any) -> Dict[str, Any]:
 
 
 def _generate_user_friendly_summary(result: Any) -> Dict[str, Any]:
-    """Generate a user-friendly summary from the agent result"""
-    summary = {
-        "answer": None,
-        "task_type": None,
+    if not AGENT_AVAILABLE:
+        return {"answer": "Demo mode", "task_type": "DEMO_MODE", "status": "completed"}
+
+    try:
+        from agent.state import UserTaskType
+    except ImportError:
+        UserTaskType = None
+
+    task_type = result.user_task_type.value if result.user_task_type else "UNKNOWN"
+
+    if UserTaskType and result.user_task_type == UserTaskType.GENERAL_QA:
+        answer = result.merged_result.get("general_qa_answer", "")
+        if answer:
+            return {"answer": answer, "task_type": task_type, "status": "completed"}
+
+    completed_count = len(result.completed_tasks) if result.completed_tasks else 0
+
+    return {
+        "answer": f"Task completed. {completed_count} subtasks processed.",
+        "task_type": task_type,
         "status": "completed",
-        "key_findings": [],
+        "completed_tasks": completed_count,
     }
-
-    if hasattr(result, "user_task_type") and result.user_task_type:
-        summary["task_type"] = result.user_task_type.value
-
-    if hasattr(result, "merged_result") and result.merged_result:
-        merged = result.merged_result
-
-        # 优先查找 general_qa_answer
-        if "general_qa_answer" in merged and merged["general_qa_answer"]:
-            summary["answer"] = merged["general_qa_answer"]
-        # 其次查找 general_qa_conclusion
-        elif "general_qa_conclusion" in merged and merged["general_qa_conclusion"]:
-            summary["answer"] = merged["general_qa_conclusion"]
-        # 🔥 新增：查找 final_answer（可能在子图状态中）
-        elif "final_answer" in merged and merged["final_answer"]:
-            summary["answer"] = merged["final_answer"]
-        # 🔥 新增：查找 executor_results 中的信息
-        elif "executor_results" in merged:
-            exec_results = merged["executor_results"]
-            completed = exec_results.get("completed_count", 0)
-            total = exec_results.get("total_tasks", 0)
-            if total > 0:
-                summary["answer"] = (
-                    f"✅ 任务执行完成\n\n成功完成 {completed}/{total} 个任务"
-                )
-
-        if "error" in merged:
-            summary["status"] = "failed"
-            summary["error"] = merged.get("error", "Unknown error")
-
-    # 🔥 新增：如果没有找到答案，尝试从其他地方提取
-    if not summary["answer"]:
-        # 检查是否有execution_plan
-        if hasattr(result, "execution_plan") and result.execution_plan:
-            summary["answer"] = (
-                "📋 实验计划已生成\n\n" + result.execution_plan[:500] + "..."
-            )
-        # 默认消息
-        else:
-            summary["answer"] = "✅ 任务执行完成"
-
-    return summary

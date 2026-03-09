@@ -55,29 +55,17 @@ export class SessionStorage {
   static getDefaultTemplates(): Template[] {
     return [
       {
-        id: '1',
-        name: 'Antibody Analysis',
-        content: 'Analyze the antibody data in {file_path} and predict neutralization potential.',
-        category: 'Immunology',
+        id: 'Q01',
+        name: 'H1N1 Michigan 结合抗体预测',
+        content: 'Given the single-cell RNA-seq data and antibody sequences for 100 flu-specific monoclonal antibodies, predict which antibodies bind to H1N1 A/Michigan/45/2015 hemagglutinin. For each antibody (identified by `mAb`), output a binary prediction: 1 = binds, 0 = does not bind.\nExpected output format:\n- CSV with columns: `mAb`, `prediction` (0 or 1), optionally `probability` (0.0-1.0)\n- One row per antibody (up to 100 rows)\n\nGround truth summary:\n- 98 antibodies tested (2 are NaN)\n- 82 positive (83.7%), 16 negative\n\nPrimary metric: F1\n"meta_csv_file": "/data/benchmark_data/flu_benchmark/260129_flu_metadata.csv",\n"antigen_file": "/data/benchmark_data/flu_benchmark/flu_antig_seq.csv",\n"meta_rds_file": "/data/benchmark_data/flu_benchmark/260129_flu_benchmark.rds"',
+        category: 'FLU',
       },
       {
-        id: '2',
-        name: 'Sequence Alignment',
-        content: 'Perform sequence alignment for {sequences} using BLAST.',
-        category: 'Bioinformatics',
-      },
-      {
-        id: '3',
-        name: 'Data Visualization',
-        content: 'Create visualizations for the dataset in {file_path}.',
-        category: 'Analysis',
-      },
-      {
-        id: '4',
-        name: 'General Question',
-        content: 'Explain the concept of {concept} in simple terms.',
-        category: 'General',
-      },
+        id: 'Q13',
+        name: 'MART-1癌症表位TCR结合预测',
+        content: 'Given 2080 T cell receptors with paired CDR3 alpha (CDR3a) and CDR3 beta (CDR3b) sequences, predict which TCRs bind the MART-1 cancer epitope (peptide: ELAGIGILTV, presented by HLA-A*02:01). MART-1 is a melanoma-associated antigen. For each TCR (identified by `main_name`), output a binary prediction: True = binder, False = non-binder.\nWhat to use:\n- CDR3a and CDR3b sequences for each TCR\n- Target peptide: ELAGIGILTV\n- HLA restriction: A*02:01\n- TCR V/J gene usage annotations\n- TCR-epitope binding prediction tools (e.g., NetTCR-2.0)\n\nExpected output format:\n- CSV with columns: `main_name`, `prediction` (True or False), optionally `probability` (0.0-1.0)\n- 2080 rows (one per TCR)\n\nGround truth summary:\n- 2080 TCRs tested\n- 60 positive (2.9%), 2020 negative\n- Highly imbalanced -- only ~3% are MART-1 binders\n\nPrimary metric: F1\n"rds_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_benchmark.rds",\n"meta_csv_file": "/data/benchmark_data/tcr_icon_benchmark/260204_tcr_icon_metadata.csv"',
+        category: 'TCR',
+      }
     ];
   }
 }
