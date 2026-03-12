@@ -312,13 +312,13 @@ Format your plan as a checklist with empty checkboxes like this:
 3. [ ] Third step
 
 Follow the plan step by step. After completing each step, update the checklist by replacing the empty checkbox with a checkmark:
-1. [✓] First step (completed)
+1. [[OK]] First step (completed)
 2. [ ] Second step
 3. [ ] Third step
 
 If a step fails or needs modification, mark it with an X and explain why:
-1. [✓] First step (completed)
-2. [✗] Second step (failed because...)
+1. [[OK]] First step (completed)
+2. [[FAIL]] Second step (failed because...)
 3. [ ] Modified second step
 4. [ ] Third step
 

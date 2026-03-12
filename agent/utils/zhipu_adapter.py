@@ -263,7 +263,7 @@ class ZhipuAIAdapter(BaseChatModel):
         import platform
         import signal
 
-        # 🔥 报告LLM调用前的思考过程
+        # [HOT] 报告LLM调用前的思考过程
         if self.progress_callback:
             try:
                 # 提取用户消息
@@ -275,7 +275,7 @@ class ZhipuAIAdapter(BaseChatModel):
 
                 self.progress_callback(
                     event_type="llm_thinking",
-                    message=f"🤔 开始思考: {user_msg}",
+                    message=f"[THINK] 开始思考: {user_msg}",
                     details={
                         "model": self.model,
                         "message_count": len(messages),
@@ -325,7 +325,7 @@ class ZhipuAIAdapter(BaseChatModel):
             is_fallback = model_idx > 0
 
             if is_fallback:
-                print(f"🔄 主模型超时，切换到备用模型: {current_model}")
+                print(f"[RUN] 主模型超时，切换到备用模型: {current_model}")
 
             # 对每个模型进行重试
             for attempt in range(self.max_retries):
@@ -466,7 +466,7 @@ class ZhipuAIAdapter(BaseChatModel):
 
                     # 如果是备用模型成功，记录信息
                     if is_fallback:
-                        print(f"✅ 备用模型 {current_model} 调用成功")
+                        print(f"[SUCCESS] 备用模型 {current_model} 调用成功")
 
                     # 创建 ChatGeneration 对象
                     generation = ChatGeneration(
@@ -496,13 +496,13 @@ class ZhipuAIAdapter(BaseChatModel):
                             # 指数退避：延迟时间随重试次数增加
                             delay = self.retry_delay * (2**attempt)
                             print(
-                                f"⚠️ ZhipuAI 超时 ({current_model})，正在重试 ({retry_num}/{self.max_retries})，等待 {delay:.1f} 秒..."
+                                f"[WARN]️ ZhipuAI 超时 ({current_model})，正在重试 ({retry_num}/{self.max_retries})，等待 {delay:.1f} 秒..."
                             )
                             time.sleep(delay)
                             continue
                         else:
                             # 当前模型重试次数用尽，打印提示并尝试下一个模型
-                            print(f"⚠️ 模型 {current_model} 超时重试次数用尽")
+                            print(f"[WARN]️ 模型 {current_model} 超时重试次数用尽")
                             # 如果还有备用模型，继续尝试下一个
                             if model_idx < len(models_to_try) - 1:
                                 print(f"   → 准备切换到下一个备用模型...")
@@ -523,7 +523,7 @@ class ZhipuAIAdapter(BaseChatModel):
         error_msg = str(last_error)
 
         # 详细诊断错误原因
-        print(f"❌ ZhipuAI 调用失败详情:")
+        print(f"[ERROR] ZhipuAI 调用失败详情:")
         print(f"   - 错误类型: {error_type}")
         print(f"   - 错误消息: {error_msg}")
         print(f"   - 尝试的模型: {models_to_try}")
@@ -558,7 +558,7 @@ class ZhipuAIAdapter(BaseChatModel):
             if len(content.strip()) > 20:
                 self.progress_callback(
                     event_type="llm_streaming",
-                    message=f"💭 {content[:150]}",
+                    message=f"[THOUGHT] {content[:150]}",
                     details={
                         "phase": phase,
                         "accumulated_length": accumulated_length,
@@ -598,7 +598,7 @@ class ZhipuAIAdapter(BaseChatModel):
 
                 self.progress_callback(
                     event_type="llm_thinking",
-                    message=f"🤔 开始思考: {user_msg[:100]}",
+                    message=f"[THINK] 开始思考: {user_msg[:100]}",
                     details={
                         "model": self.model,
                         "phase": "thinking_start",
@@ -627,7 +627,7 @@ class ZhipuAIAdapter(BaseChatModel):
                         elapsed = time.time() - start_time
                         self.progress_callback(
                             event_type="llm_streaming",
-                            message=f"💭 {chunk}",
+                            message=f"[THOUGHT] {chunk}",
                             details={
                                 "phase": "thinking_progress",
                                 "chunk_number": i + 1,
@@ -640,7 +640,7 @@ class ZhipuAIAdapter(BaseChatModel):
                     # 报告思考完成
                     self.progress_callback(
                         event_type="llm_thinking",
-                        message=f"✅ 思考完成 (共 {len(thinking_chunks)} 个思维片段)",
+                        message=f"[SUCCESS] 思考完成 (共 {len(thinking_chunks)} 个思维片段)",
                         details={
                             "phase": "thinking_complete",
                             "total_length": len(content),
@@ -724,7 +724,7 @@ class ZhipuAIAdapter(BaseChatModel):
 
                 self.progress_callback(
                     event_type="llm_thinking",
-                    message=f"🤔 开始思考...",
+                    message=f"[THINK] 开始思考...",
                     details={
                         "model": self.model,
                         "phase": "streaming_start",
@@ -778,7 +778,7 @@ class ZhipuAIAdapter(BaseChatModel):
                                     recent_thinking = accumulated_content[-100:]
                                     self.progress_callback(
                                         event_type="llm_streaming",
-                                        message=f"💭 {recent_thinking}",
+                                        message=f"[THOUGHT] {recent_thinking}",
                                         details={
                                             "chunk_count": chunk_count,
                                             "total_length": len(accumulated_content),
@@ -800,7 +800,7 @@ class ZhipuAIAdapter(BaseChatModel):
                     try:
                         self.progress_callback(
                             event_type="llm_thinking",
-                            message=f"✅ 思考完成: {accumulated_content[:200]}...",
+                            message=f"[SUCCESS] 思考完成: {accumulated_content[:200]}...",
                             details={
                                 "total_length": len(accumulated_content),
                                 "chunk_count": chunk_count,

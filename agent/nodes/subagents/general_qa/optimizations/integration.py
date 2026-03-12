@@ -580,7 +580,7 @@ def get_optimization_report() -> str:
     lines = ["# Optimization Module Status\n"]
     
     if OPTIMIZATIONS_AVAILABLE:
-        lines.append("Status: ✅ All optimizations available\n")
+        lines.append("Status: [SUCCESS] All optimizations available\n")
         
         # Cache stats
         try:
@@ -593,7 +593,7 @@ def get_optimization_report() -> str:
         except Exception:
             pass
     else:
-        lines.append("Status: ❌ Optimizations not available")
+        lines.append("Status: [ERROR] Optimizations not available")
     
     return "\n".join(lines)
 

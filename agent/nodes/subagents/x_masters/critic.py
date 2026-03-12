@@ -143,7 +143,7 @@ CRITICAL: I should not simply agree with the proposed solution — my value is i
 
 I should specifically check whether the solver may have made an oversimplified peak/signal assignment, missed a specialized structural mechanism, or conflated two different phenomena.
 
-## ⚠️ CRITICAL: Condition Verification Before Simulation
+## [WARN] CRITICAL: Condition Verification Before Simulation
 
 If this problem has specific conditions mentioned (e.g., randomness patterns, imputation methods, data constraints), I MUST verify my simulation implements them correctly BEFORE concluding:
 
@@ -152,22 +152,22 @@ If this problem has specific conditions mentioned (e.g., randomness patterns, im
 1. **[ ] Randomness Pattern**: Did I implement the CORRECT type of randomness?
    - If "differ from sample to sample" → Each sample must have INDEPENDENT random patterns
    - If "same across samples" → All samples must use the SAME random pattern
-   - ⚠️ Common mistake: Using same random seed for all samples when they should be independent
+   - [WARN] Common mistake: Using same random seed for all samples when they should be independent
 
 2. **[ ] Imputation Method**: Did I correctly handle missing data?
    - If "reference genome imputation" → Missing sites filled with reference genotypes
    - If "ancestral allele" assumption → Reference = ancestral (affects bias direction)
-   - ⚠️ Common mistake: Dropping missing sites instead of imputing, or wrong imputation method
+   - [WARN] Common mistake: Dropping missing sites instead of imputing, or wrong imputation method
 
 3. **[ ] Statistical Definitions**: Are my formulas using correct definitions?
    - **Segregating sites (S)**: Sites where AT LEAST ONE sample has a variant (not "all samples")
    - **Pairwise difference (π)**: Average difference between all pairs across ALL sites
-   - ⚠️ Common mistake: S = sites where "all samples have variant" (wrong) vs "at least one sample has variant" (correct)
+   - [WARN] Common mistake: S = sites where "all samples have variant" (wrong) vs "at least one sample has variant" (correct)
 
 4. **[ ] Condition-Effect Reasoning**: Did I analyze how conditions affect statistics?
    - Random per-sample filtering → May not systematically eliminate all variants at any site → S unchanged
    - Reference imputation with ancestral assumption → Imputed sites show no difference → π underestimated
-   - ⚠️ Common mistake: Not considering how conditions bias specific statistics
+   - [WARN] Common mistake: Not considering how conditions bias specific statistics
 
 If my simulation does not implement ALL stated conditions correctly, my conclusion is INVALID and I must redo the simulation.
 
@@ -230,7 +230,7 @@ class CriticAgent(CodeActAgent):
             if isinstance(message, AIMessage) and "<observation></observation>" in message.content:
                 empty_observation_count += 1
                 if empty_observation_count >= MAX_EMPTY_OBSERVATIONS:
-                    print(f"  ⚠ Detected {empty_observation_count} consecutive empty observations")
+                    print(f"  [WARN] Detected {empty_observation_count} consecutive empty observations")
                     print(f"  → External resources unavailable, forcing early termination")
                     # Inject guidance to use internal knowledge
                     from langchain_core.messages import HumanMessage
@@ -448,7 +448,7 @@ def _build_critic_prompt(
     # NEW: 条件验证部分 - 强调模拟代码必须正确实现所有条件
     condition_section = ""
     if semantic_conditions:
-        condition_section = "\n\n## ⚠️ CRITICAL CONDITIONS (Your simulation MUST implement these exactly)\n\n"
+        condition_section = "\n\n## [WARN] CRITICAL CONDITIONS (Your simulation MUST implement these exactly)\n\n"
         condition_section += "**IMPORTANT**: This problem has specific conditions that significantly affect the answer. "
         condition_section += "If your simulation does not implement these correctly, your conclusion will be WRONG.\n\n"
         
@@ -489,7 +489,7 @@ def _build_critic_prompt(
             for item in semantic_conditions["verification_checklist"]:
                 condition_section += f"- **{item.get('id', 'check')}**: {item.get('check', item.get('description', ''))}\n"
                 if item.get('common_mistake'):
-                    condition_section += f"  - ⚠️ Common mistake: {item['common_mistake']}\n"
+                    condition_section += f"  - [WARN] Common mistake: {item['common_mistake']}\n"
             condition_section += "\n"
         
         condition_section += "---\n"

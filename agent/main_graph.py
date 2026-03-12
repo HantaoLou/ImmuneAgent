@@ -113,12 +113,13 @@ from utils.progress_reporter import (
 # =============================================================================
 try:
     from langchain_core.messages import HumanMessage, SystemMessage
-    from utils.llm_factory import create_reasoning_llm
+    from utils.llm_factory import create_reasoning_llm, create_llm_with_thinking
 
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
     create_reasoning_llm = None
+    create_llm_with_thinking = None
     HumanMessage = None
     SystemMessage = None
     print(
@@ -311,30 +312,28 @@ def _generate_session_id() -> str:
     return f"{timestamp}_{short_uuid}"
 
 
-def _get_llm(progress_callback=None):
+def _get_llm(
+    progress_callback=None,
+    session_id: Optional[str] = None,
+    node_name: str = "main",
+):
     """获取 LLM 实例，支持思考过程捕获"""
-    if not LLM_AVAILABLE or create_reasoning_llm is None:
+    if not LLM_AVAILABLE:
         return None
 
-    # 如果有progress_callback，尝试创建带思考捕获的LLM
-    if progress_callback:
-        try:
-            from utils.llm_factory import create_llm_with_callback
+    if create_llm_with_thinking is not None:
+        return create_llm_with_thinking(
+            purpose="reasoning",
+            temperature=0.1,
+            progress_callback=progress_callback,
+            session_id=session_id,
+            node_name=node_name,
+        )
 
-            llm = create_llm_with_callback(
-                purpose="reasoning",
-                temperature=0.1,
-                progress_callback=progress_callback,
-            )
-            if llm:
-                return llm
-        except Exception as e:
-            print(
-                f"[Warning] Failed to create LLM with callback: {e}, falling back to standard LLM"
-            )
+    if create_reasoning_llm is not None:
+        return create_reasoning_llm(temperature=0.1)
 
-    # 回退到标准LLM
-    return create_reasoning_llm(temperature=0.1)
+    return None
 
 
 def _classify_task_type_fallback(user_input: str) -> UserTaskType:
@@ -519,7 +518,7 @@ def supervisor_node(state: GlobalState) -> GlobalState:
 
         task_type_str = state.user_task_type.value if state.user_task_type else "未知"
 
-        # 🔥 报告节点完成（带100%进度）
+        # [HOT] 报告节点完成（带100%进度）
         report_node_complete(
             state, "supervisor", f"任务分类完成: {task_type_str}", progress_percent=100
         )
@@ -939,7 +938,7 @@ def _general_qa_node_fallback(state: GlobalState) -> GlobalState:
         return state
 
     try:
-        # 🔥 使用带思考捕获的LLM
+        # [HOT] 使用带思考捕获的LLM
         progress_callback = (
             state.progress_callback if hasattr(state, "progress_callback") else None
         )
@@ -960,7 +959,7 @@ def _general_qa_node_fallback(state: GlobalState) -> GlobalState:
 2. 如果涉及专业术语，请提供简要解释
 3. 如果问题不清晰，请说明你的理解并给出最佳猜测"""
 
-        # 🔥 报告LLM思考开始
+        # [HOT] 报告LLM思考开始
         report_llm_thinking(
             state,
             f"分析用户问题: {user_input[:100]}",
@@ -976,7 +975,7 @@ def _general_qa_node_fallback(state: GlobalState) -> GlobalState:
         response = llm.invoke(messages)
         answer = response.content if hasattr(response, "content") else str(response)
 
-        # 🔥 报告LLM思考完成
+        # [HOT] 报告LLM思考完成
         report_llm_thinking(
             state,
             f"生成回答: {answer[:100]}",
@@ -1084,7 +1083,7 @@ def general_qa_node(state: GlobalState) -> GlobalState:
         )
         qa_state = general_qa_input_mapper(state)
 
-        # 🔥 报告问题分类产物
+        # [HOT] 报告问题分类产物
         if hasattr(qa_state, "question_type_label") and qa_state.question_type_label:
             report_llm_thinking(
                 state,
@@ -1110,7 +1109,7 @@ def general_qa_node(state: GlobalState) -> GlobalState:
         )
         result_state = subgraph.invoke(qa_state)
 
-        # 🔥 报告各步骤的产物（增强版）
+        # [HOT] 报告各步骤的产物（增强版）
 
         # 1. 问题分类结果
         if hasattr(qa_state, "question_type_label") and qa_state.question_type_label:
@@ -1222,7 +1221,7 @@ def general_qa_node(state: GlobalState) -> GlobalState:
         )
         state = general_qa_output_mapper(result_state, state)
 
-        # 🔥 确保答案正确传递 - 如果merged_result中没有答案，直接从result_state提取
+        # [HOT] 确保答案正确传递 - 如果merged_result中没有答案，直接从result_state提取
         if not state.merged_result.get("general_qa_answer"):
             if hasattr(result_state, "final_answer") and result_state.final_answer:
                 state.merged_result["general_qa_answer"] = result_state.final_answer
@@ -1243,7 +1242,7 @@ def general_qa_node(state: GlobalState) -> GlobalState:
             error = state.merged_result.get("general_qa_error")
             if answer:
                 print(f"  - 最终答案: {str(answer)[:200]}...")
-                # 🔥 报告完成进度
+                # [HOT] 报告完成进度
                 report_node_complete(
                     state,
                     "general_qa",
@@ -1585,17 +1584,19 @@ def executor_node(state: GlobalState) -> GlobalState:
                 global_state=state, opensandbox_id=opensandbox_id
             )
             if todo_list:
-                print(f"        ✓ 已生成 todo-list.md: {len(todo_list.tasks)} 个任务")
+                print(
+                    f"        [OK] 已生成 todo-list.md: {len(todo_list.tasks)} 个任务"
+                )
                 report_info(
                     state,
                     f"Generated {len(todo_list.tasks)} tasks",
                     node_name="executor",
                 )
             else:
-                print("        ⚠ 生成 todo-list.md 失败，将继续尝试执行")
+                print("        [WARN] 生成 todo-list.md 失败，将继续尝试执行")
         else:
             print(
-                "        ⚠ TodolistGenerator 不可用或无 session_id，CodeAct 将尝试读取已有文件"
+                "        [WARN] TodolistGenerator 不可用或无 session_id，CodeAct 将尝试读取已有文件"
             )
 
         # 2. 映射全局状态到 CodeAct 状态
@@ -1817,7 +1818,7 @@ def memory_saver_node(state: GlobalState) -> GlobalState:
     """
     Memory Saver 节点 - 在流程结束后存储 Mem0 记忆
 
-    📋 执行逻辑：
+    [INFO] 执行逻辑：
     1. 检查所有任务是否完美完成（所有任务成功，无失败）
     2. 如果完美完成，将 Immunity 产出存储到 Mem0
     3. 存储内容包括：
@@ -1882,9 +1883,9 @@ def memory_saver_node(state: GlobalState) -> GlobalState:
         )
 
         if trace_id:
-            print(f"  ✅ 记忆存储成功: {trace_id}")
+            print(f"  [SUCCESS] 记忆存储成功: {trace_id}")
         else:
-            print("  ⚠️ 记忆存储失败")
+            print("  [WARN]️ 记忆存储失败")
 
         print("=" * 60)
         print("Memory Saver 节点完成")
@@ -1954,6 +1955,14 @@ def build_main_graph(use_iterative_executor: bool = None):
     # 这是 Pydantic v2 + LangGraph 的必要步骤
     ensure_global_state_rebuilt()
 
+    graph = StateGraph(GlobalState)
+
+    # 下面定义一个直接测试executor的图
+    graph.add_node("iterative_executor", iterative_executor_node)
+    graph.add_edge(START, "iterative_executor")
+    graph.add_edge("iterative_executor", END)
+    return graph.compile()
+
     # 决定是否使用 iterative_executor
     if use_iterative_executor is None:
         use_iterative = (
@@ -1965,15 +1974,6 @@ def build_main_graph(use_iterative_executor: bool = None):
     print(
         f"[Main Graph] 构建 {'iterative_executor' if use_iterative else 'task_decomposition + executor'} 流程"
     )
-
-    graph = StateGraph(GlobalState)
-
-    # 添加公共节点
-    graph.add_node("supervisor", supervisor_node)
-    graph.add_node("immunity", immunity_node)
-    graph.add_node("result_evaluator", result_evaluator_node)
-    graph.add_node("memory_saver", memory_saver_node)
-    graph.add_node("general_qa", general_qa_node)
 
     if use_iterative:
         # ================================================================

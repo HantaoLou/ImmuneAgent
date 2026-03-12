@@ -19,7 +19,7 @@ Iterative OpenCode Executor - 迭代式任务执行器
 8. 生成最终总结
 
 目录结构：
-/tmp/sessions/{session_id}/
+/data/sessions/{session_id}/
 ├── input/                      # 输入数据
 ├── output/                     # 最终输出（最后一次迭代）
 ├── tasks/                      # 任务迭代历史
@@ -454,7 +454,7 @@ class IterativeOpenCodeExecutor:
 
         # 提取或生成 session_id
         self._session_id = input_data.get("session_id") or self._generate_session_id()
-        self._workspace = f"/tmp/sessions/{self._session_id}"
+        self._workspace = f"/data/sessions/{self._session_id}"
 
         # 初始化执行追踪器
         if self.enable_tracking:
@@ -470,7 +470,7 @@ class IterativeOpenCodeExecutor:
         # 报告开始执行
         self._report_progress(
             event_type="sandbox_exec",
-            message="🚀 开始沙盒代码执行",
+            message="[START] 开始沙盒代码执行",
             details={
                 "phase": "start",
                 "session_id": self._session_id,
@@ -489,7 +489,7 @@ class IterativeOpenCodeExecutor:
             await self._prepare_environment(input_data)
             self._report_progress(
                 event_type="sandbox_exec",
-                message="✅ 沙盒环境准备完成",
+                message="[SUCCESS] 沙盒环境准备完成",
                 details={"phase": "environment_ready"},
             )
 
@@ -502,7 +502,7 @@ class IterativeOpenCodeExecutor:
             tasks_v0 = await self._generate_initial_tasks(input_data)
             self._report_progress(
                 event_type="sandbox_exec",
-                message="✅ 任务列表生成完成",
+                message="[SUCCESS] 任务列表生成完成",
                 details={"phase": "tasks_ready"},
             )
 
@@ -518,7 +518,7 @@ class IterativeOpenCodeExecutor:
                 # 报告迭代开始
                 self._report_progress(
                     event_type="iteration_start",
-                    message=f"🔄 迭代 {i + 1}/{self.max_iterations}",
+                    message=f"[RUN] 迭代 {i + 1}/{self.max_iterations}",
                     details={
                         "phase": "iteration_start",
                         "iteration": i + 1,
@@ -536,7 +536,7 @@ class IterativeOpenCodeExecutor:
                 # Step 5: 评估输出
                 self._report_progress(
                     event_type="sandbox_exec",
-                    message=f"📊 评估迭代 {i + 1} 的输出...",
+                    message=f"[STAT] 评估迭代 {i + 1} 的输出...",
                     details={"phase": "evaluation", "iteration": i + 1},
                 )
                 evaluation = await self._evaluate_outputs(i)
@@ -544,7 +544,7 @@ class IterativeOpenCodeExecutor:
                 # 报告评估结果
                 self._report_progress(
                     event_type="sandbox_exec",
-                    message=f"✅ 评估完成: 得分 {evaluation.get('quality_score', 0):.1f}/1.0",
+                    message=f"[SUCCESS] 评估完成: 得分 {evaluation.get('quality_score', 0):.1f}/1.0",
                     details={
                         "phase": "evaluation_complete",
                         "iteration": i + 1,
@@ -678,7 +678,7 @@ class IterativeOpenCodeExecutor:
         Step 2: 环境准备 - 创建沙盒和目录结构
 
         创建的目录结构:
-        /tmp/sessions/{session_id}/
+        /data/sessions/{session_id}/
         ├── input/          # 输入数据
         ├── output/         # 最终输出
         ├── tasks/          # 任务迭代历史
@@ -876,6 +876,7 @@ cat {tasks_v0_path} | head -20
             tasks_md_path=f"{self._workspace}/.agent/temp_generation_task.md",
             workspace_dir=self._workspace,
             mode=OpenCodeMode.BUILD,
+            iteration=-1,  # Use -1 表示这是生成阶段
         )
 
         self._log(
@@ -1022,7 +1023,7 @@ ls -la {self._workspace}/input/
         # 报告开始执行
         self._report_progress(
             event_type="sandbox_exec",
-            message=f"🚀 开始执行迭代 {iteration + 1} 的任务...",
+            message=f"[START] 开始执行迭代 {iteration + 1} 的任务...",
             details={
                 "phase": "execution_start",
                 "iteration": iteration + 1,
@@ -1055,6 +1056,7 @@ ls -la {self._workspace}/input/
             tasks_md_path=tasks_path,
             workspace_dir=self._workspace,
             mode=OpenCodeMode.BUILD,
+            iteration=iteration,  # 传递迭代编号，生成独立日志文件
         )
 
         # 保存执行日志（即使为空也要尝试保存）
@@ -1092,7 +1094,7 @@ ls -la {self._workspace}/input/
         # 报告执行完成
         self._report_progress(
             event_type="sandbox_exec",
-            message=f"✅ 迭代 {iteration + 1} 执行完成 (状态: {result.status.value})",
+            message=f"[SUCCESS] 迭代 {iteration + 1} 执行完成 (状态: {result.status.value})",
             details={
                 "phase": "execution_complete",
                 "iteration": iteration + 1,
@@ -1269,6 +1271,7 @@ cat {evaluation_path}
             tasks_md_path=f"{self._workspace}/.agent/eval_task.md",
             workspace_dir=iter_workspace,
             mode=OpenCodeMode.BUILD,
+            iteration=iteration,  # 传递迭代编号
         )
 
         self._log(
@@ -1473,6 +1476,7 @@ head -50 {tasks_v_next_path}
             tasks_md_path=f"{self._workspace}/.agent/optimize_task.md",
             workspace_dir=self._workspace,
             mode=OpenCodeMode.BUILD,
+            iteration=iteration,  # 传递迭代编号
         )
 
         self._log(
@@ -1875,16 +1879,16 @@ head -50 {tasks_v_next_path}
         message_mappings = {
             "Step 2:": "📦 准备沙盒环境...",
             "Step 3:": "📝 生成任务列表...",
-            "Step 4:": "🚀 执行任务...",
-            "Step 5:": "📊 评估输出...",
-            "Step 6:": "🔧 优化任务...",
-            "Step 7:": "📋 生成最终报告...",
-            "沙盒已创建": "✅ 沙盒环境已就绪",
-            "目录结构已创建": "✅ 目录结构已创建",
-            "环境准备完成": "✅ 环境准备完成",
+            "Step 4:": "[START] 执行任务...",
+            "Step 5:": "[STAT] 评估输出...",
+            "Step 6:": "[TOOL] 优化任务...",
+            "Step 7:": "[INFO] 生成最终报告...",
+            "沙盒已创建": "[SUCCESS] 沙盒环境已就绪",
+            "目录结构已创建": "[SUCCESS] 目录结构已创建",
+            "环境准备完成": "[SUCCESS] 环境准备完成",
             "处理": "📂 处理输入文件...",
-            "上下文已写入": "✅ 上下文信息已保存",
-            "迭代": lambda msg: f"🔄 {msg}",
+            "上下文已写入": "[SUCCESS] 上下文信息已保存",
+            "迭代": lambda msg: f"[RUN] {msg}",
         }
 
         # 查找匹配的消息

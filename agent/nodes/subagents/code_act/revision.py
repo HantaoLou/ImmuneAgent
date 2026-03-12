@@ -174,7 +174,7 @@ class RevisionAnalyzer:
         try:
             return self._analyze_failure_with_llm(failed_trajectory, previous_trajectories or [])
         except Exception as e:
-            print(f"  ⚠ LLM analysis failed: {e}, using simple analysis")
+            print(f"  [WARN] LLM analysis failed: {e}, using simple analysis")
             return self._analyze_failure_simple(failed_trajectory)
     
     def _analyze_failure_with_llm(
@@ -427,7 +427,7 @@ class RevisionExecutor:
                 revision_plan, original_code, original_error, task_description, parameters
             )
         except Exception as e:
-            print(f"  ⚠ LLM failed to generate fix code: {e}, using simple fix")
+            print(f"  [WARN] LLM failed to generate fix code: {e}, using simple fix")
             return self._generate_revision_code_simple(revision_plan, original_code, original_error)
     
     def _generate_revision_code_with_llm(
@@ -572,12 +572,12 @@ Generate the complete fixed code NOW. Remember:
             
             # Validate the code contains transformation step with correct import
             if "convert_tcr_to_nettcr_format" not in code:
-                print("  ⚠ Generated code does not contain data transformation, regenerating...")
+                print("  [WARN] Generated code does not contain data transformation, regenerating...")
                 # Force regenerate with simpler approach
                 code = self._generate_data_transform_code_fallback(parameters, tool_info)
             elif "from tools.reference import" not in code and "tools.reference" not in code:
                 # LLM might have used call_tool incorrectly for local function
-                print("  ⚠ Generated code missing correct import for local function, regenerating...")
+                print("  [WARN] Generated code missing correct import for local function, regenerating...")
                 code = self._generate_data_transform_code_fallback(parameters, tool_info)
             
             return code

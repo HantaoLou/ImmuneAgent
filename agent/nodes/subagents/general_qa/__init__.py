@@ -31,7 +31,7 @@ if USE_SIMPLIFIED_QA:
 
     def general_qa_input_mapper(global_state):
         """Map main graph state to General QA subgraph state"""
-        # 🔥 传递progress_callback和session_id，确保SSE消息能推送到前端
+        # [HOT] 传递progress_callback和session_id，确保SSE消息能推送到前端
         return GeneralQAState(
             user_input=global_state.user_input,
             progress_callback=getattr(global_state, "progress_callback", None),
@@ -43,7 +43,7 @@ if USE_SIMPLIFIED_QA:
         if not global_state.merged_result:
             global_state.merged_result = {}
 
-        # 🔥 优先从N8节点的final_answer提取答案
+        # [HOT] 优先从N8节点的final_answer提取答案
         final_answer = getattr(general_qa_state, "final_answer", None)
 
         # 如果没有final_answer，尝试从structured_answer中提取
@@ -73,11 +73,11 @@ if USE_SIMPLIFIED_QA:
             general_qa_state, "core_conclusion", None
         )
 
-        print(f"✅ General QA subgraph completed (simplified)")
+        print(f"[SUCCESS] General QA subgraph completed (simplified)")
         if final_answer:
             print(f"  - Final answer: {str(final_answer)[:200]}...")
 
-            # 🔥 通过SSE推送最终答案到前端
+            # [HOT] 通过SSE推送最终答案到前端
             if (
                 hasattr(global_state, "progress_callback")
                 and global_state.progress_callback

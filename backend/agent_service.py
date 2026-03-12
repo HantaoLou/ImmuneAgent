@@ -96,12 +96,20 @@ def invoke_agent_sync(state: Any) -> Any:
     from agent.utils.console_output_redirector import (
         ConsoleOutputRedirector,
         set_global_redirector,
+        set_thread_redirector,
     )
 
     async def run_agent():
         graph = build_main_graph()
         result = await graph.ainvoke(state)
         return result
+
+    def run_agent_with_redirector():
+        """在新线程中运行agent，并确保redirector正确设置"""
+        # 在新线程中设置redirector
+        if redirector:
+            set_thread_redirector(redirector)
+        return asyncio.run(run_agent())
 
     # 启动控制台输出重定向器
     redirector = None
@@ -126,7 +134,8 @@ def invoke_agent_sync(state: Any) -> Any:
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(asyncio.run, run_agent())
+                # 使用 run_agent_with_redirector 确保在新线程中正确设置 redirector
+                future = pool.submit(run_agent_with_redirector)
                 return future.result()
         else:
             return loop.run_until_complete(run_agent())
@@ -264,7 +273,8 @@ async def collect_files_from_new_sandbox(session_id: str) -> List[Dict[str, Any]
         image = os.getenv("OPENSANDBOX_IMAGE", "python:3.11-slim")
 
         volume_bindings_env = os.getenv(
-            "OPENSANDBOX_VOLUME_BINDINGS", "/data/sessions:/tmp/sessions,/data:/data:ro"
+            "OPENSANDBOX_VOLUME_BINDINGS",
+            "/data/sessions:/data/sessions,/data:/data:ro",
         )
         volume_bindings = []
         for binding in volume_bindings_env.split(","):
@@ -314,7 +324,7 @@ async def collect_files_from_new_sandbox(session_id: str) -> List[Dict[str, Any]
         print(f"[collect_files_from_new_sandbox] Connected to sandbox")
 
         possible_paths = [
-            f"/tmp/sessions/{session_id}/output",
+            f"/data/sessions/{session_id}/output",
             f"/data/sessions/{session_id}/output",
         ]
 

@@ -437,7 +437,7 @@ class StateCompletenessChecker:
             if result.issues:
                 lines.append(f"\n### Issues")
                 for issue in result.issues:
-                    icon = {"error": "❌", "warning": "⚠️", "info": "ℹ️"}.get(issue.level.value, "•")
+                    icon = {"error": "[ERROR]", "warning": "[WARN]️", "info": "ℹ️"}.get(issue.level.value, "•")
                     lines.append(f"- {icon} **{issue.field_name}**: {issue.message}")
                     if issue.suggestion:
                         lines.append(f"  - Suggestion: {issue.suggestion}")
@@ -447,7 +447,7 @@ class StateCompletenessChecker:
             
             for node in self.node_requirements.keys():
                 result = self.validate_state(state, node)
-                status = "✅" if result.is_valid and result.is_complete else "❌"
+                status = "[SUCCESS]" if result.is_valid and result.is_complete else "[ERROR]"
                 lines.append(f"- {status} **{node}**: {len(result.errors)} errors, {len(result.warnings)} warnings")
             
             # Cross-node consistency
@@ -455,7 +455,7 @@ class StateCompletenessChecker:
             if consistency_issues:
                 lines.append("\n## Cross-Node Consistency Issues\n")
                 for issue in consistency_issues:
-                    lines.append(f"- ⚠️ **{issue.field_name}**: {issue.message}")
+                    lines.append(f"- [WARN]️ **{issue.field_name}**: {issue.message}")
         
         return "\n".join(lines)
     

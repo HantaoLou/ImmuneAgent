@@ -529,7 +529,7 @@ def _parse_mcp_tool_output(output: Any, service_id: Optional[str] = None) -> tup
                         if sse_status == "success":
                             # SSE completed successfully, return the actual result
                             actual_output = sse_result.get("output")
-                            print(f"  [ToolInterface] ✓ SSE completed successfully")
+                            print(f"  [ToolInterface] [OK] SSE completed successfully")
                             print(f"  [ToolInterface]   - Elapsed: {sse_elapsed:.1f}s")
                             print(f"  [ToolInterface]   - Messages: {n_messages}")
                             print(f"  [ToolInterface]   - Final progress: {sse_progress}%")
@@ -537,23 +537,23 @@ def _parse_mcp_tool_output(output: Any, service_id: Optional[str] = None) -> tup
                         else:
                             # SSE failed
                             error_msg = sse_result.get("error", "SSE processing failed")
-                            print(f"  [ToolInterface] ✗ SSE failed: {error_msg}")
+                            print(f"  [ToolInterface] [FAIL] SSE failed: {error_msg}")
                             print(f"  [ToolInterface]   - Elapsed: {sse_elapsed:.1f}s")
                             print(f"  [ToolInterface]   - Messages: {n_messages}")
                             return sse_result.get("output"), error_msg, "SSEError"
                     else:
                         # Not a streaming task (shouldn't happen if type is streaming_task)
-                        print(f"  [ToolInterface] ⚠ SSE handler returned None, returning raw streaming_task info")
+                        print(f"  [ToolInterface] [WARN] SSE handler returned None, returning raw streaming_task info")
                         return parsed, None, None
                         
                 except ImportError as e:
-                    print(f"  [ToolInterface] ✗ SSE handler not available: {e}")
+                    print(f"  [ToolInterface] [FAIL] SSE handler not available: {e}")
                     # Fallback: return streaming_task info without waiting
                     # This is a degraded mode - results will be incomplete
                     return parsed, "SSE handler not available - results incomplete", "SSENotAvailable"
                 except Exception as e:
                     import traceback
-                    print(f"  [ToolInterface] ✗ SSE handling error: {e}")
+                    print(f"  [ToolInterface] [FAIL] SSE handling error: {e}")
                     print(f"  [ToolInterface] {traceback.format_exc()[:500]}")
                     return parsed, f"SSE handling error: {str(e)}", "SSEError"
             

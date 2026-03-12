@@ -24,11 +24,11 @@ if TYPE_CHECKING:
 
 # 任务类型映射
 TASK_TYPE_ICONS = {
-    TaskType.MCP_TOOL: "🔧",
+    TaskType.MCP_TOOL: "[TOOL]",
     TaskType.CODE_GENERATION: "💻",
     TaskType.FILE_OPERATION: "📁",
-    TaskType.DATA_TRANSFORM: "🔄",
-    TaskType.ANALYSIS: "📊",
+    TaskType.DATA_TRANSFORM: "[RUN]",
+    TaskType.ANALYSIS: "[STAT]",
     TaskType.REPORT: "📝",
 }
 

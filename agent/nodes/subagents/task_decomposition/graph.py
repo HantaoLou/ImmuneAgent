@@ -199,7 +199,7 @@ def _check_and_add_codeact_to_tasks(raw_tasks: List[Dict[str, Any]], available_t
             if "codeact" not in available_tool_names:
                 task["tools"] = ["codeact"]
                 codeact_added = True
-                print(f"  ⚠ Task {task.get('task_id', 'N/A')} has no matching tool, added codeact")
+                print(f"  [WARN] Task {task.get('task_id', 'N/A')} has no matching tool, added codeact")
         else:
             # Check if all tools matched by the task are in the available tools list
             task_tool_names = [t if isinstance(t, str) else t.get("tool_name", "") if isinstance(t, dict) else "" for t in task_tools]
@@ -209,10 +209,10 @@ def _check_and_add_codeact_to_tasks(raw_tasks: List[Dict[str, Any]], available_t
                 if "codeact" not in task_tool_names:
                     task["tools"].append("codeact")
                     codeact_added = True
-                    print(f"  ⚠ Task {task.get('task_id', 'N/A')} matched tools are unavailable, added codeact")
+                    print(f"  [WARN] Task {task.get('task_id', 'N/A')} matched tools are unavailable, added codeact")
     
     if codeact_added:
-        print(f"  ✓ Added codeact tool as fallback for some tasks")
+        print(f"  [OK] Added codeact tool as fallback for some tasks")
 
 
 def _load_tools_params_table() -> Dict[str, Dict[str, Any]]:
@@ -230,7 +230,7 @@ def _load_tools_params_table() -> Dict[str, Dict[str, Any]]:
     tools_params_map = load_tool_parameters_from_skills()
     
     if not tools_params_map:
-        print(f"⚠ 无法从 skill.yaml 加载工具参数")
+        print(f"[WARN] 无法从 skill.yaml 加载工具参数")
         return {}
     
     return tools_params_map
@@ -266,7 +266,7 @@ def _match_task_parameters(raw_tasks: List[Dict[str, Any]]):
     # Load tools parameters table
     tools_params_map = _load_tools_params_table()
     if not tools_params_map:
-        print("⚠ Tools parameters table is empty, skipping parameter matching")
+        print("[WARN] Tools parameters table is empty, skipping parameter matching")
         return
     
     matched_count = 0
@@ -375,7 +375,7 @@ def _match_task_parameters(raw_tasks: List[Dict[str, Any]]):
             task["outputs"] = []
     
     if matched_count > 0:
-        print(f"✓ Matched parameter descriptions for {matched_count} tools")
+        print(f"[OK] Matched parameter descriptions for {matched_count} tools")
 
 
 # ---------------------- Node 0: Coarse Decomposition Node - Determine Required Tool Types ----------------------
@@ -418,18 +418,18 @@ def coarse_decomposition_node(state: TaskDecompositionState) -> TaskDecompositio
             # Extract required service_ids
             service_ids = result.get("required_service_ids", [])
             state.required_service_ids = service_ids
-            print(f"  ✓ 粗分解完成 (使用 LLM)")
+            print(f"  [OK] 粗分解完成 (使用 LLM)")
             print(f"    所需服务: {', '.join(service_ids)}")
         else:
             # Fallback when LLM fails: use all services
             all_service_ids = [s.get("service_id", "") for s in service_list if s.get("service_id")]
             state.required_service_ids = all_service_ids
-            print(f"  ⚠ 粗分解失败，使用所有服务")
+            print(f"  [WARN] 粗分解失败，使用所有服务")
     else:
         # Fallback when LLM is unavailable
         all_service_ids = [s.get("service_id", "") for s in service_list if s.get("service_id")]
         state.required_service_ids = all_service_ids
-        print(f"  ⚠ LLM 不可用，使用所有服务")
+        print(f"  [WARN] LLM 不可用，使用所有服务")
     
     # Filter tools by service_id
     filter_start = time.time()
@@ -441,7 +441,7 @@ def coarse_decomposition_node(state: TaskDecompositionState) -> TaskDecompositio
         
         # Fallback strategy: if no tools matched, add codeact service
         if len(state.filtered_tools) == 0:
-            print(f"  ⚠ 没有匹配的 MCP 工具，添加 codeact 服务作为后备")
+            print(f"  [WARN] 没有匹配的 MCP 工具，添加 codeact 服务作为后备")
             if "codeact" not in state.required_service_ids:
                 state.required_service_ids.append("codeact")
             # Add codeact tool
@@ -452,7 +452,7 @@ def coarse_decomposition_node(state: TaskDecompositionState) -> TaskDecompositio
         state.filtered_tools = state.available_tools
     
     stage_elapsed = time.time() - stage_start
-    print(f"  ✓ 阶段 0 完成 (总耗时: {stage_elapsed:.2f}秒)\n")
+    print(f"  [OK] 阶段 0 完成 (总耗时: {stage_elapsed:.2f}秒)\n")
     
     return state
 
@@ -477,7 +477,7 @@ def fine_decomposition_node(state: TaskDecompositionState) -> TaskDecompositionS
     
     # Fallback strategy: if filtered tools are empty, add codeact tool
     if len(filtered_tools) == 0:
-        print(f"⚠ Fine decomposition stage matched no tools, adding codeact tool as fallback")
+        print(f"[WARN] Fine decomposition stage matched no tools, adding codeact tool as fallback")
         codeact_tool = _create_codeact_tool()
         filtered_tools = [codeact_tool]
         state.filtered_tools = filtered_tools
@@ -511,7 +511,7 @@ def fine_decomposition_node(state: TaskDecompositionState) -> TaskDecompositionS
             # Fine decomposition: store raw task list (JSON format)
             state.raw_tasks = result.get("tasks", [])
             state.decomposition_summary = result.get("decomposition_summary", "")
-            print(f"  ✓ 细分解完成 (使用 LLM)")
+            print(f"  [OK] 细分解完成 (使用 LLM)")
             print(f"    序列化任务数: {len(state.raw_tasks)}")
             
             # Fallback strategy: check if any tasks in fine decomposition results have no matching tools
@@ -525,7 +525,7 @@ def fine_decomposition_node(state: TaskDecompositionState) -> TaskDecompositionS
             print(f"  [细分解] 参数匹配完成 (耗时: {time.time() - param_start:.2f}秒)")
         else:
             # Fallback when LLM fails
-            print(f"  ⚠ LLM 调用失败，使用后备方案")
+            print(f"  [WARN] LLM 调用失败，使用后备方案")
             fallback_start = time.time()
             fallback_result = _decompose_task_fallback(user_input, execution_plan)
             state.raw_tasks = [task.model_dump() for task in fallback_result.get("subtasks", [])]
@@ -535,7 +535,7 @@ def fine_decomposition_node(state: TaskDecompositionState) -> TaskDecompositionS
             _match_task_parameters(state.raw_tasks)
     else:
         # Fallback when LLM is unavailable
-        print(f"  ⚠ LLM 不可用，使用后备方案")
+        print(f"  [WARN] LLM 不可用，使用后备方案")
         fallback_start = time.time()
         fallback_result = _decompose_task_fallback(user_input, execution_plan)
         state.raw_tasks = [task.model_dump() for task in fallback_result.get("subtasks", [])]
@@ -545,7 +545,7 @@ def fine_decomposition_node(state: TaskDecompositionState) -> TaskDecompositionS
         _match_task_parameters(state.raw_tasks)
     
     stage_elapsed = time.time() - stage_start
-    print(f"  ✓ 阶段 1 完成 (总耗时: {stage_elapsed:.2f}秒)\n")
+    print(f"  [OK] 阶段 1 完成 (总耗时: {stage_elapsed:.2f}秒)\n")
     
     return state
 
@@ -569,7 +569,7 @@ def parallel_inference_node(state: TaskDecompositionState) -> TaskDecompositionS
     raw_tasks = state.raw_tasks
     
     if not raw_tasks:
-        print("  ⚠ 阶段 1 未生成任务，跳过并行推断")
+        print("  [WARN] 阶段 1 未生成任务，跳过并行推断")
         return state
     
     print(f"  [并行推断] 开始阶段 2: 并行推断...")
@@ -597,24 +597,24 @@ def parallel_inference_node(state: TaskDecompositionState) -> TaskDecompositionS
                     state.decomposition_summary += f"\n\nParallel inference explanation: {result.get('parallel_inference_summary')}"
                 else:
                     state.decomposition_summary = f"Parallel inference explanation: {result.get('parallel_inference_summary')}"
-            print(f"  ✓ 阶段 2 并行推断完成 (使用 LLM)")
+            print(f"  [OK] 阶段 2 并行推断完成 (使用 LLM)")
             print(f"    串行任务数: {len(state.subtasks)}")
             print(f"    并行任务组数: {len(state.parallel_task_groups)}")
         else:
             # Fallback when LLM fails: all tasks execute serially
-            print("  ⚠ 并行推断失败，所有任务将串行执行")
+            print("  [WARN] 并行推断失败，所有任务将串行执行")
             final_result = _validate_and_convert_decomposition({"tasks": raw_tasks, "parallel_task_groups": []})
             state.subtasks = final_result.get("subtasks", [])
             state.parallel_task_groups = {}
     else:
         # Fallback when LLM is unavailable: all tasks execute serially
-        print("  ⚠ LLM 不可用，所有任务将串行执行")
+        print("  [WARN] LLM 不可用，所有任务将串行执行")
         final_result = _validate_and_convert_decomposition({"tasks": raw_tasks, "parallel_task_groups": []})
         state.subtasks = final_result.get("subtasks", [])
         state.parallel_task_groups = {}
     
     stage_elapsed = time.time() - stage_start
-    print(f"  ✓ 阶段 2 完成 (总耗时: {stage_elapsed:.2f}秒)\n")
+    print(f"  [OK] 阶段 2 完成 (总耗时: {stage_elapsed:.2f}秒)\n")
     
     return state
 
@@ -641,7 +641,7 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
     ]
     
     if not all_tasks:
-        print("⚠ No tasks need parameter inference")
+        print("[WARN] No tasks need parameter inference")
         return state
     
     llm = _get_llm_for_inference()
@@ -711,7 +711,7 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
                     context_extracted_params[task_id][tool_name] = extracted
     
     extracted_count = sum(len(tools) for tools in context_extracted_params.values())
-    print(f"  ✓ Extracted parameters from context for {extracted_count} tool(s)")
+    print(f"  [OK] Extracted parameters from context for {extracted_count} tool(s)")
     
     # Print extracted parameters table
     if context_extracted_params:
@@ -867,7 +867,7 @@ def infer_parameters_node(state: TaskDecompositionState) -> TaskDecompositionSta
         f"Determined: {determined_count}, from tasks: {from_task_count}, user required: {user_required_count}"
     )
     
-    print(f"✓ Stage 3 parameter inference completed")
+    print(f"[OK] Stage 3 parameter inference completed")
     print(f"  Inferred tasks: {total_tasks}")
     print(f"  Inferred parameters: {total_params} (determined: {determined_count}, from tasks: {from_task_count}, user required: {user_required_count})")
     
@@ -1065,7 +1065,7 @@ Important:
             return extracted_params
         
     except Exception as e:
-        print(f"  ⚠ Failed to extract parameters from context: {e}")
+        print(f"  [WARN] Failed to extract parameters from context: {e}")
         if os.getenv("DEBUG_LLM_ERRORS", "false").lower() == "true":
             import traceback
             traceback.print_exc()
@@ -1609,7 +1609,7 @@ Common recommended value rules:
                 reason="Failed to parse LLM response"
             )
     except Exception as e:
-        print(f"  ⚠ Failed to infer parameter {param_name}: {e}")
+        print(f"  [WARN] Failed to infer parameter {param_name}: {e}")
         return ParameterInferenceResult(
             param_name=param_name,
             source_type=ParameterSourceType.USER_REQUIRED,
@@ -1656,13 +1656,13 @@ def _infer_parallel_tasks_with_llm(
         # Check error type
         error_str = str(e).lower()
         if "authentication" in error_str or "api key" in error_str or "401" in error_str:
-            print(f"⚠ LLM API Key authentication failed, will use fallback: {type(e).__name__}")
+            print(f"[WARN] LLM API Key authentication failed, will use fallback: {type(e).__name__}")
         elif "timeout" in error_str or "timed out" in error_str or "APITimeoutError" in type(e).__name__:
-            print(f"⚠ LLM API call timeout, will use fallback: {type(e).__name__}")
+            print(f"[WARN] LLM API call timeout, will use fallback: {type(e).__name__}")
         elif "rate limit" in error_str or "429" in error_str:
-            print(f"⚠ LLM API rate limit, will use fallback: {type(e).__name__}")
+            print(f"[WARN] LLM API rate limit, will use fallback: {type(e).__name__}")
         else:
-            print(f"⚠ LLM parallel inference failed, will use fallback: {type(e).__name__}: {str(e)[:100]}")
+            print(f"[WARN] LLM parallel inference failed, will use fallback: {type(e).__name__}: {str(e)[:100]}")
         
         import os
         if os.getenv("DEBUG_LLM_ERRORS", "false").lower() == "true":
@@ -1774,13 +1774,13 @@ def _coarse_decompose_with_llm(
         error_type = type(e).__name__
         
         if "authentication" in error_str or "api key" in error_str or "401" in error_str:
-            print(f"⚠ LLM API Key authentication failed: {error_type}")
+            print(f"[WARN] LLM API Key authentication failed: {error_type}")
         elif "timeout" in error_str or "timed out" in error_str or "APITimeoutError" in error_type:
-            print(f"⚠ LLM API call timeout: {error_type}")
+            print(f"[WARN] LLM API call timeout: {error_type}")
         elif "rate limit" in error_str or "429" in error_str:
-            print(f"⚠ LLM API rate limit: {error_type}")
+            print(f"[WARN] LLM API rate limit: {error_type}")
         else:
-            print(f"⚠ LLM coarse decomposition failed: {error_type}: {str(e)[:100]}")
+            print(f"[WARN] LLM coarse decomposition failed: {error_type}: {str(e)[:100]}")
         
         import os
         if os.getenv("DEBUG_LLM_ERRORS", "false").lower() == "true":
@@ -1896,7 +1896,7 @@ def _decompose_task_with_llm(
                 task_guide = format_task_guide_for_prompt(task_guide_content, max_length=2500)
                 print(f"  📖 Loaded task generation guide ({len(task_guide)} chars)")
         except Exception as e:
-            print(f"  ⚠ Failed to load skills/guide: {e}")
+            print(f"  [WARN] Failed to load skills/guide: {e}")
     
     # Use enhanced prompt if skills are available, otherwise use standard prompt
     if skills_info or task_guide:
@@ -1912,9 +1912,9 @@ def _decompose_task_with_llm(
     
     # Check input length (rough estimate, 1 Chinese character ≈ 2 tokens)
     total_length = len(system_prompt) + len(user_prompt)
-    print(f"📊 Fine decomposition input length: {total_length} characters, tool count: {len(available_tools)}")
+    print(f"[STAT] Fine decomposition input length: {total_length} characters, tool count: {len(available_tools)}")
     if total_length > 40000:  # Increased threshold since skills add useful context
-        print(f"⚠ Prompt is long ({total_length} characters), if API call fails, will use fallback")
+        print(f"[WARN] Prompt is long ({total_length} characters), if API call fails, will use fallback")
     
     try:
         messages = [
@@ -1922,7 +1922,7 @@ def _decompose_task_with_llm(
             HumanMessage(content=user_prompt)
         ]
         
-        print(f"🔄 Starting LLM call for fine decomposition (tool count: {len(available_tools)})...")
+        print(f"[RUN] Starting LLM call for fine decomposition (tool count: {len(available_tools)})...")
         import time
         start_time = time.time()
         
@@ -1932,11 +1932,11 @@ def _decompose_task_with_llm(
         except Exception as invoke_error:
             elapsed = time.time() - start_time
             error_type = type(invoke_error).__name__
-            print(f"⚠ LLM call exception (elapsed {elapsed:.1f}s): {error_type}: {str(invoke_error)[:200]}")
+            print(f"[WARN] LLM call exception (elapsed {elapsed:.1f}s): {error_type}: {str(invoke_error)[:200]}")
             raise invoke_error
         
         elapsed = time.time() - start_time
-        print(f"✓ LLM call completed (elapsed {elapsed:.1f}s), response length: {len(response.content) if response.content else 0} characters")
+        print(f"[OK] LLM call completed (elapsed {elapsed:.1f}s), response length: {len(response.content) if response.content else 0} characters")
         response_text = response.content.strip()
         
         # Try to parse JSON format response
@@ -1950,16 +1950,16 @@ def _decompose_task_with_llm(
         error_type = type(e).__name__
         
         if "authentication" in error_str or "api key" in error_str or "401" in error_str:
-            print(f"⚠ LLM API Key authentication failed, will use fallback: {error_type}")
+            print(f"[WARN] LLM API Key authentication failed, will use fallback: {error_type}")
         elif "timeout" in error_str or "timed out" in error_str or "APITimeoutError" in error_type:
-            print(f"⚠ LLM API call timeout, will use fallback: {error_type}")
+            print(f"[WARN] LLM API call timeout, will use fallback: {error_type}")
         elif "rate limit" in error_str or "429" in error_str:
-            print(f"⚠ LLM API rate limit, will use fallback: {error_type}")
+            print(f"[WARN] LLM API rate limit, will use fallback: {error_type}")
         elif "400" in error_str or "badrequest" in error_str or "invalidparameter" in error_str or "range of input" in error_str:
-            print(f"⚠ LLM API input parameter error (possibly input too long), will use fallback: {error_type}")
+            print(f"[WARN] LLM API input parameter error (possibly input too long), will use fallback: {error_type}")
             print(f"  Hint: Tool list may be too long, automatically optimized")
         else:
-            print(f"⚠ LLM task decomposition failed, will use fallback: {error_type}: {str(e)[:100]}")
+            print(f"[WARN] LLM task decomposition failed, will use fallback: {error_type}: {str(e)[:100]}")
         
         import os
         if os.getenv("DEBUG_LLM_ERRORS", "false").lower() == "true":

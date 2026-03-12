@@ -1,6 +1,7 @@
 from typing import Dict, List, Any, Optional, TYPE_CHECKING, ForwardRef, Callable
 from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
+from datetime import datetime
 
 if TYPE_CHECKING:
     from nodes.subagents.code_act.todo_list import TodoList
@@ -176,6 +177,129 @@ class GlobalState(BaseModel):
     progress_callback: Optional[Callable] = Field(
         default=None, description="进度回调函数，用于实时推送执行进度"
     )
+
+    # Thinking 历史记录 - 用于跟踪 LLM thinking 过程
+    thinking_history: List[Dict[str, Any]] = Field(
+        default_factory=list, description="LLM thinking 过程历史记录"
+    )
+
+    # ==================== Init Node 新增字段 ====================
+
+    # 已上传到共享目录的文件列表
+    uploaded_files: List[str] = Field(
+        default_factory=list, description="已上传到沙盒共享目录的文件路径列表"
+    )
+
+    # 对话消息记录（从关系型数据库加载）
+    conversation_history: List[Dict[str, Any]] = Field(
+        default_factory=list, description="对话消息记录"
+    )
+
+    # Mem0 任务历史
+    immunity_history: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Mem0 中该 session 的历史任务结果"
+    )
+
+    def get_llm(
+        self, purpose: str = "reasoning", node_name: Optional[str] = None, **kwargs
+    ) -> Optional[Any]:
+        """
+        获取 LLM 实例（推荐方法）
+
+        自动使用 self.progress_callback 和 self.session_id 创建 LLM，
+        确保所有 thinking 都能被正确捕获和推送。
+
+        Args:
+            purpose: 模型用途，可选: "reasoning", "bioinformatics", "reasoning_advanced", "code"
+            node_name: 节点名称，如果不提供会自动推断
+            **kwargs: 传递给 LLM 创建函数的其他参数
+
+        Returns:
+            LLM 实例，如果创建失败则返回 None
+
+        Examples:
+            >>> llm = state.get_llm(purpose="reasoning", node_name="supervisor")
+            >>> response = llm.invoke(messages)
+        """
+        from agent.utils.llm_factory import create_llm_with_thinking
+
+        # 自动推断节点名称
+        if node_name is None:
+            node_name = self._get_caller_node_name()
+
+        # 如果没有 callback 但有 session_id，尝试创建 callback
+        callback = self.progress_callback
+        if not callback and self.session_id:
+            try:
+                from utils.progress_reporter import (
+                    create_progress_callback_with_session,
+                )
+
+                callback = create_progress_callback_with_session(self.session_id)
+                self.progress_callback = callback
+            except ImportError:
+                pass
+
+        return create_llm_with_thinking(
+            purpose=purpose,
+            progress_callback=callback,
+            session_id=self.session_id,
+            node_name=node_name,
+            **kwargs,
+        )
+
+    def _get_caller_node_name(self) -> str:
+        """
+        自动推断调用者节点名称
+
+        通过检查调用栈来推断节点名称，如果函数名以 '_node' 结尾，
+        则返回去掉 '_node' 后的名称。
+
+        Returns:
+            推断的节点名称
+        """
+        import inspect
+
+        try:
+            frame = inspect.currentframe()
+            if frame and frame.f_back and frame.f_back.f_back:
+                func_name = frame.f_back.f_back.f_code.co_name
+                if func_name.endswith("_node"):
+                    return func_name.replace("_node", "")
+        except Exception:
+            pass
+        return "unknown"
+
+    def record_thinking(
+        self,
+        content: str,
+        node_name: str,
+        step_name: str = "推理",
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        记录 thinking 到历史
+
+        将 LLM thinking 过程记录到 thinking_history 字段，
+        方便后续查询和调试。
+
+        Args:
+            content: Thinking 内容
+            node_name: 节点名称
+            step_name: 步骤名称
+            details: 其他详细信息
+        """
+        record = {
+            "timestamp": datetime.now().isoformat(),
+            "node": node_name,
+            "step": step_name,
+            "content": content[:500] if len(content) > 500 else content,
+            "session_id": self.session_id,
+        }
+        if details:
+            record["details"] = details
+
+        self.thinking_history.append(record)
 
 
 # Lazy rebuild of GlobalState to resolve forward references (Pydantic v2 requirement)

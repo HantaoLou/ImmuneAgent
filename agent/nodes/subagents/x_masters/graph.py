@@ -365,7 +365,7 @@ def solver_done(state: XMastersState) -> dict:
         lines = [f"## Stage 1: Solver Results ({n} solvers)\n\n"]
         for s in sorted(solutions, key=lambda x: x.get("solver_id", 0)):
             sid = s.get("solver_id", "?")
-            ok = "✅" if s.get("success") else "❌"
+            ok = "[SUCCESS]" if s.get("success") else "[ERROR]"
             sr_count = len(s.get("search_results", []))
             lines.append(f"### Solver {sid} {ok}\n\n")
             lines.append(f"**Knowledge searches collected**: {sr_count}\n\n")
@@ -393,7 +393,7 @@ def critic_done(state: XMastersState) -> dict:
         lines = [f"## Stage 2: Critic Results ({n} critics)\n\n"]
         for s in sorted(critiqued, key=lambda x: x.get("solver_id", 0)):
             sid = s.get("solver_id", "?")
-            ok = "✅" if s.get("success") else "❌"
+            ok = "[SUCCESS]" if s.get("success") else "[ERROR]"
             lines.append(f"### Critic {sid} {ok}\n\n")
             lines.append(f"**Revised solution**:\n\n{s.get('solution', '(empty)')}\n\n")
         lines.append("---\n\n")
@@ -502,7 +502,7 @@ def selector_node(state: XMastersState) -> dict:
         lines = [f"## Stage 3: Rewriter Results ({len(rewritten)} rewriters)\n\n"]
         for s in sorted(rewritten, key=lambda x: x.get("rewriter_id", 0)):
             rid = s.get("rewriter_id", "?")
-            ok = "✅" if s.get("success") else "❌"
+            ok = "[SUCCESS]" if s.get("success") else "[ERROR]"
             lines.append(f"### Rewriter {rid} {ok}\n\n")
             lines.append(f"**Rewritten solution**:\n\n{s.get('solution', '(empty)')}\n\n")
         lines.append("---\n\n")

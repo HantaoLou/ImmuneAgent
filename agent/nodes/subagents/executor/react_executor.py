@@ -167,7 +167,7 @@ def execute_with_react(
             # For data transformation, keep the original MCP_TOOL mode
             # The RevisionExecutor will generate code that first transforms data, then calls the tool
             current_mode = base_execution_mode
-            print(f"  🔄 Keeping original mode for DATA_TRANSFORM strategy: {current_mode.value}")
+            print(f"  [RUN] Keeping original mode for DATA_TRANSFORM strategy: {current_mode.value}")
         elif result.error_category == error_category_enum.PARAMETER_ERROR:
             current_mode = fix_parameter_mode
         else:

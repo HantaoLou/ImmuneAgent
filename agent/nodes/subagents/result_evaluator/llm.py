@@ -168,7 +168,7 @@ def get_llm(
                 )
                 if result.stdout.strip():
                     os.environ["ANTHROPIC_API_KEY"] = result.stdout.strip()
-                    print("✓ Loaded ANTHROPIC_API_KEY from ~/.bash_profile")
+                    print("[OK] Loaded ANTHROPIC_API_KEY from ~/.bash_profile")
             except Exception as e:
                 print(f"Note: Could not load ANTHROPIC_API_KEY from bash_profile: {e}")
 

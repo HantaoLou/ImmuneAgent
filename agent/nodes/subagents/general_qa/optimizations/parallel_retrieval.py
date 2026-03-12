@@ -328,7 +328,7 @@ class ParallelKnowledgeRetriever:
         lines.append("|--------|--------|------|------------|-------|")
         
         for source, retrieval in result.results_by_source.items():
-            status = "✅" if retrieval.success else "❌"
+            status = "[SUCCESS]" if retrieval.success else "[ERROR]"
             items = len(retrieval.data) if isinstance(retrieval.data, list) else (1 if retrieval.data else 0)
             lines.append(
                 f"| {source.value} | {status} | {retrieval.execution_time:.2f}s | "

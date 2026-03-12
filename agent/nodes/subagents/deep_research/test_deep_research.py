@@ -31,14 +31,14 @@ async def test_deep_research(question: str):
         dict: The final state containing the research report
     """
     
-    print(f"🔬 Starting Deep Research for: '{question}'")
+    print(f"[Deep Research] Starting Deep Research for: '{question}'")
     print("=" * 80)
     
     # Get config to display (config is automatically loaded by run_deep_research)
     config = get_default_config()
     
     # Print loaded configuration
-    print("📋 Loaded Configuration:")
+    print("[INFO] Loaded Configuration:")
     print(f"   Research Model: {config['configurable']['research_model']}")
     print(f"   Summarization Model: {config['configurable']['summarization_model']}")
     print(f"   Final Report Model: {config['configurable']['final_report_model']}")
@@ -49,18 +49,18 @@ async def test_deep_research(question: str):
     print()
     
     # Check available tools before execution
-    print("🔧 Checking available tools...")
+    print("[TOOL] Checking available tools...")
     from nodes.subagents.deep_research.utils import get_all_tools
     tools = await get_all_tools(config)
-    print(f"✅ Available tools ({len(tools)}):")
+    print(f"[SUCCESS] Available tools ({len(tools)}):")
     for tool in tools:
         tool_name = tool.name if hasattr(tool, 'name') else str(type(tool).__name__)
         print(f"   - {tool_name}")
     
     # Execute the Deep Research workflow using the simplified API
     try:
-        print("\n🚀 Executing Deep Research workflow...")
-        print("📋 Configuration:")
+        print("\n[START] Executing Deep Research workflow...")
+        print("[INFO] Configuration:")
         print(f"   - Models: DeepSeek (chat + reasoner)")
         print(f"   - Search API: {config['configurable']['search_api']}") 
         print(f"   - Max iterations: {config['configurable']['max_researcher_iterations']}")
@@ -75,20 +75,20 @@ async def test_deep_research(question: str):
         research_brief = result.get("research_brief", "No research brief")
         messages = result.get("messages", [])
         
-        print("✅ Deep Research completed successfully!")
+        print("[SUCCESS] Deep Research completed successfully!")
         print("=" * 80)
-        print("📋 RESEARCH BRIEF:")
+        print("[INFO] RESEARCH BRIEF:")
         print(research_brief)
         print("\n" + "=" * 80)
         print("📄 FINAL RESEARCH REPORT:")
         print(final_report)
         print("\n" + "=" * 80)
-        print(f"📊 WORKFLOW MESSAGES: {len(messages)} total messages")
+        print(f"[STAT] WORKFLOW MESSAGES: {len(messages)} total messages")
         
         return result
         
     except Exception as e:
-        print(f"❌ Error during Deep Research: {e}")
+        print(f"[ERROR] Error during Deep Research: {e}")
         print(f"Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
@@ -123,14 +123,14 @@ async def run_multiple_tests():
     
     # Summary
     print(f"\n{'='*100}")
-    print("📊 TEST SUMMARY")
+    print("[STAT] TEST SUMMARY")
     print(f"{'='*100}")
     
     successful_tests = sum(1 for r in results if r["success"])
-    print(f"✅ Successful tests: {successful_tests}/{len(test_cases)}")
+    print(f"[SUCCESS] Successful tests: {successful_tests}/{len(test_cases)}")
     
     for i, result in enumerate(results, 1):
-        status = "✅ PASS" if result["success"] else "❌ FAIL"
+        status = "[SUCCESS] PASS" if result["success"] else "[ERROR] FAIL"
         print(f"   Test {i}: {status} - {result['question'][:50]}...")
     
     return results
@@ -145,7 +145,7 @@ def main():
     if len(sys.argv) > 1:
         # Single test with custom question
         question = " ".join(sys.argv[1:])
-        print(f"🎯 Running single test with custom question")
+        print(f"[X-Masters] Running single test with custom question")
         result = asyncio.run(test_deep_research(question))
         
         if result:
@@ -155,14 +155,14 @@ def main():
             
     else:
         # Run multiple test cases
-        print(f"🎯 Running multiple test cases")
+        print(f"[X-Masters] Running multiple test cases")
         results = asyncio.run(run_multiple_tests())
         
         successful_tests = sum(1 for r in results if r["success"])
         if successful_tests == len(results):
             print(f"\n🎉 All tests passed!")
         else:
-            print(f"\n⚠️  Some tests failed. Check the logs above.")
+            print(f"\n[WARN]️  Some tests failed. Check the logs above.")
 
 if __name__ == "__main__":
     main()

@@ -401,11 +401,11 @@ class TrajectoryPool:
             llm = create_reasoning_advanced_llm()
         except ImportError:
             # If cannot import, use simple compression
-            print("  ⚠ Cannot import LLM factory, using simple compression")
+            print("  [WARN] Cannot import LLM factory, using simple compression")
             return self._compress_simple()
         
         if not llm:
-            print("  ⚠ LLM unavailable, using simple compression")
+            print("  [WARN] LLM unavailable, using simple compression")
             return self._compress_simple()
         
         # 1. Group by similarity
@@ -425,7 +425,7 @@ class TrajectoryPool:
                     # LLM summary failed, keep first one
                     compressed.append(group[0])
         
-        print(f"  ✓ LLM compression completed: {len(self.trajectories)} -> {len(compressed)} trajectories")
+        print(f"  [OK] LLM compression completed: {len(self.trajectories)} -> {len(compressed)} trajectories")
         return compressed
     
     def _group_similar_trajectories(self, threshold: float) -> List[List[CodeTrajectory]]:
@@ -559,7 +559,7 @@ Please generate merged trajectory summary (JSON format)."""
             return summary_traj
             
         except Exception as e:
-            print(f"  ⚠ LLM trajectory summary failed: {e}, keeping base trajectory")
+            print(f"  [WARN] LLM trajectory summary failed: {e}, keeping base trajectory")
             return base_traj
     
     def _generate_trajectory_id(self, trajectory: CodeTrajectory) -> str:

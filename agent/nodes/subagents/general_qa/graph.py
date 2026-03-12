@@ -470,9 +470,9 @@ def _call_llm(
             is_complex, complexity_reason = detect_complex_question(prompt, {})
             if is_complex:
                 question_complexity = complexity_reason
-                print(f"  📊 Detected complex question: {complexity_reason}")
+                print(f"  [STAT] Detected complex question: {complexity_reason}")
         except Exception as e:
-            print(f"  ⚠ Failed to detect complexity: {e}")
+            print(f"  [WARN] Failed to detect complexity: {e}")
 
     try:
         # Bind tools if provided
@@ -485,10 +485,10 @@ def _call_llm(
                 tool_map = {tool.name: tool for tool in tools}
                 available_tool_names = [tool.name for tool in tools]
                 print(
-                    f"  🔧 Bound {len(tools)} tool(s) to LLM: {', '.join(available_tool_names)}"
+                    f"  [TOOL] Bound {len(tools)} tool(s) to LLM: {', '.join(available_tool_names)}"
                 )
             except Exception as e:
-                print(f"  ⚠ Failed to bind tools: {e}")
+                print(f"  [WARN] Failed to bind tools: {e}")
                 llm_with_tools = llm
         else:
             print(f"  ℹ No tools provided for this LLM call")
@@ -535,7 +535,7 @@ def _call_llm(
 
             # Execute tool calls
             print(
-                f"  🔧 Executing {len(tool_calls)} tool call(s) (iteration {iteration + 1}/{max_iterations})"
+                f"  [TOOL] Executing {len(tool_calls)} tool call(s) (iteration {iteration + 1}/{max_iterations})"
             )
             iteration_tool_calls = []
 
@@ -550,7 +550,7 @@ def _call_llm(
                     original_args = tool_args.copy()
                     tool_args = fix_tool_args_before_execution(tool_name, tool_args)
                     if tool_args != original_args:
-                        print(f"    🔄 Fixed tool arguments for {tool_name}")
+                        print(f"    [RUN] Fixed tool arguments for {tool_name}")
                 # Fallback to old correction method if new function not available
                 elif (
                     INFERENCE_ENHANCEMENTS_AVAILABLE
@@ -559,7 +559,7 @@ def _call_llm(
                     original_args = tool_args.copy()
                     tool_args = correct_entity_types_in_tool_args(tool_args)
                     if tool_args != original_args:
-                        print(f"    🔄 Corrected entity type for {tool_name}")
+                        print(f"    [RUN] Corrected entity type for {tool_name}")
 
                 # ========== NEW: Entity Type Validation Fix (2026-02-17) ==========
                 # Ensure entity_type is valid for knowledge graph queries
@@ -574,11 +574,11 @@ def _call_llm(
                             tool_args["entity_type"] = valid_type
                             if valid_type is None:
                                 print(
-                                    f"    🔧 Removed invalid entity_type '{original_type}' for {tool_name}"
+                                    f"    [TOOL] Removed invalid entity_type '{original_type}' for {tool_name}"
                                 )
                             else:
                                 print(
-                                    f"    🔧 Fixed entity_type: '{original_type}' -> '{valid_type}'"
+                                    f"    [TOOL] Fixed entity_type: '{original_type}' -> '{valid_type}'"
                                 )
 
                 # ========== P1-3 NEW: Also fix target_type for query_knowledge_graph ==========
@@ -595,7 +595,7 @@ def _call_llm(
                     ]:
                         tool_args["target_type"] = "gene/protein"
                         print(
-                            f"    🔧 Fixed target_type: '{target_type}' -> 'gene/protein'"
+                            f"    [TOOL] Fixed target_type: '{target_type}' -> 'gene/protein'"
                         )
                     elif target_type in [
                         "phenotype",
@@ -606,7 +606,7 @@ def _call_llm(
                     ]:
                         tool_args["target_type"] = "effect/phenotype"
                         print(
-                            f"    🔧 Fixed target_type: '{target_type}' -> 'effect/phenotype'"
+                            f"    [TOOL] Fixed target_type: '{target_type}' -> 'effect/phenotype'"
                         )
 
                 # ========== NEW: Query Deduplication ==========
@@ -620,7 +620,7 @@ def _call_llm(
                     if should_skip:
                         if cached_result is not None:
                             # Use cached result
-                            print(f"    ⏩ Using cached result for {tool_name}")
+                            print(f"    [SKIP] Using cached result for {tool_name}")
                             if isinstance(cached_result, (list, dict)):
                                 result_str = json.dumps(
                                     cached_result, ensure_ascii=False, indent=2
@@ -653,7 +653,7 @@ def _call_llm(
                         else:
                             # Previously failed query, skip
                             print(
-                                f"    ⏭ Skipping previously failed query: {tool_name}"
+                                f"    [SKIP] Skipping previously failed query: {tool_name}"
                             )
                             messages.append(
                                 ToolMessage(
@@ -769,7 +769,7 @@ def _call_llm(
                                 name=tool_name,
                             )
                         )
-                        print(f"    ✓ {tool_name} executed successfully")
+                        print(f"    [OK] {tool_name} executed successfully")
                         print(
                             f"      - Args: {json.dumps(tool_args, ensure_ascii=False)[:200]}..."
                         )
@@ -800,7 +800,7 @@ def _call_llm(
                                 name=tool_name,
                             )
                         )
-                        print(f"    ✗ {tool_name} failed: {e}")
+                        print(f"    [FAIL] {tool_name} failed: {e}")
                 else:
                     error_msg = f"Tool {tool_name} not found in available tools"
                     tool_call_record["status"] = "not_found"
@@ -811,7 +811,7 @@ def _call_llm(
                             content=error_msg, tool_call_id=tool_call_id, name=tool_name
                         )
                     )
-                    print(f"    ✗ {error_msg}")
+                    print(f"    [FAIL] {error_msg}")
 
                 iteration_tool_calls.append(tool_call_record)
 
@@ -859,7 +859,7 @@ def _call_llm(
             timeout_reason = f"CONNECTION_ERROR: {error_str}"
 
         # Log detailed diagnostics
-        print(f"⚠ LLM call exception in node '{node_name or 'unknown'}':")
+        print(f"[WARN] LLM call exception in node '{node_name or 'unknown'}':")
         print(f"    - Error type: {error_type}")
         print(f"    - Error message: {error_str[:500]}")
         print(f"    - Is timeout: {is_timeout}")
@@ -936,14 +936,14 @@ def _call_llm_with_retry(
             retry_addition = get_retry_prompt_addition(attempt, previous_errors)
             if retry_addition:
                 current_prompt = prompt + retry_addition
-                print(f"  🔄 Retry attempt {attempt} with modified prompt")
+                print(f"  [RUN] Retry attempt {attempt} with modified prompt")
 
         # Call LLM
         result = _call_llm(llm, current_prompt, tools, max_iterations, state, node_name)
 
         if result is not None:
             if attempt > 0:
-                print(f"  ✅ Retry successful on attempt {attempt}")
+                print(f"  [SUCCESS] Retry successful on attempt {attempt}")
             return result
 
         # Record error for retry strategy
@@ -963,7 +963,7 @@ def _call_llm_with_retry(
                 last_error=last_error,
                 question_complexity=None,  # Could pass detected complexity
             )
-            print(f"  📋 Retry decision: {should_retry} - {reason}")
+            print(f"  [INFO] Retry decision: {should_retry} - {reason}")
 
             if not should_retry:
                 break
@@ -973,7 +973,7 @@ def _call_llm_with_retry(
                 break
 
     # All retries exhausted
-    print(f"  ❌ All {attempt + 1} attempt(s) failed for {node_name or 'unknown'}")
+    print(f"  [ERROR] All {attempt + 1} attempt(s) failed for {node_name or 'unknown'}")
     return None
 
 
@@ -1225,7 +1225,7 @@ def _try_convert_enumeration_answer(state: GeneralQAState) -> None:
     converted = _convert_prose_to_numbered_format(answer_str, question_text)
 
     if converted:
-        print(f"  🔧 枚举题格式转换: '{answer_str[:80]}...' -> '{converted}'")
+        print(f"  [TOOL] 枚举题格式转换: '{answer_str[:80]}...' -> '{converted}'")
         state.final_answer = converted
         if state.structured_answer and isinstance(state.structured_answer, dict):
             state.structured_answer["final_answer"] = converted
@@ -1757,7 +1757,11 @@ def _validate_answer_format(
 _llm_cache: Dict[Tuple[Optional[str], Optional[str], float], Any] = {}
 
 
-def _get_llm(progress_callback: Optional[Callable] = None) -> Optional[Any]:
+def _get_llm(
+    progress_callback: Optional[Callable] = None,
+    session_id: Optional[str] = None,
+    node_name: str = "general_qa",
+) -> Optional[Any]:
     """Get LLM instance for general QA
 
     Supports dynamic configuration via environment variables:
@@ -1767,6 +1771,8 @@ def _get_llm(progress_callback: Optional[Callable] = None) -> Optional[Any]:
 
     Args:
         progress_callback: Progress callback function for real-time thinking streaming
+        session_id: Session ID for multi-session isolation
+        node_name: Node name for tracking
 
     Note: LLM instances with progress_callback are NOT cached (to preserve callback functionality)
     """
@@ -1783,19 +1789,19 @@ def _get_llm(progress_callback: Optional[Callable] = None) -> Optional[Any]:
     except (ValueError, TypeError):
         temperature = 0.3
 
-    # 🔥 If progress_callback is provided, create LLM with callback (no caching)
-    if progress_callback:
-        from utils.llm_factory import create_llm_with_callback
-
+    # [HOT] If progress_callback or session_id is provided, create LLM with thinking capture (no caching)
+    if progress_callback or session_id:
         if provider and model:
             custom_model = f"{provider}:{model}"
         else:
             custom_model = None
-        return create_llm_with_callback(
+        return create_llm_with_thinking(
             purpose="bioinformatics",
             temperature=temperature,
             custom_model=custom_model,
             progress_callback=progress_callback,
+            session_id=session_id,
+            node_name=node_name,
         )
 
     # Create cache key
@@ -1997,7 +2003,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             domain_enhancement = enhance_n0_question_processing(state.user_input)
 
             if domain_enhancement.get("enhanced"):
-                print(f"  🔧 N0 Domain Enhancement activated")
+                print(f"  [TOOL] N0 Domain Enhancement activated")
 
                 # Log detected domains
                 detected_domains = domain_enhancement.get("detected_domains", [])
@@ -2038,7 +2044,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
                 state.domain_enhancement = domain_enhancement
 
         except Exception as e:
-            print(f"  ⚠ Domain enhancement failed: {e}")
+            print(f"  [WARN] Domain enhancement failed: {e}")
             domain_enhancement = {}
     else:
         print(f"  ℹ Domain enhancement not available")
@@ -2105,7 +2111,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
                     domain=None,  # Auto-detect
                 )
                 if hle_pitfall_warnings:
-                    print(f"  ⚠ HLE pitfall warnings: {len(hle_pitfall_warnings)}")
+                    print(f"  [WARN] HLE pitfall warnings: {len(hle_pitfall_warnings)}")
                     for warning in hle_pitfall_warnings[:2]:
                         print(f"    • {warning.pitfall_name}")
 
@@ -2117,7 +2123,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             state.metadata["hle_pitfall_count"] = len(hle_pitfall_warnings)
 
         except Exception as e:
-            print(f"  ⚠ HLE domain template detection failed: {e}")
+            print(f"  [WARN] HLE domain template detection failed: {e}")
 
     # Data preparation
     llm = _get_llm(state.progress_callback)
@@ -2183,7 +2189,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             enhanced_prompt = enhanced_prompt + "\n" + enhancement_section
 
         print(
-            f"  ✓ Enhanced prompt with {len(domain_rules)} rules, {len(critical_hints)} hints, {len(domain_pitfalls)} pitfalls"
+            f"  [OK] Enhanced prompt with {len(domain_rules)} rules, {len(critical_hints)} hints, {len(domain_pitfalls)} pitfalls"
         )
 
     # Execution - Use enhanced prompt if available, otherwise base prompt
@@ -2222,7 +2228,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
         ) or ("true" in options_lower[1] and "false" in options_lower[0])
         if is_true_false and state.question_type_label == "Multiple Choice":
             print(
-                f"  ⚠ Auto-correcting: True/False question was misclassified as Multiple Choice"
+                f"  [WARN] Auto-correcting: True/False question was misclassified as Multiple Choice"
             )
             print(f"    - Original type: {state.question_type_label}")
             state.question_type_label = "Text Matching"
@@ -2239,7 +2245,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
     # OPTIMIZATION: Extract core keywords and option features
     state.core_keywords = result.get("core_keywords", [])
     if state.core_keywords:
-        print(f"  ✓ Core keywords extracted: {state.core_keywords}")
+        print(f"  [OK] Core keywords extracted: {state.core_keywords}")
 
     raw_option_features = result.get("option_features", {})
     # CRITICAL: Ensure option_features is a dict, not a list
@@ -2247,16 +2253,16 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
         state.option_features = raw_option_features
     elif isinstance(raw_option_features, list):
         state.option_features = {"options": raw_option_features}
-        print(f"  ⚠ option_features was a list, converted to dict format")
+        print(f"  [WARN] option_features was a list, converted to dict format")
     else:
         state.option_features = {}
     if state.option_features:
-        print(f"  ✓ Option features extracted: {len(state.option_features)} options")
+        print(f"  [OK] Option features extracted: {len(state.option_features)} options")
 
     # Extract synonyms and tool intent
     state.synonyms = result.get("synonyms", [])
     if state.synonyms:
-        print(f"  ✓ Retrieval keywords normalized: {state.synonyms}")
+        print(f"  [OK] Retrieval keywords normalized: {state.synonyms}")
 
     raw_tool_intent = result.get("tool_intent", {})
     # CRITICAL: Ensure tool_intent is a dict, not a list
@@ -2265,11 +2271,11 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
     elif isinstance(raw_tool_intent, list):
         # Convert list to dict format
         state.tool_intent = {"tools": raw_tool_intent} if raw_tool_intent else {}
-        print(f"  ⚠ tool_intent was a list, converted to dict format")
+        print(f"  [WARN] tool_intent was a list, converted to dict format")
     else:
         state.tool_intent = {}
     if state.tool_intent:
-        print(f"  ✓ Tool intent marked: {state.tool_intent}")
+        print(f"  [OK] Tool intent marked: {state.tool_intent}")
 
     # Extract structured three-dimensional information (结构化三维度信息)
     # CRITICAL: Ensure structured fields are dicts, not lists
@@ -2281,7 +2287,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             "type": "unknown",
             "attribute": str(raw_structured_subject),
         }
-        print(f"  ⚠ structured_subject was a list, converted to dict format")
+        print(f"  [WARN] structured_subject was a list, converted to dict format")
     else:
         state.structured_subject = None
 
@@ -2293,7 +2299,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             "type": "unknown",
             "key_features": str(raw_structured_condition),
         }
-        print(f"  ⚠ structured_condition was a list, converted to dict format")
+        print(f"  [WARN] structured_condition was a list, converted to dict format")
     else:
         state.structured_condition = None
 
@@ -2306,14 +2312,14 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             "constraint": str(raw_structured_goal),
             "intent": "unknown",
         }
-        print(f"  ⚠ structured_goal was a list, converted to dict format")
+        print(f"  [WARN] structured_goal was a list, converted to dict format")
     else:
         state.structured_goal = None
 
     # Rule 1: Extract key_constraints (关键约束单独标记)
     state.key_constraints = result.get("key_constraints", [])
     if state.key_constraints:
-        print(f"  ✓ Key constraints extracted: {state.key_constraints}")
+        print(f"  [OK] Key constraints extracted: {state.key_constraints}")
 
     # OPTIMIZATION: Extract and mark critical constraints for downstream nodes
     # Extract negative constraints (cannot/except/not occur)
@@ -2383,15 +2389,15 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
 
     if state.negative_constraints:
         print(
-            f"  ✓ Negative constraints extracted: {len(state.negative_constraints)} constraint(s)"
+            f"  [OK] Negative constraints extracted: {len(state.negative_constraints)} constraint(s)"
         )
     if state.exclusive_constraints:
         print(
-            f"  ✓ Exclusive constraints extracted: {len(state.exclusive_constraints)} constraint(s)"
+            f"  [OK] Exclusive constraints extracted: {len(state.exclusive_constraints)} constraint(s)"
         )
     if state.strong_restrictions:
         print(
-            f"  ✓ Strong restrictions extracted: {len(state.strong_restrictions)} restriction(s)"
+            f"  [OK] Strong restrictions extracted: {len(state.strong_restrictions)} restriction(s)"
         )
 
     # Validate structured information completeness
@@ -2410,12 +2416,12 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             missing_dims.append("goal")
 
         if missing_dims:
-            print(f"  ⚠ Missing structured dimensions: {', '.join(missing_dims)}")
+            print(f"  [WARN] Missing structured dimensions: {', '.join(missing_dims)}")
             # If any dimension is missing, mark as Severe Missing
             if state.data_completeness_label != "Severe Missing":
                 state.data_completeness_label = "Severe Missing"
                 print(
-                    f"  ⚠ Data completeness updated to Severe Missing due to missing structured dimensions"
+                    f"  [WARN] Data completeness updated to Severe Missing due to missing structured dimensions"
                 )
 
     # Validate sub-fields completeness
@@ -2424,11 +2430,11 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
         if not state.structured_subject.get("type") or not state.structured_subject.get(
             "attribute"
         ):
-            print(f"  ⚠ Subject missing sub-fields (type or attribute)")
+            print(f"  [WARN] Subject missing sub-fields (type or attribute)")
             state.data_completeness_label = "Severe Missing"
     elif state.structured_subject and not isinstance(state.structured_subject, dict):
         print(
-            f"  ⚠ structured_subject is not a dict (type: {type(state.structured_subject)}), skipping validation"
+            f"  [WARN] structured_subject is not a dict (type: {type(state.structured_subject)}), skipping validation"
         )
         state.data_completeness_label = "Severe Missing"
 
@@ -2436,13 +2442,13 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
         if not state.structured_condition.get(
             "type"
         ) or not state.structured_condition.get("key_features"):
-            print(f"  ⚠ Condition missing sub-fields (type or key_features)")
+            print(f"  [WARN] Condition missing sub-fields (type or key_features)")
             state.data_completeness_label = "Severe Missing"
     elif state.structured_condition and not isinstance(
         state.structured_condition, dict
     ):
         print(
-            f"  ⚠ structured_condition is not a dict (type: {type(state.structured_condition)}), skipping validation"
+            f"  [WARN] structured_condition is not a dict (type: {type(state.structured_condition)}), skipping validation"
         )
         state.data_completeness_label = "Severe Missing"
 
@@ -2452,48 +2458,50 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             or not state.structured_goal.get("constraint")
             or not state.structured_goal.get("intent")
         ):
-            print(f"  ⚠ Goal missing sub-fields (type, constraint, or intent)")
+            print(f"  [WARN] Goal missing sub-fields (type, constraint, or intent)")
             state.data_completeness_label = "Severe Missing"
     elif state.structured_goal and not isinstance(state.structured_goal, dict):
         print(
-            f"  ⚠ structured_goal is not a dict (type: {type(state.structured_goal)}), skipping validation"
+            f"  [WARN] structured_goal is not a dict (type: {type(state.structured_goal)}), skipping validation"
         )
         state.data_completeness_label = "Severe Missing"
 
-    print(f"✓ Cleaned text: {state.cleaned_text[:100]}...")
-    print(f"✓ Question type: {state.question_type_label}")
-    print(f"✓ Data completeness: {state.data_completeness_label}")
-    print(f"✓ Answer format: {state.answer_format_label}")
+    print(f"[OK] Cleaned text: {state.cleaned_text[:100]}...")
+    print(f"[OK] Question type: {state.question_type_label}")
+    print(f"[OK] Data completeness: {state.data_completeness_label}")
+    print(f"[OK] Answer format: {state.answer_format_label}")
     if state.question_options:
-        print(f"✓ Options extracted: {len(state.question_options)}")
+        print(f"[OK] Options extracted: {len(state.question_options)}")
 
     # Print structured three-dimensional information (结构化三维度信息)
-    print(f"\n  📊 Structured Three-Dimensional Information (结构化三维度信息):")
+    print(f"\n  [STAT] Structured Three-Dimensional Information (结构化三维度信息):")
     # CRITICAL: Ensure structured_subject is a dict before using .get()
     if state.structured_subject and isinstance(state.structured_subject, dict):
         subject_type = state.structured_subject.get("type", "N/A")
         subject_attr = state.structured_subject.get("attribute", "N/A")
-        print(f"    ✓ Subject: type={subject_type}, attribute={subject_attr[:80]}...")
+        print(
+            f"    [OK] Subject: type={subject_type}, attribute={subject_attr[:80]}..."
+        )
     elif state.structured_subject:
         print(
-            f"    ⚠ Subject: Invalid type ({type(state.structured_subject)}), expected dict"
+            f"    [WARN] Subject: Invalid type ({type(state.structured_subject)}), expected dict"
         )
     else:
-        print(f"    ❌ Subject: MISSING")
+        print(f"    [ERROR] Subject: MISSING")
 
     # CRITICAL: Ensure structured_condition is a dict before using .get()
     if state.structured_condition and isinstance(state.structured_condition, dict):
         condition_type = state.structured_condition.get("type", "N/A")
         condition_features = state.structured_condition.get("key_features", "N/A")
         print(
-            f"    ✓ Condition: type={condition_type}, key_features={condition_features[:80]}..."
+            f"    [OK] Condition: type={condition_type}, key_features={condition_features[:80]}..."
         )
     elif state.structured_condition:
         print(
-            f"    ⚠ Condition: Invalid type ({type(state.structured_condition)}), expected dict"
+            f"    [WARN] Condition: Invalid type ({type(state.structured_condition)}), expected dict"
         )
     else:
-        print(f"    ❌ Condition: MISSING")
+        print(f"    [ERROR] Condition: MISSING")
 
     # CRITICAL: Ensure structured_goal is a dict before using .get()
     if state.structured_goal and isinstance(state.structured_goal, dict):
@@ -2501,14 +2509,14 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
         goal_constraint = state.structured_goal.get("constraint", "N/A")
         goal_intent = state.structured_goal.get("intent", "N/A")
         print(
-            f"    ✓ Goal: type={goal_type}, constraint={goal_constraint[:80]}..., intent={goal_intent}"
+            f"    [OK] Goal: type={goal_type}, constraint={goal_constraint[:80]}..., intent={goal_intent}"
         )
     elif state.structured_goal:
         print(
-            f"    ⚠ Goal: Invalid type ({type(state.structured_goal)}), expected dict"
+            f"    [WARN] Goal: Invalid type ({type(state.structured_goal)}), expected dict"
         )
     else:
-        print(f"    ❌ Goal: MISSING")
+        print(f"    [ERROR] Goal: MISSING")
 
     # Check if all dimensions are present
     if (
@@ -2516,10 +2524,10 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
         and state.structured_condition
         and state.structured_goal
     ):
-        print(f"  ✅ All three dimensions extracted successfully")
+        print(f"  [SUCCESS] All three dimensions extracted successfully")
     else:
         print(
-            f"  ⚠ WARNING: Missing structured dimensions - this may affect downstream processing"
+            f"  [WARN] WARNING: Missing structured dimensions - this may affect downstream processing"
         )
 
     # ========== Enhancement: Tool Intent Recognition ==========
@@ -2531,7 +2539,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
 
             state = enhance_n0_with_tool_intent(state)
         except Exception as e:
-            print(f"  ⚠ Tool intent enhancement failed: {e}")
+            print(f"  [WARN] Tool intent enhancement failed: {e}")
 
     # ========== NEW: Phase 2 Optimizations Integration ==========
     # P4: XMaster Auto-Enabler - Automatically enable XMaster for complex questions
@@ -2556,7 +2564,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             # Apply configuration to state
             if xmaster_auto_config.enabled:
                 print(
-                    f"  🔧 XMaster Auto-Enabled: complexity={xmaster_auto_config.complexity_level}, "
+                    f"  [TOOL] XMaster Auto-Enabled: complexity={xmaster_auto_config.complexity_level}, "
                     f"candidates={xmaster_auto_config.num_candidates}"
                 )
                 state.num_candidates = xmaster_auto_config.num_candidates
@@ -2566,9 +2574,9 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
                         state.timeout * xmaster_auto_config.timeout_multiplier
                     )
             else:
-                print(f"  📊 XMaster not auto-enabled for this question complexity")
+                print(f"  [STAT] XMaster not auto-enabled for this question complexity")
         except Exception as e:
-            print(f"  ⚠ XMaster auto-enable failed: {e}")
+            print(f"  [WARN] XMaster auto-enable failed: {e}")
 
     # P5: Multi-Step Reasoning Detection - Check if question needs multi-step reasoning
     if PHASE2_OPTIMIZATIONS_AVAILABLE and should_use_multi_step:
@@ -2586,7 +2594,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             else:
                 state.multi_step_recommended = False
         except Exception as e:
-            print(f"  ⚠ Multi-step detection failed: {e}")
+            print(f"  [WARN] Multi-step detection failed: {e}")
             state.multi_step_recommended = False
 
     return state
@@ -2631,7 +2639,7 @@ def n1_question_decomposition_node(state: GeneralQAState) -> GeneralQAState:
             )
             print(f"  📚 Loaded {len(tools)} tool(s) for entity lookup")
         except Exception as e:
-            print(f"  ⚠ Failed to load tools: {e}")
+            print(f"  [WARN] Failed to load tools: {e}")
 
     prompt = get_question_decomposition_prompt(
         state.cleaned_text,
@@ -2675,7 +2683,7 @@ def n1_question_decomposition_node(state: GeneralQAState) -> GeneralQAState:
             if raw_structured_conditions
             else [],
         }
-        print(f"  ⚠ structured_conditions was a list, converted to dict format")
+        print(f"  [WARN] structured_conditions was a list, converted to dict format")
     else:
         state.structured_conditions = None
 
@@ -2720,7 +2728,7 @@ def n1_question_decomposition_node(state: GeneralQAState) -> GeneralQAState:
         elif isinstance(state.structured_conditions, list):
             constraints = state.structured_conditions
             print(
-                f"  ⚠ structured_conditions is a list, using it directly as constraints"
+                f"  [WARN] structured_conditions is a list, using it directly as constraints"
             )
         else:
             constraints = []
@@ -2746,7 +2754,7 @@ def n1_question_decomposition_node(state: GeneralQAState) -> GeneralQAState:
 
     if critical_constraints:
         state.critical_constraints = critical_constraints
-        print(f"  ⚠ Critical constraints detected: {critical_constraints}")
+        print(f"  [WARN] Critical constraints detected: {critical_constraints}")
     else:
         state.critical_constraints = None
 
@@ -2768,7 +2776,7 @@ def n1_question_decomposition_node(state: GeneralQAState) -> GeneralQAState:
     )
     if state.inference_core_restrictions:
         print(
-            f"  ✓ Inference core restrictions extracted: {len(state.inference_core_restrictions)} restriction(s)"
+            f"  [OK] Inference core restrictions extracted: {len(state.inference_core_restrictions)} restriction(s)"
         )
         print(
             f"    - Restrictions: {state.inference_core_restrictions[:3]}..."
@@ -2780,7 +2788,7 @@ def n1_question_decomposition_node(state: GeneralQAState) -> GeneralQAState:
     state.retrieval_sub_questions = result.get("retrieval_sub_questions", [])
     if state.retrieval_sub_questions:
         print(
-            f"  ✓ Retrieval sub-questions generated: {len(state.retrieval_sub_questions)} question(s)"
+            f"  [OK] Retrieval sub-questions generated: {len(state.retrieval_sub_questions)} question(s)"
         )
 
     # Update tool_intent from n1 if provided, otherwise keep from n0
@@ -2792,16 +2800,16 @@ def n1_question_decomposition_node(state: GeneralQAState) -> GeneralQAState:
         elif isinstance(n1_tool_intent, list):
             # Convert list to dict format
             state.tool_intent = {"tools": n1_tool_intent} if n1_tool_intent else {}
-            print(f"  ⚠ tool_intent from n1 was a list, converted to dict format")
+            print(f"  [WARN] tool_intent from n1 was a list, converted to dict format")
         else:
             state.tool_intent = {}
         if state.tool_intent:
-            print(f"  ✓ Tool intent updated: {state.tool_intent}")
+            print(f"  [OK] Tool intent updated: {state.tool_intent}")
 
-    print(f"✓ Core domains: {state.core_domains}")
-    print(f"✓ Research objective: {state.research_objective}")
+    print(f"[OK] Core domains: {state.core_domains}")
+    print(f"[OK] Research objective: {state.research_objective}")
     if state.key_entities:
-        print(f"✓ Key entities: {state.key_entities}")
+        print(f"[OK] Key entities: {state.key_entities}")
 
     # ========== NEW: Extract Semantic Conditions for Critic Verification ==========
     # 在N1节点提取题目条件的语义结构化表示，用于Critic验证模拟代码
@@ -2811,7 +2819,7 @@ def n1_question_decomposition_node(state: GeneralQAState) -> GeneralQAState:
                 state.cleaned_text or state.user_input or ""
             )
             if state.semantic_conditions and any(state.semantic_conditions.values()):
-                print(f"  ✓ Semantic conditions extracted:")
+                print(f"  [OK] Semantic conditions extracted:")
                 for cond_name, cond_value in state.semantic_conditions.items():
                     if cond_value:
                         if isinstance(cond_value, dict):
@@ -2824,10 +2832,10 @@ def n1_question_decomposition_node(state: GeneralQAState) -> GeneralQAState:
                 # Print verification checklist for debugging
                 if state.semantic_conditions.get("verification_checklist"):
                     print(
-                        f"  📋 Verification checklist generated: {len(state.semantic_conditions['verification_checklist'])} item(s)"
+                        f"  [INFO] Verification checklist generated: {len(state.semantic_conditions['verification_checklist'])} item(s)"
                     )
         except Exception as e:
-            print(f"  ⚠ Semantic condition extraction failed: {e}")
+            print(f"  [WARN] Semantic condition extraction failed: {e}")
             # 不设置 error_message，降级处理
             state.semantic_conditions = None
 
@@ -2880,8 +2888,8 @@ def n2_calculation_algorithm_recognition_node(state: GeneralQAState) -> GeneralQ
     state.calculation_type_label = result.get("calculation_type_label")
     state.key_parameters = result.get("key_parameters")
 
-    print(f"✓ Calculation type: {state.calculation_type_label}")
-    print(f"✓ Key parameters: {state.key_parameters}")
+    print(f"[OK] Calculation type: {state.calculation_type_label}")
+    print(f"[OK] Key parameters: {state.key_parameters}")
 
     return state
 
@@ -3041,7 +3049,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
         state.n3_use_deep_research_only = True
     elif consecutive_empty >= 1 and n3_visits >= 1:
         print(
-            f"  ⚠️ [Smart Retry] Previous query returned empty, trying alternative terms"
+            f"  [WARN]️ [Smart Retry] Previous query returned empty, trying alternative terms"
         )
         # Don't skip yet, but log warning
 
@@ -3054,14 +3062,14 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
             if last_confidence <= prev_confidence:
                 state.n3_no_improvement_count = (state.n3_no_improvement_count or 0) + 1
                 print(
-                    f"  ⚠️ [Confidence Check] No improvement in confidence ({prev_confidence:.2f} -> {last_confidence:.2f})"
+                    f"  [WARN]️ [Confidence Check] No improvement in confidence ({prev_confidence:.2f} -> {last_confidence:.2f})"
                 )
                 print(f"    - No improvement count: {state.n3_no_improvement_count}")
             else:
                 # Reset counter if confidence improved
                 state.n3_no_improvement_count = 0
                 print(
-                    f"  ✅ [Confidence Check] Confidence improved ({prev_confidence:.2f} -> {last_confidence:.2f})"
+                    f"  [SUCCESS] [Confidence Check] Confidence improved ({prev_confidence:.2f} -> {last_confidence:.2f})"
                 )
 
         # Early termination if no improvement for 2 consecutive visits
@@ -3172,7 +3180,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                         paper_result = future.result(timeout=paper_timeout)
                     except concurrent.futures.TimeoutError:
                         print(
-                            f"  ❌ PaperQA retrieval failed: TIMEOUT (exceeded {paper_timeout / 60:.1f} minutes)"
+                            f"  [ERROR] PaperQA retrieval failed: TIMEOUT (exceeded {paper_timeout / 60:.1f} minutes)"
                         )
                         print(f"    - Possible causes:")
                         print(f"      * Network issues connecting to Tavily/Qdrant")
@@ -3184,13 +3192,15 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                         try:
                             cancelled = future.cancel()
                             if cancelled:
-                                print(f"    ✓ PaperQA task cancelled successfully")
+                                print(f"    [OK] PaperQA task cancelled successfully")
                             else:
                                 print(
-                                    f"    ⚠ PaperQA task may still be running (cancellation requested)"
+                                    f"    [WARN] PaperQA task may still be running (cancellation requested)"
                                 )
                         except Exception as cancel_e:
-                            print(f"    ⚠ Failed to cancel PaperQA task: {cancel_e}")
+                            print(
+                                f"    [WARN] Failed to cancel PaperQA task: {cancel_e}"
+                            )
                         paper_result = None
                         state.paperqa_result = {
                             "status": "failed",
@@ -3198,7 +3208,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                             "timeout_seconds": paper_timeout,
                         }
                         print(
-                            f"  ✓ PaperQA marked as failed, continuing with knowledge retrieval..."
+                            f"  [OK] PaperQA marked as failed, continuing with knowledge retrieval..."
                         )
                         try:
                             executor.shutdown(wait=False, cancel_futures=True)
@@ -3206,7 +3216,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                             executor.shutdown(wait=False)
                     except Exception as timeout_e:
                         print(
-                            f"  ❌ PaperQA retrieval failed: EXECUTION ERROR in thread"
+                            f"  [ERROR] PaperQA retrieval failed: EXECUTION ERROR in thread"
                         )
                         print(f"    - Error type: {type(timeout_e).__name__}")
                         print(f"    - Error message: {str(timeout_e)}")
@@ -3267,7 +3277,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                     }
                     papers_discovered = paper_result.get("papers_discovered", 0)
                     papers_indexed = paper_result.get("papers_indexed", 0)
-                    print(f"  ✓ PaperQA retrieved {papers_discovered} papers")
+                    print(f"  [OK] PaperQA retrieved {papers_discovered} papers")
                     print(f"    - Confidence: {paper_confidence:.2f}")
                     print(
                         f"    - Sources: {', '.join(paper_result.get('sources', []))}"
@@ -3275,7 +3285,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                     print(f"    - Papers indexed: {papers_indexed}")
                     if papers_indexed == 0 and papers_discovered > 0:
                         print(
-                            f"    ⚠ Warning: No papers were indexed into paper-qa (using raw formatting)"
+                            f"    [WARN] Warning: No papers were indexed into paper-qa (using raw formatting)"
                         )
                         print(
                             f"      This may indicate: paper-qa not installed, indexing timeout, or indexing errors"
@@ -3286,10 +3296,12 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                         "reason": "timeout_or_error",
                     }
                 else:
-                    print(f"  ⚠ PaperQA returned empty result")
+                    print(f"  [WARN] PaperQA returned empty result")
                     state.paperqa_result = {"status": "empty"}
         except ImportError as import_e:
-            print(f"  ⚠ PaperQA module not available, skipping literature retrieval")
+            print(
+                f"  [WARN] PaperQA module not available, skipping literature retrieval"
+            )
             print(f"    - Import error: {str(import_e)}")
             print(
                 f"    - Missing module: {import_e.name if hasattr(import_e, 'name') else 'unknown'}"
@@ -3301,7 +3313,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                 "error": str(import_e),
             }
         except Exception as e:
-            print(f"  ❌ PaperQA retrieval failed: EXCEPTION during execution")
+            print(f"  [ERROR] PaperQA retrieval failed: EXCEPTION during execution")
             print(f"    - Error type: {type(e).__name__}")
             print(f"    - Error message: {str(e)}")
             print(f"    - Possible causes:")
@@ -3356,7 +3368,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                 state.research_objective or state.cleaned_text or state.user_input or ""
             )
             if question_text:
-                print(f"  🔬 Starting Deep Research analysis...")
+                print(f"  [Deep Research] Starting Deep Research analysis...")
                 print(f"    - Question: {question_text[:100]}...")
                 print(f"    - Trigger reason: ", end="")
                 if paper_confidence < 0.5:
@@ -3441,11 +3453,11 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
 
                             elapsed_minutes = (time.time() - start_time) / 60.0
                             print(
-                                f"    ✓ Deep Research completed in {elapsed_minutes:.1f} minutes"
+                                f"    [OK] Deep Research completed in {elapsed_minutes:.1f} minutes"
                             )
                         except concurrent.futures.TimeoutError:
                             print(
-                                f"  ❌ Deep Research failed: TIMEOUT (exceeded {deep_research_timeout / 60:.1f} minutes)"
+                                f"  [ERROR] Deep Research failed: TIMEOUT (exceeded {deep_research_timeout / 60:.1f} minutes)"
                             )
                             print(f"    - Possible causes:")
                             print(f"      * Research question too complex")
@@ -3462,15 +3474,15 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                                 cancelled = future.cancel()
                                 if cancelled:
                                     print(
-                                        f"    ✓ Deep Research task cancelled successfully"
+                                        f"    [OK] Deep Research task cancelled successfully"
                                     )
                                 else:
                                     print(
-                                        f"    ⚠ Deep Research task may still be running (cancellation requested)"
+                                        f"    [WARN] Deep Research task may still be running (cancellation requested)"
                                     )
                             except Exception as cancel_e:
                                 print(
-                                    f"    ⚠ Failed to cancel Deep Research task: {cancel_e}"
+                                    f"    [WARN] Failed to cancel Deep Research task: {cancel_e}"
                                 )
                             deep_research_result = None
                             state.deep_research_result = {
@@ -3479,7 +3491,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                                 "timeout_seconds": deep_research_timeout,
                             }
                             print(
-                                f"  ✓ Deep Research marked as failed, continuing with knowledge retrieval..."
+                                f"  [OK] Deep Research marked as failed, continuing with knowledge retrieval..."
                             )
                             # CRITICAL: Use shutdown with wait=False to avoid blocking on thread completion
                             try:
@@ -3488,7 +3500,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                                 executor.shutdown(wait=False)
                         except Exception as timeout_e:
                             print(
-                                f"  ❌ Deep Research failed: EXECUTION ERROR in thread"
+                                f"  [ERROR] Deep Research failed: EXECUTION ERROR in thread"
                             )
                             print(f"    - Error type: {type(timeout_e).__name__}")
                             print(f"    - Error message: {str(timeout_e)}")
@@ -3566,13 +3578,13 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                                 deep_research_result += (
                                     f"### Research Brief\n\n{research_brief}\n\n"
                                 )
-                            print(f"  ✓ Deep Research completed successfully")
+                            print(f"  [OK] Deep Research completed successfully")
                             print(
                                 f"    - Report length: {len(research_report)} characters"
                             )
                         else:
                             print(
-                                f"  ⚠ Deep Research completed but no report generated"
+                                f"  [WARN] Deep Research completed but no report generated"
                             )
                             print(
                                 f"    - Result keys: {list(deep_research_result.keys())}"
@@ -3586,7 +3598,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                         }
                     else:
                         print(
-                            f"  ⚠ Deep Research returned unexpected result type: {type(deep_research_result)}"
+                            f"  [WARN] Deep Research returned unexpected result type: {type(deep_research_result)}"
                         )
                         state.deep_research_result = {
                             "status": "failed",
@@ -3595,7 +3607,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                         }
                         deep_research_result = ""
                 except Exception as e:
-                    print(f"  ❌ Deep Research failed: EXCEPTION during execution")
+                    print(f"  [ERROR] Deep Research failed: EXCEPTION during execution")
                     print(f"    - Error type: {type(e).__name__}")
                     print(f"    - Error message: {str(e)}")
                     print(f"    - Possible causes:")
@@ -3623,7 +3635,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                         "error": str(e),
                     }
     except ImportError as import_e:
-        print(f"  ⚠ Deep Research module not available, skipping deep research")
+        print(f"  [WARN] Deep Research module not available, skipping deep research")
         print(f"    - Import error: {str(import_e)}")
         print(
             f"    - Missing module: {import_e.name if hasattr(import_e, 'name') else 'unknown'}"
@@ -3635,7 +3647,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
             "error": str(import_e),
         }
     except Exception as e:
-        print(f"  ❌ Deep Research initialization failed")
+        print(f"  [ERROR] Deep Research initialization failed")
         print(f"    - Error type: {type(e).__name__}")
         print(f"    - Error message: {str(e)}")
         import traceback
@@ -3660,7 +3672,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
             all_tools = load_all_tools()
             print(f"  📦 Loaded {len(all_tools)} total tool(s) from tool loader")
         except Exception as e:
-            print(f"  ⚠ Failed to load all tools: {e}")
+            print(f"  [WARN] Failed to load all tools: {e}")
 
     # Smart tool selection based on keywords and domains
     tools = []
@@ -3685,7 +3697,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                 f"  📚 Loaded {len(tools)} tool(s) from get_tools_for_node('n3_knowledge_retrieval')"
             )
         except Exception as e:
-            print(f"  ⚠ Failed to load default tools for n3: {e}")
+            print(f"  [WARN] Failed to load default tools for n3: {e}")
 
     # If we have all_tools but tools is still empty, use all_tools directly
     if not tools and all_tools:
@@ -3709,11 +3721,11 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
                     f"  📚 Loaded {len(tools)} tool(s) via keyword selection (last resort)"
                 )
         except Exception as e:
-            print(f"  ⚠ Failed to select tools by keywords: {e}")
+            print(f"  [WARN] Failed to select tools by keywords: {e}")
 
     # Final check: if still no tools, log warning
     if not tools:
-        print(f"  ⚠ WARNING: No tools available for n3_knowledge_retrieval!")
+        print(f"  [WARN] WARNING: No tools available for n3_knowledge_retrieval!")
         print(f"    - TOOLS_AVAILABLE: {TOOLS_AVAILABLE}")
         print(f"    - load_all_tools available: {load_all_tools is not None}")
         print(f"    - get_tools_for_node available: {get_tools_for_node is not None}")
@@ -3723,7 +3735,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
         if should_force_tool_usage and should_force_tool_usage(
             state.cleaned_text or state.user_input or "", state.core_domains
         ):
-            print(f"  🔧 Force tool usage enabled - tools will be actively used")
+            print(f"  [TOOL] Force tool usage enabled - tools will be actively used")
 
     # ========== NEW: Domain-aware tool filtering ==========
     # Skip tools that are not appropriate for the detected domain type
@@ -3741,7 +3753,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
 
         if len(filtered_tools) < original_count:
             print(
-                f"  📋 [Tool Filter] Filtered out {original_count - len(filtered_tools)} inappropriate tools"
+                f"  [INFO] [Tool Filter] Filtered out {original_count - len(filtered_tools)} inappropriate tools"
             )
             print(f"    - Remaining tools: {len(filtered_tools)}")
             tools = filtered_tools
@@ -3750,7 +3762,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
     # If we have failed entities from previous visits, add them to exclusion
     if state.n3_failed_entities and n3_visits >= 1:
         print(
-            f"  📋 [Entity Filter] {len(state.n3_failed_entities)} entity type(s) with failed queries detected"
+            f"  [INFO] [Entity Filter] {len(state.n3_failed_entities)} entity type(s) with failed queries detected"
         )
         for entity_type, entities in state.n3_failed_entities.items():
             if entities:
@@ -3835,7 +3847,7 @@ Missing entities (缺失实体):
         )
         base_prompt = base_prompt + constraint_filtering_instruction
         print(
-            f"  ⚠ Added constraint-based filtering instruction: {len(state.inference_core_restrictions)} restriction(s)"
+            f"  [WARN] Added constraint-based filtering instruction: {len(state.inference_core_restrictions)} restriction(s)"
         )
 
     # Add external knowledge sources to prompt
@@ -4001,7 +4013,7 @@ Rules:
             state.metadata = state.metadata or {}
             state.metadata["hle_timeout"] = hle_timeout
         except Exception as e:
-            print(f"  ⚠ HLE timeout estimation failed: {e}")
+            print(f"  [WARN] HLE timeout estimation failed: {e}")
 
     # ========== Smart Retry: Check if we should skip LLM tools ==========
     if state.n3_skip_llm_tools:
@@ -4041,7 +4053,7 @@ The following terms have already been queried and returned NO results. DO NOT se
 
 """
                 print(
-                    f"  📋 [Smart Retry] Excluding {len(unique_terms)} previously queried terms"
+                    f"  [INFO] [Smart Retry] Excluding {len(unique_terms)} previously queried terms"
                 )
 
         # Add exclusion instruction to prompt
@@ -4067,7 +4079,7 @@ The following terms have already been queried and returned NO results. DO NOT se
 
     # OPTIMIZATION: Parse failure automatic retry (max 1 retry)
     if not result:
-        print(f"  ⚠ Failed to parse LLM response, attempting retry...")
+        print(f"  [WARN] Failed to parse LLM response, attempting retry...")
         retry_prompt = (
             prompt
             + "\n\n**RETRY: Your previous response was not valid JSON. Please output ONLY a valid JSON object, no other text.**"
@@ -4083,11 +4095,11 @@ The following terms have already been queried and returned NO results. DO NOT se
         if retry_response:
             result = _parse_json_response(retry_response)
             if result:
-                print(f"  ✓ Retry succeeded: successfully parsed JSON response")
+                print(f"  [OK] Retry succeeded: successfully parsed JSON response")
             else:
-                print(f"  ✗ Retry failed: still unable to parse JSON response")
+                print(f"  [FAIL] Retry failed: still unable to parse JSON response")
         else:
-            print(f"  ✗ Retry failed: LLM call returned no response")
+            print(f"  [FAIL] Retry failed: LLM call returned no response")
 
     # ========== Step 6: Build domain_knowledge_map from multiple sources (互补而非依赖) ==========
     # 三者（PaperQA、DeepResearch、LLM工具调用）是互补的，任何一个成功都能产生领域知识
@@ -4101,7 +4113,7 @@ The following terms have already been queried and returned NO results. DO NOT se
         if isinstance(result, list):
             # If result is a list, try to convert it to expected format
             print(
-                f"  ⚠ LLM returned a list instead of dict, attempting to extract knowledge from list format"
+                f"  [WARN] LLM returned a list instead of dict, attempting to extract knowledge from list format"
             )
             # Try to extract knowledge items from list
             # Case 1: List of strings (knowledge items)
@@ -4140,19 +4152,21 @@ The following terms have already been queried and returned NO results. DO NOT se
             }
             result_is_dict = True
             print(
-                f"  ✓ Successfully extracted {len(raw_llm_map['general']['foundational_knowledge'])} knowledge items from list format"
+                f"  [OK] Successfully extracted {len(raw_llm_map['general']['foundational_knowledge'])} knowledge items from list format"
             )
         elif isinstance(result, dict):
             raw_llm_map = result.get("domain_knowledge_map", {})
             result_is_dict = True
         else:
-            print(f"  ⚠ Unexpected result type: {type(result)}, skipping")
+            print(f"  [WARN] Unexpected result type: {type(result)}, skipping")
             raw_llm_map = {}
             result_is_dict = False
 
         # CRITICAL: Ensure domain_knowledge_map is a dict, not a list
         if isinstance(raw_llm_map, list):
-            print(f"  ⚠ domain_knowledge_map was a list, converting to dict format")
+            print(
+                f"  [WARN] domain_knowledge_map was a list, converting to dict format"
+            )
             # Convert list to dict format
             raw_llm_map = {
                 "general": {
@@ -4217,7 +4231,7 @@ The following terms have already been queried and returned NO results. DO NOT se
             state.key_facts = {}
             # CRITICAL: Ensure key_facts is a dict, not a list
             if isinstance(raw_key_facts, list):
-                print(f"  ⚠ key_facts was a list, converting to dict format")
+                print(f"  [WARN] key_facts was a list, converting to dict format")
                 raw_key_facts = {
                     f"fact_{i}": str(item) for i, item in enumerate(raw_key_facts)
                 }
@@ -4241,7 +4255,7 @@ The following terms have already been queried and returned NO results. DO NOT se
             state.knowledge_unreliable = result.get("knowledge_unreliable", False)
 
             if state.key_facts:
-                print(f"  ✓ Key facts extracted: {len(state.key_facts)} fact(s)")
+                print(f"  [OK] Key facts extracted: {len(state.key_facts)} fact(s)")
                 for key, value in list(state.key_facts.items())[:3]:
                     print(
                         f"    - {key}: {value[:80]}..."
@@ -4250,7 +4264,7 @@ The following terms have already been queried and returned NO results. DO NOT se
                     )
 
             if state.knowledge_unreliable:
-                print(f"  ⚠ Knowledge marked as unreliable (tool calls failed)")
+                print(f"  [WARN] Knowledge marked as unreliable (tool calls failed)")
 
             # Extract knowledge confidence from LLM result
             knowledge_confidence = result.get("knowledge_confidence")
@@ -4279,13 +4293,13 @@ The following terms have already been queried and returned NO results. DO NOT se
                 state.n3_empty_query_count = 0
                 state.n3_skip_llm_tools = False
                 print(
-                    f"  ✅ [Smart Retry] Reset empty query count - got {total_knowledge_items} knowledge items"
+                    f"  [SUCCESS] [Smart Retry] Reset empty query count - got {total_knowledge_items} knowledge items"
                 )
             else:
                 # No knowledge items found, increment empty count
                 state.n3_empty_query_count = (state.n3_empty_query_count or 0) + 1
                 print(
-                    f"  📊 [Smart Retry] Empty query count: {state.n3_empty_query_count} (no knowledge items)"
+                    f"  [STAT] [Smart Retry] Empty query count: {state.n3_empty_query_count} (no knowledge items)"
                 )
                 if state.n3_empty_query_count >= 2:
                     print(
@@ -4302,18 +4316,20 @@ The following terms have already been queried and returned NO results. DO NOT se
             state.parameter_constraints["_knowledge_metadata"]["confidence"] = (
                 knowledge_confidence
             )
-            print(f"  📊 Knowledge confidence (from LLM): {knowledge_confidence:.2f}")
+            print(
+                f"  [STAT] Knowledge confidence (from LLM): {knowledge_confidence:.2f}"
+            )
         else:
             # result is not a dict, use defaults
             state.key_facts = {}
             state.knowledge_validity_label = "Missing"
             state.knowledge_unreliable = True
             knowledge_confidence = 0.3
-            print(f"  ⚠ LLM result is not a dict, using default knowledge values")
+            print(f"  [WARN] LLM result is not a dict, using default knowledge values")
     else:
         # LLM tool usage failed, but we can still use PaperQA and DeepResearch results
         print(
-            f"  ⚠ LLM tool usage failed, but continuing with PaperQA/DeepResearch results if available"
+            f"  [WARN] LLM tool usage failed, but continuing with PaperQA/DeepResearch results if available"
         )
         state.knowledge_validity_label = (
             "Missing"  # Will be updated if PaperQA/DeepResearch succeed
@@ -4326,7 +4342,9 @@ The following terms have already been queried and returned NO results. DO NOT se
         # Increment empty query count if LLM tools returned no useful results
         if not state.n3_skip_llm_tools:  # Only count if we actually tried
             state.n3_empty_query_count = (state.n3_empty_query_count or 0) + 1
-            print(f"  📊 [Smart Retry] Empty query count: {state.n3_empty_query_count}")
+            print(
+                f"  [STAT] [Smart Retry] Empty query count: {state.n3_empty_query_count}"
+            )
 
             # If this is the 2nd consecutive empty result, mark for skipping next time
             if state.n3_empty_query_count >= 2:
@@ -4369,7 +4387,7 @@ The following terms have already been queried and returned NO results. DO NOT se
                     paperqa_knowledge_str
                 )
         print(
-            f"  ✓ PaperQA contributed knowledge to {len(paperqa_domain_knowledge_map)} domain(s)"
+            f"  [OK] PaperQA contributed knowledge to {len(paperqa_domain_knowledge_map)} domain(s)"
         )
 
     # Build domain_knowledge_map from DeepResearch (if successful)
@@ -4387,7 +4405,9 @@ The following terms have already been queried and returned NO results. DO NOT se
         and deep_research_result_is_dict
         and state.deep_research_result.get("status") == "success"
     ):
-        print(f"  🔬 Converting DeepResearch results to domain_knowledge_map format...")
+        print(
+            f"  [Deep Research] Converting DeepResearch results to domain_knowledge_map format..."
+        )
         # Extract domains from DeepResearch result or use core_domains
         deepresearch_domains = state.core_domains or ["general"]
         for domain in deepresearch_domains:
@@ -4414,7 +4434,7 @@ The following terms have already been queried and returned NO results. DO NOT se
                     "foundational_knowledge"
                 ].append(deepresearch_brief_str)
         print(
-            f"  ✓ DeepResearch contributed knowledge to {len(deepresearch_domain_knowledge_map)} domain(s)"
+            f"  [OK] DeepResearch contributed knowledge to {len(deepresearch_domain_knowledge_map)} domain(s)"
         )
 
     # Merge all three sources (互补合并)
@@ -4432,7 +4452,7 @@ The following terms have already been queried and returned NO results. DO NOT se
             # CRITICAL: Ensure knowledge is a dict, not a list
             if not isinstance(knowledge, dict):
                 print(
-                    f"  ⚠ PaperQA knowledge for domain '{domain}' is not a dict (type: {type(knowledge)}), skipping"
+                    f"  [WARN] PaperQA knowledge for domain '{domain}' is not a dict (type: {type(knowledge)}), skipping"
                 )
                 continue
             if domain not in state.domain_knowledge_map:
@@ -4466,7 +4486,7 @@ The following terms have already been queried and returned NO results. DO NOT se
             # CRITICAL: Ensure knowledge is a dict, not a list
             if not isinstance(knowledge, dict):
                 print(
-                    f"  ⚠ DeepResearch knowledge for domain '{domain}' is not a dict (type: {type(knowledge)}), skipping"
+                    f"  [WARN] DeepResearch knowledge for domain '{domain}' is not a dict (type: {type(knowledge)}), skipping"
                 )
                 continue
             if domain not in state.domain_knowledge_map:
@@ -4499,12 +4519,12 @@ The following terms have already been queried and returned NO results. DO NOT se
         if len(sources_used) >= 2:
             state.knowledge_validity_label = "Valid"
             print(
-                f"  ✓ Knowledge merged from {len(sources_used)} source(s): {', '.join(sources_used)}"
+                f"  [OK] Knowledge merged from {len(sources_used)} source(s): {', '.join(sources_used)}"
             )
         elif len(sources_used) == 1:
             state.knowledge_validity_label = "Valid"
             print(
-                f"  ✓ Knowledge from {sources_used[0]} (single source, but sufficient)"
+                f"  [OK] Knowledge from {sources_used[0]} (single source, but sufficient)"
             )
         else:
             # This shouldn't happen, but handle it
@@ -4512,7 +4532,7 @@ The following terms have already been queried and returned NO results. DO NOT se
     else:
         # No knowledge from any source
         print(
-            f"  ❌ No knowledge available from any source (LLM tools, PaperQA, or DeepResearch)"
+            f"  [ERROR] No knowledge available from any source (LLM tools, PaperQA, or DeepResearch)"
         )
         state.knowledge_validity_label = "Missing"
 
@@ -4532,12 +4552,14 @@ The following terms have already been queried and returned NO results. DO NOT se
             if state.knowledge_validity_label == "Missing":
                 state.knowledge_validity_label = "Valid"
                 print(
-                    f"  ✓ Knowledge from {len(sources_used)} source(s) is sufficient, marking as Valid"
+                    f"  [OK] Knowledge from {len(sources_used)} source(s) is sufficient, marking as Valid"
                 )
         else:
             # Empty knowledge structures
             state.knowledge_validity_label = "Missing"
-            print(f"  ⚠ domain_knowledge_map exists but contains no actual knowledge")
+            print(
+                f"  [WARN] domain_knowledge_map exists but contains no actual knowledge"
+            )
 
     # Knowledge confidence calculation (considering all sources)
     if (
@@ -4566,22 +4588,22 @@ The following terms have already been queried and returned NO results. DO NOT se
         )
 
     print(
-        f"  📊 Knowledge confidence: {knowledge_confidence:.2f} (from {len(sources_used)} source(s))"
+        f"  [STAT] Knowledge confidence: {knowledge_confidence:.2f} (from {len(sources_used)} source(s))"
     )
 
     # ========== NEW: Store confidence in history for improvement tracking ==========
     if state.n3_confidence_history is None:
         state.n3_confidence_history = []
     state.n3_confidence_history.append(knowledge_confidence)
-    print(f"  📈 [Confidence History] Recorded: {knowledge_confidence:.2f}")
+    print(f"  [PROGRESS] [Confidence History] Recorded: {knowledge_confidence:.2f}")
     if len(state.n3_confidence_history) > 1:
         print(
             f"    - Trend: {state.n3_confidence_history[-2]:.2f} -> {state.n3_confidence_history[-1]:.2f}"
         )
         if knowledge_confidence > state.n3_confidence_history[-2]:
-            print(f"    - ✅ Confidence improving")
+            print(f"    - [SUCCESS] Confidence improving")
         elif knowledge_confidence < state.n3_confidence_history[-2]:
-            print(f"    - ⚠️ Confidence declining")
+            print(f"    - [WARN]️ Confidence declining")
         else:
             print(f"    - ➡️ Confidence unchanged")
 
@@ -4589,7 +4611,7 @@ The following terms have already been queried and returned NO results. DO NOT se
     CONFIDENCE_THRESHOLD = 0.5  # Lowered threshold since single source is acceptable
     if knowledge_confidence < CONFIDENCE_THRESHOLD:
         print(
-            f"  ⚠ Knowledge confidence ({knowledge_confidence:.2f}) below threshold ({CONFIDENCE_THRESHOLD})"
+            f"  [WARN] Knowledge confidence ({knowledge_confidence:.2f}) below threshold ({CONFIDENCE_THRESHOLD})"
         )
         print(f"    - This knowledge may be unreliable, but will proceed with caution")
         # Mark as low confidence but don't block - let n6/n7 decide
@@ -4600,7 +4622,7 @@ The following terms have already been queried and returned NO results. DO NOT se
     )
     if domain_validation_errors:
         print(
-            f"  ⚠ Domain rule validation found {len(domain_validation_errors)} issue(s):"
+            f"  [WARN] Domain rule validation found {len(domain_validation_errors)} issue(s):"
         )
         for error in domain_validation_errors[:3]:  # Show first 3
             print(f"    - {error}")
@@ -4610,7 +4632,7 @@ The following terms have already been queried and returned NO results. DO NOT se
         ]
         if critical_errors:
             print(
-                f"  ❌ Critical domain rule violations detected, marking knowledge as Invalid"
+                f"  [ERROR] Critical domain rule violations detected, marking knowledge as Invalid"
             )
             state.knowledge_validity_label = "Invalid"
             state.exception_type_label = "Knowledge Domain Rule Violation"
@@ -4631,7 +4653,7 @@ The following terms have already been queried and returned NO results. DO NOT se
         goal_intent = ""
         if state.structured_goal and not isinstance(state.structured_goal, dict):
             print(
-                f"  ⚠ structured_goal is not a dict (type: {type(state.structured_goal)}), skipping goal-based filtering"
+                f"  [WARN] structured_goal is not a dict (type: {type(state.structured_goal)}), skipping goal-based filtering"
             )
 
         # Filter knowledge that is not related to the goal
@@ -4690,7 +4712,7 @@ The following terms have already been queried and returned NO results. DO NOT se
 
         if removed_count > 0:
             print(
-                f"  ✓ Filtered out {removed_count} irrelevant knowledge items based on goal"
+                f"  [OK] Filtered out {removed_count} irrelevant knowledge items based on goal"
             )
             print(f"    - Goal: {goal_type} / {goal_constraint} / {goal_intent}")
             state.domain_knowledge_map = filtered_domain_knowledge_map
@@ -4700,20 +4722,20 @@ The following terms have already been queried and returned NO results. DO NOT se
         # If we have external knowledge, knowledge should be valid
         if state.knowledge_validity_label == "Missing":
             state.knowledge_validity_label = "Valid"
-            print(f"  ✓ External knowledge sources improved knowledge validity")
+            print(f"  [OK] External knowledge sources improved knowledge validity")
 
     if state.knowledge_validity_label == "Missing":
         state.exception_type_label = "Knowledge Missing"
 
-    print(f"✓ Knowledge validity: {state.knowledge_validity_label}")
+    print(f"[OK] Knowledge validity: {state.knowledge_validity_label}")
     print(
-        f"✓ Domains retrieved: {list(state.domain_knowledge_map.keys()) if state.domain_knowledge_map else []}"
+        f"[OK] Domains retrieved: {list(state.domain_knowledge_map.keys()) if state.domain_knowledge_map else []}"
     )
 
     # ========== Clean up supplementary retrieval markers ==========
     # Clear the supplementary retrieval flag after successful retrieval
     if is_supplementary_retrieval:
-        print(f"  ✓ Supplementary retrieval completed, clearing markers")
+        print(f"  [OK] Supplementary retrieval completed, clearing markers")
         if state.tool_intent:
             state.tool_intent["supplementary_retrieval"] = "NO"
             # Keep missing_entities for reference but mark as processed
@@ -4727,7 +4749,7 @@ The following terms have already been queried and returned NO results. DO NOT se
         if parameter_constraints:
             state.parameter_constraints = parameter_constraints
             print(
-                f"✓ Parameter constraints extracted: {len(parameter_constraints)} parameter(s)"
+                f"[OK] Parameter constraints extracted: {len(parameter_constraints)} parameter(s)"
             )
             for param_name, constraints in parameter_constraints.items():
                 if "range" in constraints:
@@ -4764,11 +4786,11 @@ The following terms have already been queried and returned NO results. DO NOT se
                 state.follow_up_questions = follow_ups
 
                 if gaps:
-                    print(f"  🔄 Knowledge gaps identified: {gaps[:3]}")
+                    print(f"  [RUN] Knowledge gaps identified: {gaps[:3]}")
                 if follow_ups:
                     print(f"  ❓ Follow-up questions: {follow_ups}")
         except Exception as e:
-            print(f"  ⚠ Iterative retrieval enhancement failed: {e}")
+            print(f"  [WARN] Iterative retrieval enhancement failed: {e}")
 
     # ========== NEW: Forced Degradation Mechanism ==========
     # When N3 visits exhausted and knowledge still insufficient, generate fallback knowledge
@@ -4789,7 +4811,7 @@ The following terms have already been queried and returned NO results. DO NOT se
             "Invalid",
         ]:
             print(
-                f"  🔄 [Forced Degradation] Max N3 visits reached with insufficient knowledge"
+                f"  [RUN] [Forced Degradation] Max N3 visits reached with insufficient knowledge"
             )
             print(f"    - Knowledge confidence: {current_confidence:.2f}")
             print(f"    - Knowledge validity: {state.knowledge_validity_label}")
@@ -4838,11 +4860,13 @@ The following terms have already been queried and returned NO results. DO NOT se
                 )
 
                 print(
-                    f"  ✓ [Forced Degradation] Fallback knowledge generated and merged"
+                    f"  [OK] [Forced Degradation] Fallback knowledge generated and merged"
                 )
                 print(f"    - New domains: {list(fallback_knowledge.keys())}")
             else:
-                print(f"  ⚠ [Forced Degradation] Failed to generate fallback knowledge")
+                print(
+                    f"  [WARN] [Forced Degradation] Failed to generate fallback knowledge"
+                )
 
     return state
 
@@ -4946,7 +4970,7 @@ Remember: Output ONLY valid JSON, no markdown, no explanations.
 
         return None
     except Exception as e:
-        print(f"  ⚠ [Fallback Knowledge] Generation failed: {e}")
+        print(f"  [WARN] [Fallback Knowledge] Generation failed: {e}")
         return None
 
 
@@ -5360,7 +5384,7 @@ def n4_calculation_decomposition_node(state: GeneralQAState) -> GeneralQAState:
                 ]
             print(f"  📚 Loaded {len(tools)} tool(s) for calculation support")
         except Exception as e:
-            print(f"  ⚠ Failed to load tools: {e}")
+            print(f"  [WARN] Failed to load tools: {e}")
 
     # Include critical constraints in prompt if available
     enhanced_key_parameters = (
@@ -5368,7 +5392,7 @@ def n4_calculation_decomposition_node(state: GeneralQAState) -> GeneralQAState:
     )
     if state.critical_constraints:
         enhanced_key_parameters["critical_constraints"] = state.critical_constraints
-        print(f"  ⚠ Including critical constraints: {state.critical_constraints}")
+        print(f"  [WARN] Including critical constraints: {state.critical_constraints}")
 
     prompt = get_calculation_decomposition_prompt(
         state.cleaned_text, enhanced_key_parameters, state.domain_knowledge_map or {}
@@ -5397,7 +5421,7 @@ def n4_calculation_decomposition_node(state: GeneralQAState) -> GeneralQAState:
     result = _parse_json_response(response)
     if not result:
         # 记录更详细的错误信息
-        print(f"  ❌ Failed to parse LLM response for calculation decomposition")
+        print(f"  [ERROR] Failed to parse LLM response for calculation decomposition")
         print(f"    - Response length: {len(response) if response else 0} characters")
         print(f"    - Response preview: {response[:200] if response else 'N/A'}...")
         print(
@@ -5442,10 +5466,10 @@ def n4_calculation_decomposition_node(state: GeneralQAState) -> GeneralQAState:
                 state.matched_formula = None
                 state.unit_conversion_rules = []
                 print(
-                    f"  ⚠ Created {len(fallback_steps)} fallback calculation steps from key_parameters"
+                    f"  [WARN] Created {len(fallback_steps)} fallback calculation steps from key_parameters"
                 )
                 print(
-                    f"  ⚠ Formula match marked as 'Match Failed' but allowing process to continue"
+                    f"  [WARN] Formula match marked as 'Match Failed' but allowing process to continue"
                 )
             else:
                 state.error_message = "Failed to parse LLM response for calculation decomposition and no fallback available"
@@ -5472,15 +5496,15 @@ def n4_calculation_decomposition_node(state: GeneralQAState) -> GeneralQAState:
             formula_expr = state.matched_formula.get("formula_expression", "")
             if "n-1" in formula_expr or "n*" in formula_expr:
                 print(
-                    f"  ⚠ Warning: Formula appears to be a simple linear model. Consider cooperative binding."
+                    f"  [WARN] Warning: Formula appears to be a simple linear model. Consider cooperative binding."
                 )
                 # Don't fail, but add a warning
 
     if state.formula_match_result == "Match Failed":
         state.exception_type_label = "Formula Match Failed"
 
-    print(f"✓ Formula match result: {state.formula_match_result}")
-    print(f"✓ Calculation steps: {len(state.calculation_steps)} steps")
+    print(f"[OK] Formula match result: {state.formula_match_result}")
+    print(f"[OK] Calculation steps: {len(state.calculation_steps)} steps")
 
     # ========== Enhancement: Calculation Cross-Verification ==========
     if ENHANCEMENTS_AVAILABLE and state.calculation_type_label == "Numerical":
@@ -5491,7 +5515,7 @@ def n4_calculation_decomposition_node(state: GeneralQAState) -> GeneralQAState:
 
             state = enhance_n4_with_verification(state, response or "")
         except Exception as e:
-            print(f"  ⚠ Calculation verification enhancement failed: {e}")
+            print(f"  [WARN] Calculation verification enhancement failed: {e}")
 
     return state
 
@@ -5519,17 +5543,17 @@ def n5_algorithm_validation_node(state: GeneralQAState) -> GeneralQAState:
             "algorithm_name"
         ):
             print(
-                f"  ⚠ calculation_type_label='{state.calculation_type_label}' is not 'Algorithm', but algorithm_name found, allowing to continue"
+                f"  [WARN] calculation_type_label='{state.calculation_type_label}' is not 'Algorithm', but algorithm_name found, allowing to continue"
             )
             # 更新calculation_type_label以匹配
             state.calculation_type_label = "Algorithm"
         else:
             # 没有algorithm_name，创建基本的algorithm_parameters作为fallback，允许流程继续
             print(
-                f"  ⚠ calculation_type_label='{state.calculation_type_label}' is not 'Algorithm' and no algorithm_name found"
+                f"  [WARN] calculation_type_label='{state.calculation_type_label}' is not 'Algorithm' and no algorithm_name found"
             )
             print(
-                f"  ⚠ Creating fallback algorithm_parameters to allow process to continue"
+                f"  [WARN] Creating fallback algorithm_parameters to allow process to continue"
             )
 
             # 创建基本的algorithm_parameters
@@ -5540,9 +5564,11 @@ def n5_algorithm_validation_node(state: GeneralQAState) -> GeneralQAState:
                 }
                 state.applicability_result = "Applicable"  # 标记为适用，允许继续
                 state.alternative_algorithms = []
-                print(f"  ✓ Created fallback algorithm_parameters from key_parameters")
                 print(
-                    f"  ⚠ Note: This is a fallback, actual algorithm validation was skipped"
+                    f"  [OK] Created fallback algorithm_parameters from key_parameters"
+                )
+                print(
+                    f"  [WARN] Note: This is a fallback, actual algorithm validation was skipped"
                 )
                 # 直接返回，跳过实际的LLM调用
                 return state
@@ -5567,7 +5593,7 @@ def n5_algorithm_validation_node(state: GeneralQAState) -> GeneralQAState:
             tools = get_tools_for_node("n5_algorithm_validation")
             print(f"  📚 Loaded {len(tools)} tool(s) for algorithm validation")
         except Exception as e:
-            print(f"  ⚠ Failed to load tools: {e}")
+            print(f"  [WARN] Failed to load tools: {e}")
 
     algorithm_name = (
         state.key_parameters.get("algorithm_name", "Unknown")
@@ -5604,8 +5630,8 @@ def n5_algorithm_validation_node(state: GeneralQAState) -> GeneralQAState:
     if state.applicability_result == "Not Applicable":
         state.exception_type_label = "Algorithm Not Applicable"
 
-    print(f"✓ Applicability result: {state.applicability_result}")
-    print(f"✓ Algorithm parameters: {state.algorithm_parameters}")
+    print(f"[OK] Applicability result: {state.applicability_result}")
+    print(f"[OK] Algorithm parameters: {state.algorithm_parameters}")
 
     return state
 
@@ -5635,14 +5661,14 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
     CONFIDENCE_THRESHOLD = 0.7
     if knowledge_confidence < CONFIDENCE_THRESHOLD:
         print(
-            f"  ⚠ Knowledge confidence ({knowledge_confidence:.2f}) below threshold ({CONFIDENCE_THRESHOLD})"
+            f"  [WARN] Knowledge confidence ({knowledge_confidence:.2f}) below threshold ({CONFIDENCE_THRESHOLD})"
         )
         print(f"    - Knowledge may be unreliable, but proceeding with caution")
         # Don't block, but mark as low confidence
 
     # OPTIMIZATION: Check knowledge validity before inference (知识合法性校验)
     if state.knowledge_validity_label == "Invalid":
-        print(f"  ❌ Knowledge marked as Invalid, cannot proceed with inference")
+        print(f"  [ERROR] Knowledge marked as Invalid, cannot proceed with inference")
         state.exception_type_label = "Knowledge Invalid - Cannot Infer"
         state.error_message = (
             "Knowledge retrieval returned invalid knowledge, cannot perform inference"
@@ -5664,7 +5690,9 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
             state.structured_conditions["objective_conditions"] = [
                 state.research_objective
             ]
-        print(f"  ⚠ structured_conditions not available or not a dict, using fallback")
+        print(
+            f"  [WARN] structured_conditions not available or not a dict, using fallback"
+        )
 
     # Try fallback for domain_knowledge_map BEFORE checking if it's empty
     if not state.domain_knowledge_map or (
@@ -5680,7 +5708,7 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
                     "specialized_knowledge": [],
                 }
             print(
-                f"  ⚠ domain_knowledge_map not available, using fallback from core_domains"
+                f"  [WARN] domain_knowledge_map not available, using fallback from core_domains"
             )
         elif state.cleaned_text or state.user_input:
             # 如果连core_domains都没有，尝试从问题文本中提取基本知识
@@ -5694,11 +5722,11 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
                 }
             }
             print(
-                f"  ⚠ domain_knowledge_map not available, using minimal fallback from question text"
+                f"  [WARN] domain_knowledge_map not available, using minimal fallback from question text"
             )
         else:
             # 所有fallback都失败，返回错误
-            print(f"  ❌ No valid knowledge available, cannot perform inference")
+            print(f"  [ERROR] No valid knowledge available, cannot perform inference")
             state.exception_type_label = "Knowledge Missing - Cannot Infer"
             state.error_message = "No domain knowledge available for inference"
             return state
@@ -5720,7 +5748,7 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
             tools = get_tools_for_node("n6_initial_inference")
             print(f"  📚 Loaded {len(tools)} tool(s) for association inference")
         except Exception as e:
-            print(f"  ⚠ Failed to load tools: {e}")
+            print(f"  [WARN] Failed to load tools: {e}")
 
     prompt = get_initial_inference_prompt(
         cleaned_text=state.cleaned_text or state.user_input or "",
@@ -5746,7 +5774,7 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
         constraint_info += "\nYou MUST verify each knowledge match against these constraints. Remove matches that violate constraints."
         prompt = prompt + constraint_info
         print(
-            f"  ⚠ Added constraint information for logical validation: {len(state.inference_core_restrictions)} restriction(s)"
+            f"  [WARN] Added constraint information for logical validation: {len(state.inference_core_restrictions)} restriction(s)"
         )
 
     # Execution with tools
@@ -5760,7 +5788,7 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
     )
     if not response:
         print(
-            f"  ⚠ LLM call failed (timeout or error), skipping inference retry to avoid infinite loop"
+            f"  [WARN] LLM call failed (timeout or error), skipping inference retry to avoid infinite loop"
         )
         state.error_message = "LLM call failed for initial inference"
         # CRITICAL FIX: Set exception_type_label to prevent infinite retry loop
@@ -5778,14 +5806,14 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
                     }
             state.match_confidence_label = "Low (LLM Timeout Fallback)"
             print(
-                f"  ✓ Created fallback inference from domain_knowledge_map due to LLM timeout"
+                f"  [OK] Created fallback inference from domain_knowledge_map due to LLM timeout"
             )
         return state
 
     # Result organization
     result = _parse_json_response(response)
     if not result:
-        print(f"  ❌ Failed to parse LLM response for initial inference")
+        print(f"  [ERROR] Failed to parse LLM response for initial inference")
         print(f"    - Response preview: {response[:300] if response else 'N/A'}...")
         state.error_message = "Failed to parse LLM response for initial inference"
         # CRITICAL FIX: Set exception_type_label to prevent infinite retry loop
@@ -5801,7 +5829,7 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
 
     # Diagnostic: Check if required fields are missing
     if state.phenomenon_knowledge_match_table is None:
-        print(f"  ⚠ phenomenon_knowledge_match_table is missing from LLM response")
+        print(f"  [WARN] phenomenon_knowledge_match_table is missing from LLM response")
         print(
             f"    - Available keys in result: {list(result.keys()) if result else 'N/A'}"
         )
@@ -5845,17 +5873,17 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
                                 ].append(evidence)
                 if state.phenomenon_knowledge_match_table:
                     print(
-                        f"    ✓ Converted from old format: {len(state.phenomenon_knowledge_match_table)} domain(s)"
+                        f"    [OK] Converted from old format: {len(state.phenomenon_knowledge_match_table)} domain(s)"
                     )
                     state.match_confidence_label = (
                         state.match_confidence_label or "Medium"
                     )
 
     if state.core_molecular_function:
-        print(f"  ✓ Core molecular function: {state.core_molecular_function}")
+        print(f"  [OK] Core molecular function: {state.core_molecular_function}")
 
     if state.need_recheck:
-        print(f"  ⚠ Inference needs recheck (knowledge unreliable)")
+        print(f"  [WARN] Inference needs recheck (knowledge unreliable)")
 
     if state.phenomenon_knowledge_match_table:
         match_count = sum(
@@ -5863,10 +5891,10 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
             for v in state.phenomenon_knowledge_match_table.values()
         )
         print(
-            f"  ✓ Match table created: {len(state.phenomenon_knowledge_match_table)} domain(s), {match_count} total matches"
+            f"  [OK] Match table created: {len(state.phenomenon_knowledge_match_table)} domain(s), {match_count} total matches"
         )
 
-    print(f"✓ Match confidence: {state.match_confidence_label}")
+    print(f"[OK] Match confidence: {state.match_confidence_label}")
 
     return state
 
@@ -6085,7 +6113,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
             enhanced_answer_constraints + state.critical_constraints
         )
         print(
-            f"  ⚠ Including critical constraints in inference: {state.critical_constraints}"
+            f"  [WARN] Including critical constraints in inference: {state.critical_constraints}"
         )
 
     # Prepare structured_condition with hard_constraints if needed
@@ -6097,7 +6125,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
             "hard_constraints", []
         )
         if hard_constraints:
-            print(f"  ⚠ Hard constraints detected: {hard_constraints}")
+            print(f"  [WARN] Hard constraints detected: {hard_constraints}")
     else:
         structured_condition_with_constraints = {}
 
@@ -6164,16 +6192,18 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                 )
                 if confusion_warning:
                     prompt = prompt + "\n" + confusion_warning
-                    print(f"  ⚠ Added confusion pattern warning to inference prompt")
+                    print(
+                        f"  [WARN] Added confusion pattern warning to inference prompt"
+                    )
         except Exception as e:
-            print(f"  ⚠ Failed to add confusion pattern warning: {e}")
+            print(f"  [WARN] Failed to add confusion pattern warning: {e}")
 
     # Then add detailed option analysis
     if INFERENCE_ENHANCEMENTS_AVAILABLE and get_inference_enhancement_prompt_addition:
         option_analysis_prompt = get_inference_enhancement_prompt_addition(state)
         if option_analysis_prompt:
             prompt = prompt + option_analysis_prompt
-            print(f"  ✅ Added option contrast analysis to inference prompt")
+            print(f"  [SUCCESS] Added option contrast analysis to inference prompt")
 
     # ========== NEW: Domain Knowledge Hints (P0 optimization - 2026-02-17) ==========
     # Add scientific domain knowledge to guide LLM reasoning
@@ -6199,9 +6229,11 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                 )
                 if domain_hints:
                     prompt = prompt + domain_hints
-                    print(f"  ✅ Added domain knowledge hints to inference prompt")
+                    print(
+                        f"  [SUCCESS] Added domain knowledge hints to inference prompt"
+                    )
         except Exception as e:
-            print(f"  ⚠ Failed to add domain knowledge hints: {e}")
+            print(f"  [WARN] Failed to add domain knowledge hints: {e}")
 
     # ========== P3-1 NEW: Professional Terminology Understanding (2026-02-19) ==========
     # Add technical term context to help LLM understand professional terminology
@@ -6213,10 +6245,10 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
             if term_context:
                 prompt = prompt + term_context
                 print(
-                    f"  ✅ Added professional terminology context to inference prompt"
+                    f"  [SUCCESS] Added professional terminology context to inference prompt"
                 )
         except Exception as e:
-            print(f"  ⚠ Failed to add terminology context: {e}")
+            print(f"  [WARN] Failed to add terminology context: {e}")
 
     # Add confusion warnings for commonly confused terms
     if INFERENCE_ENHANCEMENTS_AVAILABLE and get_confusion_warning:
@@ -6281,9 +6313,9 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
             )
             if calc_prompt:
                 prompt = prompt + calc_prompt
-                print(f"  ✅ Added calculation verification prompt to inference")
+                print(f"  [SUCCESS] Added calculation verification prompt to inference")
         except Exception as e:
-            print(f"  ⚠ Failed to add calculation verification prompt: {e}")
+            print(f"  [WARN] Failed to add calculation verification prompt: {e}")
 
     # ========== OPTIMIZED: Unified Constraint Block ==========
     # Replace multiple constraint additions with a single unified block
@@ -6314,7 +6346,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
             total_constraints = len(constraints["all"])
             if total_constraints > 0:
                 print(
-                    f"  ✓ Added unified constraint block: {total_constraints} constraint(s)"
+                    f"  [OK] Added unified constraint block: {total_constraints} constraint(s)"
                 )
     else:
         # Fallback: Original behavior if prompt_utils not available
@@ -6323,7 +6355,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
             for i, constraint in enumerate(state.key_constraints[:5], 1):
                 key_constraint_instruction += f"{i}. {constraint}\n"
             prompt = prompt + key_constraint_instruction
-            print(f"  ⚠ Key constraints added: {state.key_constraints[:5]}")
+            print(f"  [WARN] Key constraints added: {state.key_constraints[:5]}")
 
     # Parameter constraints (only for Numerical questions) - kept separate as it's specific
     if state.calculation_type_label == "Numerical" and state.parameter_constraints:
@@ -6337,7 +6369,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
             param_constraint_instruction += "\n"
         prompt = prompt + param_constraint_instruction
         print(
-            f"  ✓ Added parameter constraints: {len(state.parameter_constraints)} param(s)"
+            f"  [OK] Added parameter constraints: {len(state.parameter_constraints)} param(s)"
         )
 
     # Execution with tools
@@ -6357,7 +6389,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
     )
     if not response:
         # ========== ENHANCED: Detailed timeout diagnostics ==========
-        print(f"  ❌ LLM call failed for complete inference")
+        print(f"  [ERROR] LLM call failed for complete inference")
 
         # Check if we have timeout information in tool_calls_history
         timeout_info = None
@@ -6373,7 +6405,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
             error_msg = timeout_info.get("error_message", "No error message")
             timeout_reason = timeout_info.get("timeout_reason", "Not specified")
 
-            print(f"  📋 Error diagnostics:")
+            print(f"  [INFO] Error diagnostics:")
             print(f"    - Is timeout: {is_timeout}")
             print(f"    - Error type: {error_type}")
             print(f"    - Error message: {error_msg[:200]}")
@@ -6383,12 +6415,12 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                 print(f"  ⏱️ TRUE TIMEOUT DETECTED - LLM response took too long")
                 state.exception_type_label = "LLM Timeout - Complete Inference Failed"
             else:
-                print(f"  ⚠️ NON-TIMEOUT ERROR - LLM failed for other reasons")
+                print(f"  [WARN]️ NON-TIMEOUT ERROR - LLM failed for other reasons")
                 state.exception_type_label = (
                     f"LLM Error ({error_type}) - Complete Inference Failed"
                 )
         else:
-            print(f"  ⚠️ No detailed error info available, assuming timeout")
+            print(f"  [WARN]️ No detailed error info available, assuming timeout")
             state.exception_type_label = "LLM Timeout - Complete Inference Failed"
 
         state.error_message = "LLM call failed for complete inference"
@@ -6412,7 +6444,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
     # Result organization
     result = _parse_json_response(response)
     if not result:
-        print(f"  ⚠ Failed to parse LLM response for complete inference")
+        print(f"  [WARN] Failed to parse LLM response for complete inference")
         state.error_message = "Failed to parse LLM response for complete inference"
         # CRITICAL FIX: Set exception_type_label to prevent infinite retry loop
         state.exception_type_label = "LLM Response Parse Error - Complete Inference"
@@ -6479,7 +6511,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                                 )
 
         if validation_issues:
-            print(f"  ⚠ Parameter validation issues detected:")
+            print(f"  [WARN] Parameter validation issues detected:")
             for issue in validation_issues:
                 print(f"    - {issue}")
             # Don't fail, but add warning to exception type
@@ -6541,7 +6573,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                             if min_val is not None and max_val is not None:
                                 if final_result < min_val or final_result > max_val:
                                     print(
-                                        f"  ⚠ WARNING: Final result {final_result} is outside expected range [{min_val}, {max_val}] for {param_name}"
+                                        f"  [WARN] WARNING: Final result {final_result} is outside expected range [{min_val}, {max_val}] for {param_name}"
                                     )
                                     print(
                                         f"    - This may indicate a calculation error or incorrect parameter assumptions"
@@ -6560,7 +6592,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                             expected_sign = constraints["sign"]
                             if expected_sign == "positive" and final_result < 0:
                                 print(
-                                    f"  ⚠ WARNING: Final result {final_result} violates sign constraint (expected positive for {param_name})"
+                                    f"  [WARN] WARNING: Final result {final_result} violates sign constraint (expected positive for {param_name})"
                                 )
                                 if (
                                     not state.exception_type_label
@@ -6571,7 +6603,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                                     ) + " / Result Sign Violation"
                             elif expected_sign == "negative" and final_result > 0:
                                 print(
-                                    f"  ⚠ WARNING: Final result {final_result} violates sign constraint (expected negative for {param_name})"
+                                    f"  [WARN] WARNING: Final result {final_result} violates sign constraint (expected negative for {param_name})"
                                 )
                                 if (
                                     not state.exception_type_label
@@ -6606,7 +6638,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                         if "dose" in text_lower or "gy" in text_lower:
                             if exp > -3 or exp < -8:
                                 print(
-                                    f"  ⚠ Warning: Calculated dose value magnitude ({exp}) may be outside expected range (10^-6 to 10^-3 Gy)"
+                                    f"  [WARN] Warning: Calculated dose value magnitude ({exp}) may be outside expected range (10^-6 to 10^-3 Gy)"
                                 )
                                 # Don't fail, but add warning
                         # Check for concentration questions (should be in reasonable range)
@@ -6617,20 +6649,20 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                         ):
                             if abs(exp) > 3:
                                 print(
-                                    f"  ⚠ Warning: Calculated concentration value magnitude ({exp}) may be unreasonable"
+                                    f"  [WARN] Warning: Calculated concentration value magnitude ({exp}) may be unreasonable"
                                 )
 
                     # Check precision (±10% error range would be validated in n9, but we can check for obvious errors here)
                     # This is a basic sanity check - full precision validation happens in n9
                     if abs(exp) > 15:
                         print(
-                            f"  ⚠ Warning: Calculated value has extreme exponent ({exp}), likely calculation error"
+                            f"  [WARN] Warning: Calculated value has extreme exponent ({exp}), likely calculation error"
                         )
 
     print(
-        f"✓ Core conclusion: {state.core_conclusion[:100] if state.core_conclusion else 'N/A'}..."
+        f"[OK] Core conclusion: {state.core_conclusion[:100] if state.core_conclusion else 'N/A'}..."
     )
-    print(f"✓ Inference path steps: {len(state.closed_inference_path)}")
+    print(f"[OK] Inference path steps: {len(state.closed_inference_path)}")
 
     # ========== Enhancement: Chain-of-Thought 解析和验证 ==========
     if ENHANCEMENTS_AVAILABLE:
@@ -6641,7 +6673,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
 
             state = enhance_n7_with_cot(state)
         except Exception as e:
-            print(f"  ⚠ CoT enhancement failed: {e}")
+            print(f"  [WARN] CoT enhancement failed: {e}")
 
     # ========== Enhancement: Meta-Cognitive Monitoring ==========
     if ENHANCEMENTS_AVAILABLE:
@@ -6652,12 +6684,14 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
 
             state = enhance_with_metacognitive_monitoring(state)
         except Exception as e:
-            print(f"  ⚠ Meta-cognitive monitoring failed: {e}")
+            print(f"  [WARN] Meta-cognitive monitoring failed: {e}")
 
     # ========== HLE Optimization: Confidence Calibration & Reasoning Validation ==========
     if HLE_OPTIMIZATIONS_AVAILABLE:
         try:
-            print("\n  🔬 HLE Optimization: Confidence Calibration & Validation")
+            print(
+                "\n  [Deep Research] HLE Optimization: Confidence Calibration & Validation"
+            )
 
             # 1. Estimate question complexity and difficulty
             if ComplexityEstimator:
@@ -6693,7 +6727,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                         validation_steps, question_type=state.question_type_label
                     )
                     print(
-                        f"    - Reasoning validation: {'✓ Valid' if validation_result.is_valid else '✗ Issues found'}"
+                        f"    - Reasoning validation: {'[OK] Valid' if validation_result.is_valid else '[FAIL] Issues found'}"
                     )
                     if not validation_result.is_valid:
                         critical_errors = validation_result.get_critical_errors()
@@ -6770,7 +6804,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                     and calibration.uncertainty_expression.should_express
                 ):
                     print(
-                        f"    - ⚠ Uncertainty expression recommended: {calibration.uncertainty_expression.level}"
+                        f"    - [WARN] Uncertainty expression recommended: {calibration.uncertainty_expression.level}"
                     )
                     state.metadata["hle_uncertainty"] = {
                         "level": calibration.uncertainty_expression.level,
@@ -6798,10 +6832,10 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
                     "identified_concepts", []
                 )
 
-            print("  ✓ HLE optimization complete\n")
+            print("  [OK] HLE optimization complete\n")
 
         except Exception as e:
-            print(f"  ⚠ HLE optimization failed: {e}")
+            print(f"  [WARN] HLE optimization failed: {e}")
 
     return state
 
@@ -6816,14 +6850,14 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
     # OPTIMIZATION: Generate pre-validation (生成前校验)
     # Check if we have valid inference results
     if not state.core_conclusion:
-        print(f"  ❌ No core_conclusion available, cannot generate answer")
+        print(f"  [ERROR] No core_conclusion available, cannot generate answer")
         state.error_message = "core_conclusion is required for answer generation"
         state.exception_type_label = "Answer Generation Failed - No Inference Result"
         return state
 
     # Check if inference path is complete
     if not state.closed_inference_path or len(state.closed_inference_path) == 0:
-        print(f"  ❌ No inference path available, cannot generate answer")
+        print(f"  [ERROR] No inference path available, cannot generate answer")
         state.error_message = "closed_inference_path is required for answer generation"
         state.exception_type_label = (
             "Answer Generation Failed - Incomplete Inference Path"
@@ -6832,7 +6866,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
 
     # Check knowledge validity
     if state.knowledge_validity_label == "Invalid":
-        print(f"  ❌ Knowledge marked as Invalid, cannot generate reliable answer")
+        print(f"  [ERROR] Knowledge marked as Invalid, cannot generate reliable answer")
         state.error_message = "Invalid knowledge, cannot generate answer"
         state.exception_type_label = "Answer Generation Failed - Invalid Knowledge"
         return state
@@ -6855,7 +6889,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
     # CRITICAL: Prevent infinite loops - if N8 has been visited too many times, skip processing
     if n8_visits >= 3:
         print(
-            f"  ⚠ Infinite loop detected: N8 visited {n8_visits + 1} times, skipping to prevent infinite loop"
+            f"  [WARN] Infinite loop detected: N8 visited {n8_visits + 1} times, skipping to prevent infinite loop"
         )
         state.exception_type_label = (
             state.exception_type_label or "Answer Generation Failed - Infinite Loop"
@@ -6875,7 +6909,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
             tools = get_tools_for_node("n8_answer_generation")
             print(f"  📚 Loaded {len(tools)} tool(s) for answer refinement")
         except Exception as e:
-            print(f"  ⚠ Failed to load tools: {e}")
+            print(f"  [WARN] Failed to load tools: {e}")
 
     # Extract calculation result from inference path if available
     calculation_result = None
@@ -7040,7 +7074,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
             # This is a factual question that needs specific information
             # Try to retry knowledge retrieval with more specific queries
             print(
-                f"  ⚠ Answer generation failed and core_conclusion indicates no specific info available"
+                f"  [WARN] Answer generation failed and core_conclusion indicates no specific info available"
             )
             print(
                 f"    - Attempting to retry knowledge retrieval with more specific queries"
@@ -7084,7 +7118,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                 if len(first_elem) == 1 and first_elem.upper() in "ABCDEFGHIJ":
                     state.structured_answer["final_answer"] = first_elem.upper()
                     print(
-                        f"  🔧 Fixed tuple answer: {raw_final} -> {first_elem.upper()}"
+                        f"  [TOOL] Fixed tuple answer: {raw_final} -> {first_elem.upper()}"
                     )
                 else:
                     # Convert tuple to string
@@ -7092,7 +7126,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                         str(raw_final[0]) if len(raw_final) == 1 else str(raw_final)
                     )
                     print(
-                        f"  🔧 Fixed tuple answer: {raw_final} -> {state.structured_answer['final_answer']}"
+                        f"  [TOOL] Fixed tuple answer: {raw_final} -> {state.structured_answer['final_answer']}"
                     )
             elif isinstance(raw_final, list):
                 # Convert list to comma-separated string for List format
@@ -7136,7 +7170,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
 
                 if normalized_answer != str(final_answer):
                     print(
-                        f"  🔧 Normalized answer format: '{final_answer}' -> '{normalized_answer}' (type: {format_type})"
+                        f"  [TOOL] Normalized answer format: '{final_answer}' -> '{normalized_answer}' (type: {format_type})"
                     )
                     state.structured_answer["final_answer"] = normalized_answer
 
@@ -7155,12 +7189,12 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                     if "true" in selected_option:
                         state.structured_answer["final_answer"] = "True"
                         print(
-                            f"  ✓ Converted option letter '{final_answer_str}' to 'True' for True/False question"
+                            f"  [OK] Converted option letter '{final_answer_str}' to 'True' for True/False question"
                         )
                     elif "false" in selected_option:
                         state.structured_answer["final_answer"] = "False"
                         print(
-                            f"  ✓ Converted option letter '{final_answer_str}' to 'False' for True/False question"
+                            f"  [OK] Converted option letter '{final_answer_str}' to 'False' for True/False question"
                         )
                     else:
                         # If option doesn't contain True/False, try to infer from core_conclusion
@@ -7174,7 +7208,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                             ):
                                 state.structured_answer["final_answer"] = "False"
                                 print(
-                                    f"  ✓ Inferred 'False' from core_conclusion (not necessarily) for True/False question"
+                                    f"  [OK] Inferred 'False' from core_conclusion (not necessarily) for True/False question"
                                 )
                             elif any(
                                 word in conclusion_lower
@@ -7191,7 +7225,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                             ):
                                 state.structured_answer["final_answer"] = "True"
                                 print(
-                                    f"  ✓ Inferred 'True' from core_conclusion for True/False question"
+                                    f"  [OK] Inferred 'True' from core_conclusion for True/False question"
                                 )
                             elif any(
                                 word in conclusion_lower
@@ -7208,7 +7242,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                             ):
                                 state.structured_answer["final_answer"] = "False"
                                 print(
-                                    f"  ✓ Inferred 'False' from core_conclusion for True/False question"
+                                    f"  [OK] Inferred 'False' from core_conclusion for True/False question"
                                 )
                         # Also check question text for "necessarily" pattern
                         elif state.cleaned_text:
@@ -7220,16 +7254,20 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                                 # For "necessarily" questions, if we can't determine, default to False (conservative)
                                 state.structured_answer["final_answer"] = "False"
                                 print(
-                                    f"  ⚠ Could not determine True/False from options or conclusion, defaulting to 'False' for 'necessarily' question"
+                                    f"  [WARN] Could not determine True/False from options or conclusion, defaulting to 'False' for 'necessarily' question"
                                 )
             # If answer already contains True/False but mixed with other text, extract it
             final_answer_lower = str(final_answer).strip().lower()
             if "true" in final_answer_lower and "false" not in final_answer_lower:
                 state.structured_answer["final_answer"] = "True"
-                print(f"  ✓ Extracted 'True' from answer text for True/False question")
+                print(
+                    f"  [OK] Extracted 'True' from answer text for True/False question"
+                )
             elif "false" in final_answer_lower and "true" not in final_answer_lower:
                 state.structured_answer["final_answer"] = "False"
-                print(f"  ✓ Extracted 'False' from answer text for True/False question")
+                print(
+                    f"  [OK] Extracted 'False' from answer text for True/False question"
+                )
             # If answer is still not True/False, try to infer from answer text
             elif final_answer_str not in ["TRUE", "FALSE"]:
                 # Check if answer text suggests True or False
@@ -7247,7 +7285,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                 ):
                     state.structured_answer["final_answer"] = "True"
                     print(
-                        f"  ✓ Inferred 'True' from answer text for True/False question"
+                        f"  [OK] Inferred 'True' from answer text for True/False question"
                     )
                 elif any(
                     word in final_answer_lower
@@ -7264,7 +7302,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                 ):
                     state.structured_answer["final_answer"] = "False"
                     print(
-                        f"  ✓ Inferred 'False' from answer text for True/False question"
+                        f"  [OK] Inferred 'False' from answer text for True/False question"
                     )
 
             # Update state.final_answer to match structured_answer.final_answer
@@ -7287,7 +7325,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
 
                 if all_excluded or "Cannot generate" in str(final_answer).lower():
                     print(
-                        f"  ⚠ Single Choice question: All options excluded or 'Cannot generate' detected"
+                        f"  [WARN] Single Choice question: All options excluded or 'Cannot generate' detected"
                     )
                     print(f"    - FORCING selection of best matching option")
 
@@ -7389,7 +7427,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                 if match_count > 1:
                     # Multiple matches for Single Choice - this is an error
                     print(
-                        f"  ⚠ WARNING: Single Choice question has {match_count} matches, expected 1"
+                        f"  [WARN] WARNING: Single Choice question has {match_count} matches, expected 1"
                     )
                     print(f"    - Option matching table: {option_matching_table}")
 
@@ -7420,7 +7458,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                 elif match_count == 0:
                     # OPTIMIZATION: No matches for Single Choice - force semantic matching using tools
                     print(
-                        f"  ⚠ WARNING: Single Choice question has 0 matches, forcing semantic matching with tools"
+                        f"  [WARN] WARNING: Single Choice question has 0 matches, forcing semantic matching with tools"
                     )
                     # CRITICAL: Prevent infinite retry loops within N8
                     # Use node_visit_count to track internal retry (avoid adding new state field)
@@ -7432,7 +7470,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
 
                     if n8_internal_retry >= 1:
                         print(
-                            f"  ⚠ N8 internal retry limit reached ({n8_internal_retry}/1), skipping semantic matching retry"
+                            f"  [WARN] N8 internal retry limit reached ({n8_internal_retry}/1), skipping semantic matching retry"
                         )
                         print(f"    - This will be handled by N10 exception handling")
                         state.exception_type_label = (
@@ -7444,7 +7482,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                             n8_internal_retry + 1
                         )
                         print(
-                            f"  🔄 Retrying answer generation with forced tool-based semantic matching (attempt {n8_internal_retry + 1}/1)"
+                            f"  [RUN] Retrying answer generation with forced tool-based semantic matching (attempt {n8_internal_retry + 1}/1)"
                         )
                         semantic_matching_instruction = f"\n\n**CRITICAL: ALL OPTIONS WERE EXCLUDED - FORCE SEMANTIC MATCHING:**\n"
                         semantic_matching_instruction += (
@@ -7478,7 +7516,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                                 state.structured_answer = retry_result.get(
                                     "structured_answer"
                                 )
-                                print(f"  ✓ Semantic matching retry succeeded")
+                                print(f"  [OK] Semantic matching retry succeeded")
                                 # Re-extract option_matching_table from retry result
                                 if state.structured_answer and isinstance(
                                     state.structured_answer, dict
@@ -7588,7 +7626,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                             # Successfully converted to rank sequence
                             rank_str = "".join(rank_sequence)
                             print(
-                                f"  ✓ Converted aFC sequence to rank sequence: {rank_str}"
+                                f"  [OK] Converted aFC sequence to rank sequence: {rank_str}"
                             )
                             normalized_final = rank_str
                             if state.structured_answer:
@@ -7683,7 +7721,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                         )
 
         if rationality_issues:
-            print(f"  ⚠ Rationality issues detected: {rationality_issues}")
+            print(f"  [WARN] Rationality issues detected: {rationality_issues}")
             # Don't fail immediately, but mark for validation
             if not state.exception_type_label:
                 state.exception_type_label = "Answer Rationality Check Failed"
@@ -7695,7 +7733,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
             or "Cannot generate" in str(state.core_conclusion)
         ):
             print(
-                f"  ⚠ No answer generated and core_conclusion indicates no specific info"
+                f"  [WARN] No answer generated and core_conclusion indicates no specific info"
             )
             print(f"    - Marking for knowledge retrieval retry")
             state.exception_type_label = (
@@ -7712,13 +7750,13 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
         _try_convert_enumeration_answer(state)
 
     print(
-        f"✓ Final answer: {state.final_answer[:100] if state.final_answer else 'N/A'}..."
+        f"[OK] Final answer: {state.final_answer[:100] if state.final_answer else 'N/A'}..."
     )
 
     # ========== HLE Optimization: Exact Match Answer Formatting ==========
     if HLE_OPTIMIZATIONS_AVAILABLE:
         try:
-            print("\n  🎯 HLE Optimization: Exact Match Answer Formatting")
+            print("\n  [X-Masters] HLE Optimization: Exact Match Answer Formatting")
 
             if ExactMatchOptimizer and state.final_answer:
                 optimizer = ExactMatchOptimizer(
@@ -7813,7 +7851,9 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
 
                 # Check for exact format requirements
                 if "exact" in text_lower or "precise" in text_lower:
-                    print(f"    - ⚠ HLE EXACT MATCH required - answer must be precise")
+                    print(
+                        f"    - [WARN] HLE EXACT MATCH required - answer must be precise"
+                    )
                     state.metadata = state.metadata or {}
                     state.metadata["hle_exact_match_required"] = True
 
@@ -7827,15 +7867,15 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
 
                     if not re.search(r"[\d.]+", str(state.final_answer)):
                         print(
-                            f"    - ⚠ WARNING: Calculation question but answer contains no numbers"
+                            f"    - [WARN] WARNING: Calculation question but answer contains no numbers"
                         )
                         state.metadata = state.metadata or {}
                         state.metadata["hle_calculation_warning"] = True
 
-            print("  ✓ HLE answer formatting complete\n")
+            print("  [OK] HLE answer formatting complete\n")
 
         except Exception as e:
-            print(f"  ⚠ HLE answer formatting failed: {e}")
+            print(f"  [WARN] HLE answer formatting failed: {e}")
 
     # ========== NEW: Phase 2 Answer Formatter Integration ==========
     # P4: Use enhanced answer formatter for final answer cleanup
@@ -7845,7 +7885,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
         and state.final_answer
     ):
         try:
-            print("\n  🔧 Phase 2: Enhanced Answer Formatting")
+            print("\n  [TOOL] Phase 2: Enhanced Answer Formatting")
 
             # Format the answer based on expected format
             formatted_answer = format_answer_with_rules(
@@ -7864,10 +7904,10 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                 ):
                     state.structured_answer["final_answer"] = formatted_answer
 
-            print("  ✓ Phase 2 answer formatting complete\n")
+            print("  [OK] Phase 2 answer formatting complete\n")
 
         except Exception as e:
-            print(f"  ⚠ Phase 2 answer formatting failed: {e}")
+            print(f"  [WARN] Phase 2 answer formatting failed: {e}")
 
     # ========== X-Masters Enhancement: Generate Multiple Candidate Answers ==========
     # P2-3 ENHANCED: Use smart X-Masters enablement strategy
@@ -7905,7 +7945,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
         )
 
         print(
-            f"\n  📊 X-Masters decision: enabled={xmasters_config.enabled}, "
+            f"\n  [STAT] X-Masters decision: enabled={xmasters_config.enabled}, "
             f"candidates={xmasters_config.num_candidates}"
         )
         print(f"     Reason: {xmasters_config.reason}")
@@ -7927,7 +7967,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
     state.num_candidates = xmasters_config.num_candidates
 
     if not xmasters_config.enabled or xmasters_config.num_candidates <= 0:
-        print(f"\n  ⏭ X-Masters disabled: {xmasters_config.reason}")
+        print(f"\n  [SKIP] X-Masters disabled: {xmasters_config.reason}")
         print(f"     Using single answer path")
         state.candidate_answers = []
         return state
@@ -7951,13 +7991,19 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                 "success": True,
             }
         )
-        print(f"  ✓ Candidate 0: Original answer generated")
+        print(f"  [OK] Candidate 0: Original answer generated")
 
     # Generate additional candidates with different temperatures/approaches
     for i in range(1, num_candidates):
         try:
             # Use slightly different temperature for diversity
-            temp_llm = create_bioinformatics_llm(temperature=0.5 + (i * 0.1))
+            temp_llm = create_llm_with_thinking(
+                purpose="bioinformatics",
+                temperature=0.5 + (i * 0.1),
+                progress_callback=getattr(state, "progress_callback", None),
+                session_id=getattr(state, "session_id", None),
+                node_name="general_qa",
+            ) or create_bioinformatics_llm(temperature=0.5 + (i * 0.1))
 
             # P2-3 ENHANCED: Use smart prompt enhancement
             diversity_prompt = base_prompt + format_instruction
@@ -8005,21 +8051,21 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                                 "success": True,
                             }
                         )
-                        print(f"  ✓ Candidate {i}: Alternative answer generated")
+                        print(f"  [OK] Candidate {i}: Alternative answer generated")
                     else:
-                        print(f"  ⚠ Candidate {i}: Failed to extract final answer")
+                        print(f"  [WARN] Candidate {i}: Failed to extract final answer")
                 else:
-                    print(f"  ⚠ Candidate {i}: Failed to parse response")
+                    print(f"  [WARN] Candidate {i}: Failed to parse response")
             else:
-                print(f"  ⚠ Candidate {i}: LLM call failed")
+                print(f"  [WARN] Candidate {i}: LLM call failed")
         except Exception as e:
-            print(f"  ⚠ Candidate {i}: Error - {e}")
+            print(f"  [WARN] Candidate {i}: Error - {e}")
             # Continue with other candidates
 
     # If we have at least one candidate, store them
     if candidate_answers:
         state.candidate_answers = candidate_answers
-        print(f"\n✓ Generated {len(candidate_answers)} candidate answer(s)")
+        print(f"\n[OK] Generated {len(candidate_answers)} candidate answer(s)")
     else:
         # Fallback: if no candidates generated, use original answer as single candidate
         if state.structured_answer and state.final_answer:
@@ -8032,7 +8078,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
                     "success": True,
                 }
             ]
-            print(f"  ⚠ Using original answer as single candidate")
+            print(f"  [WARN] Using original answer as single candidate")
 
     return state
 
@@ -8048,7 +8094,7 @@ def n8_5_critic_review_node(state: GeneralQAState) -> GeneralQAState:
     print("=" * 60)
 
     if not state.candidate_answers or len(state.candidate_answers) == 0:
-        print(f"  ⚠ No candidate answers to review, skipping critic stage")
+        print(f"  [WARN] No candidate answers to review, skipping critic stage")
         state.critiqued_answers = []
         return state
 
@@ -8059,7 +8105,7 @@ def n8_5_critic_review_node(state: GeneralQAState) -> GeneralQAState:
             inject_lightweight_tools_to_namespace,
         )
     except ImportError as e:
-        print(f"  ⚠ X-Masters critic not available (optional dependency): {e}")
+        print(f"  [WARN] X-Masters critic not available (optional dependency): {e}")
         print(
             f"  → Continuing without X-Masters enhancement, using original candidate answers"
         )
@@ -8070,7 +8116,7 @@ def n8_5_critic_review_node(state: GeneralQAState) -> GeneralQAState:
 
     # 简化: 直接使用 llm_factory 的配置，不需要手动检查环境变量
     # result_evaluator/llm.py 的 get_llm 会自动调用 llm_factory
-    print(f"  🔧 Critic will use llm_factory config")
+    print(f"  [TOOL] Critic will use llm_factory config")
 
     # Build problem context for critic
     problem_context = state.cleaned_text or state.user_input
@@ -8111,9 +8157,9 @@ def n8_5_critic_review_node(state: GeneralQAState) -> GeneralQAState:
                 )
                 if domain_hints:
                     retrieved_context += f"\n\n{domain_hints}"
-                    print(f"  ✅ Added domain knowledge hints to Critic context")
+                    print(f"  [SUCCESS] Added domain knowledge hints to Critic context")
         except Exception as e:
-            print(f"  ⚠ Failed to add domain knowledge hints to Critic: {e}")
+            print(f"  [WARN] Failed to add domain knowledge hints to Critic: {e}")
 
     critiqued_answers = []
 
@@ -8124,7 +8170,7 @@ def n8_5_critic_review_node(state: GeneralQAState) -> GeneralQAState:
         candidate_structured = candidate.get("structured_answer", {})
 
         if not candidate_answer:
-            print(f"  ⚠ Candidate {candidate_id}: No answer to review, skipping")
+            print(f"  [WARN] Candidate {candidate_id}: No answer to review, skipping")
             critiqued_answers.append(
                 {
                     "candidate_id": candidate_id,
@@ -8172,18 +8218,18 @@ def n8_5_critic_review_node(state: GeneralQAState) -> GeneralQAState:
             )
 
             if success:
-                print(f"    ✓ Candidate {candidate_id} reviewed successfully")
+                print(f"    [OK] Candidate {candidate_id} reviewed successfully")
             else:
                 error_msg = f" (error: {error_info})" if error_info else ""
                 print(
-                    f"    ⚠ Candidate {candidate_id} review failed, using original{error_msg}"
+                    f"    [WARN] Candidate {candidate_id} review failed, using original{error_msg}"
                 )
 
         except Exception as e:
             import traceback
 
             error_traceback = traceback.format_exc()
-            print(f"    ❌ Candidate {candidate_id} review error: {e}")
+            print(f"    [ERROR] Candidate {candidate_id} review error: {e}")
             print(f"    Error traceback: {error_traceback[:500]}...")
             critiqued_answers.append(
                 {
@@ -8200,7 +8246,7 @@ def n8_5_critic_review_node(state: GeneralQAState) -> GeneralQAState:
             )
 
     state.critiqued_answers = critiqued_answers
-    print(f"\n✓ Reviewed {len(critiqued_answers)} candidate answer(s)")
+    print(f"\n[OK] Reviewed {len(critiqued_answers)} candidate answer(s)")
 
     return state
 
@@ -8216,7 +8262,7 @@ def n8_6_rewriter_synthesis_node(state: GeneralQAState) -> GeneralQAState:
     print("=" * 60)
 
     if not state.critiqued_answers or len(state.critiqued_answers) == 0:
-        print(f"  ⚠ No critiqued answers to synthesize, skipping rewriter stage")
+        print(f"  [WARN] No critiqued answers to synthesize, skipping rewriter stage")
         state.rewritten_answers = []
         return state
 
@@ -8224,13 +8270,13 @@ def n8_6_rewriter_synthesis_node(state: GeneralQAState) -> GeneralQAState:
     try:
         from agent.nodes.subagents.x_masters.rewriter import run_single_rewriter
     except ImportError as e:
-        print(f"  ⚠ X-Masters rewriter not available (optional dependency): {e}")
+        print(f"  [WARN] X-Masters rewriter not available (optional dependency): {e}")
         print(f"  → Continuing without X-Masters enhancement, using critiqued answers")
         state.rewritten_answers = state.critiqued_answers  # Fallback
         return state
 
     # 简化: 直接使用 llm_factory 的配置
-    print(f"  🔧 Rewriter will use llm_factory config")
+    print(f"  [TOOL] Rewriter will use llm_factory config")
 
     # Build problem context
     problem_context = state.cleaned_text or state.user_input
@@ -8267,9 +8313,11 @@ def n8_6_rewriter_synthesis_node(state: GeneralQAState) -> GeneralQAState:
                 )
                 if domain_hints:
                     retrieved_context += f"\n\n{domain_hints}"
-                    print(f"  ✅ Added domain knowledge hints to Rewriter context")
+                    print(
+                        f"  [SUCCESS] Added domain knowledge hints to Rewriter context"
+                    )
         except Exception as e:
-            print(f"  ⚠ Failed to add domain knowledge hints to Rewriter: {e}")
+            print(f"  [WARN] Failed to add domain knowledge hints to Rewriter: {e}")
 
     # Extract all critiqued solution strings
     all_solutions = [
@@ -8279,7 +8327,7 @@ def n8_6_rewriter_synthesis_node(state: GeneralQAState) -> GeneralQAState:
     ]
 
     if not all_solutions:
-        print(f"  ⚠ No valid solutions to synthesize")
+        print(f"  [WARN] No valid solutions to synthesize")
         state.rewritten_answers = []
         return state
 
@@ -8288,7 +8336,7 @@ def n8_6_rewriter_synthesis_node(state: GeneralQAState) -> GeneralQAState:
     rewritten_answers = []
 
     for i in range(num_rewriters):
-        print(f"\n  🔄 Synthesizing Rewritten Answer {i}...")
+        print(f"\n  [RUN] Synthesizing Rewritten Answer {i}...")
 
         try:
             # 直接传 llm=None，让 get_llm 自动使用 llm_factory 的配置
@@ -8316,16 +8364,16 @@ def n8_6_rewriter_synthesis_node(state: GeneralQAState) -> GeneralQAState:
                         "success": success,
                     }
                 )
-                print(f"    ✓ Rewriter {i} completed successfully")
+                print(f"    [OK] Rewriter {i} completed successfully")
             else:
-                print(f"    ⚠ Rewriter {i} produced empty answer")
+                print(f"    [WARN] Rewriter {i} produced empty answer")
 
         except Exception as e:
-            print(f"    ❌ Rewriter {i} error: {e}")
+            print(f"    [ERROR] Rewriter {i} error: {e}")
 
     # If no rewritten answers, use best critiqued answer as fallback
     if not rewritten_answers:
-        print(f"  ⚠ No rewritten answers generated, using best critiqued answer")
+        print(f"  [WARN] No rewritten answers generated, using best critiqued answer")
         best_critiqued = max(
             state.critiqued_answers, key=lambda x: x.get("success", False)
         )
@@ -8338,7 +8386,7 @@ def n8_6_rewriter_synthesis_node(state: GeneralQAState) -> GeneralQAState:
         ]
 
     state.rewritten_answers = rewritten_answers
-    print(f"\n✓ Generated {len(rewritten_answers)} rewritten answer(s)")
+    print(f"\n[OK] Generated {len(rewritten_answers)} rewritten answer(s)")
 
     return state
 
@@ -8584,7 +8632,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
             from agent.nodes.subagents.x_masters.selector import run_selector
 
             # 简化: 直接使用 llm_factory 的配置
-            print(f"  🔧 Selector will use llm_factory config")
+            print(f"  [TOOL] Selector will use llm_factory config")
 
             # Build problem context
             problem_context = state.cleaned_text or state.user_input
@@ -8624,10 +8672,12 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
                         if domain_hints:
                             retrieved_context += f"\n\n{domain_hints}"
                             print(
-                                f"  ✅ Added domain knowledge hints to Selector context"
+                                f"  [SUCCESS] Added domain knowledge hints to Selector context"
                             )
                 except Exception as e:
-                    print(f"  ⚠ Failed to add domain knowledge hints to Selector: {e}")
+                    print(
+                        f"  [WARN] Failed to add domain knowledge hints to Selector: {e}"
+                    )
 
             # Extract all rewritten solution strings
             all_solutions = [
@@ -8678,18 +8728,22 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
                                     "original_structured"
                                 )
 
-                    print(f"  ✓ Selected answer {selected_index + 1} as final answer")
+                    print(
+                        f"  [OK] Selected answer {selected_index + 1} as final answer"
+                    )
                 else:
-                    print(f"  ⚠ Selector failed, using first rewritten answer")
+                    print(f"  [WARN] Selector failed, using first rewritten answer")
                     if all_solutions:
                         state.final_answer = all_solutions[0]
             else:
-                print(f"  ⚠ No valid rewritten solutions for selection")
+                print(f"  [WARN] No valid rewritten solutions for selection")
 
         except ImportError as e:
-            print(f"  ⚠ X-Masters Selector not available: {e}, using original answer")
+            print(
+                f"  [WARN] X-Masters Selector not available: {e}, using original answer"
+            )
         except Exception as e:
-            print(f"  ⚠ Selector error: {e}, using original answer")
+            print(f"  [WARN] Selector error: {e}, using original answer")
 
     # OPTIMIZATION: Three-layer automated validation (三层自动化校验)
     validation_errors = []
@@ -8798,7 +8852,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
                         closed_inference_path=state.closed_inference_path,
                     )
 
-                    print(f"  📊 MCQ Validation Results:")
+                    print(f"  [STAT] MCQ Validation Results:")
                     print(f"    - Selected: {mcq_validation.selected_option}")
                     print(f"    - Consistency: {mcq_validation.consistency_score:.2f}")
                     print(f"    - Confidence: {mcq_validation.confidence:.2f}")
@@ -8809,7 +8863,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
 
                     if mcq_validation.alternative_better:
                         print(
-                            f"    ⚠ Alternative option {mcq_validation.alternative_better} may be better"
+                            f"    [WARN] Alternative option {mcq_validation.alternative_better} may be better"
                         )
                         validation_errors.append(
                             f"Evidence suggests option {mcq_validation.alternative_better} may be more consistent with the conclusion"
@@ -8819,15 +8873,15 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
                     if mcq_validation.confidence < 0.5:
                         state.reliability_score = mcq_validation.confidence
                         print(
-                            f"    ⚠ Low confidence answer: {mcq_validation.confidence:.2f}"
+                            f"    [WARN] Low confidence answer: {mcq_validation.confidence:.2f}"
                         )
 
                 except Exception as e:
-                    print(f"  ⚠ MCQ validation error: {e}")
+                    print(f"  [WARN] MCQ validation error: {e}")
 
     # If validation errors found, mark as invalid
     if validation_errors:
-        print(f"  ❌ Validation failed with {len(validation_errors)} error(s):")
+        print(f"  [ERROR] Validation failed with {len(validation_errors)} error(s):")
         for error in validation_errors[:5]:  # Show first 5
             print(f"    - {error}")
         state.consistency_label = "Inconsistent"
@@ -8857,7 +8911,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
     # CRITICAL: Prevent infinite loops - if N9 has been visited too many times, skip processing
     if n9_visits >= 3:
         print(
-            f"  ⚠ Infinite loop detected: N9 visited {n9_visits + 1} times, skipping to prevent infinite loop"
+            f"  [WARN] Infinite loop detected: N9 visited {n9_visits + 1} times, skipping to prevent infinite loop"
         )
         state.consistency_label = "Inconsistent"
         state.reliability_score = 0
@@ -8955,7 +9009,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
 
     # If validation errors found, mark as invalid and trigger exception
     if validation_errors:
-        print(f"  ❌ Validation failed with {len(validation_errors)} error(s):")
+        print(f"  [ERROR] Validation failed with {len(validation_errors)} error(s):")
         for error in validation_errors[:5]:  # Show first 5
             print(f"    - {error}")
         state.consistency_label = "Inconsistent"
@@ -8978,7 +9032,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
             tools = get_tools_for_node("n9_result_validation")
             print(f"  📚 Loaded {len(tools)} tool(s) for validation")
         except Exception as e:
-            print(f"  ⚠ Failed to load tools: {e}")
+            print(f"  [WARN] Failed to load tools: {e}")
 
     # Enhanced: Check inference path consistency
     inference_consistency_issues = []
@@ -9027,10 +9081,10 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
     if state.structured_condition and isinstance(state.structured_condition, dict):
         hard_constraints = state.structured_condition.get("hard_constraints", [])
         if hard_constraints:
-            print(f"  ⚠ Validating against hard constraints: {hard_constraints}")
+            print(f"  [WARN] Validating against hard constraints: {hard_constraints}")
     elif state.structured_condition:
         print(
-            f"  ⚠ structured_condition is not a dict (type: {type(state.structured_condition)}), skipping hard_constraints"
+            f"  [WARN] structured_condition is not a dict (type: {type(state.structured_condition)}), skipping hard_constraints"
         )
 
     # OPTIMIZATION: Add core keywords and option features to validation prompt
@@ -9115,7 +9169,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
     # CRITICAL: Ensure fact_check_result is a dict before using .get()
     if state.fact_check_result and isinstance(state.fact_check_result, dict):
         print(
-            f"  ✓ Fact check result: {state.fact_check_result.get('answer_matches_fact', 'N/A')}"
+            f"  [OK] Fact check result: {state.fact_check_result.get('answer_matches_fact', 'N/A')}"
         )
         if state.fact_check_result.get("correct_function"):
             print(
@@ -9123,7 +9177,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
             )
     elif state.fact_check_result:
         print(
-            f"  ⚠ fact_check_result is not a dict (type: {type(state.fact_check_result)}), skipping print"
+            f"  [WARN] fact_check_result is not a dict (type: {type(state.fact_check_result)}), skipping print"
         )
 
     # OPTIMIZATION 2: Code-level validation checks
@@ -9156,7 +9210,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
                         ):
                             constraint_violation = True
                             print(
-                                f"  ⚠ Constraint violation detected: answer contains prohibited term from negative constraint"
+                                f"  [WARN] Constraint violation detected: answer contains prohibited term from negative constraint"
                             )
                             break
                 if constraint_violation:
@@ -9173,7 +9227,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
                 ):
                     constraint_violation = True
                     print(
-                        f"  ⚠ Constraint violation detected: exclusive constraint 'category 1' but answer suggests other category"
+                        f"  [WARN] Constraint violation detected: exclusive constraint 'category 1' but answer suggests other category"
                     )
 
     # Check 2: Answer logical rationality
@@ -9193,17 +9247,17 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
             if abs(exp) > 10:
                 rationality_issue = True
                 print(
-                    f"  ⚠ Rationality issue: numerical value has extreme exponent ({exp})"
+                    f"  [WARN] Rationality issue: numerical value has extreme exponent ({exp})"
                 )
         # Check for empty or extremely long sequences
         if state.answer_format_label == "Sequence":
             if len(answer_str) == 0:
                 rationality_issue = True
-                print(f"  ⚠ Rationality issue: sequence answer is empty")
+                print(f"  [WARN] Rationality issue: sequence answer is empty")
             elif len(answer_str) > 10000:
                 rationality_issue = True
                 print(
-                    f"  ⚠ Rationality issue: sequence answer is extremely long ({len(answer_str)} chars)"
+                    f"  [WARN] Rationality issue: sequence answer is extremely long ({len(answer_str)} chars)"
                 )
 
     # Apply validation results
@@ -9211,11 +9265,11 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
         if state.consistency_label == "Consistent":
             state.consistency_label = "Inconsistent"
             print(
-                f"  ⚠ Overriding consistency to Inconsistent due to constraint violation or rationality issue"
+                f"  [WARN] Overriding consistency to Inconsistent due to constraint violation or rationality issue"
             )
         if not state.reliability_score or state.reliability_score > 2.0:
             state.reliability_score = 2.0
-            print(f"  ⚠ Setting reliability_score to 2.0 due to validation issues")
+            print(f"  [WARN] Setting reliability_score to 2.0 due to validation issues")
 
     # Enhanced: Consider inference consistency issues
     if inference_consistency_issues:
@@ -9224,7 +9278,9 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
             state.consistency_label = "Inconsistent"
             if not state.reliability_score or state.reliability_score > 3:
                 state.reliability_score = 3.0
-            print(f"  ⚠ Overriding consistency to Inconsistent due to detected issues")
+            print(
+                f"  [WARN] Overriding consistency to Inconsistent due to detected issues"
+            )
 
     # ========== Step 7: Validate answer against parameter constraints ==========
     # Additional validation using parameter constraints for calculation problems
@@ -9241,7 +9297,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
         )
 
         if not is_valid and constraint_issues:
-            print(f"  ⚠ Parameter constraint validation failed:")
+            print(f"  [WARN] Parameter constraint validation failed:")
             for issue in constraint_issues:
                 print(f"    - {issue}")
 
@@ -9249,14 +9305,14 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
             if state.consistency_label == "Consistent":
                 state.consistency_label = "Inconsistent"
                 print(
-                    f"  ⚠ Overriding consistency to Inconsistent due to parameter constraint violations"
+                    f"  [WARN] Overriding consistency to Inconsistent due to parameter constraint violations"
                 )
 
             # Reduce reliability score
             if not state.reliability_score or state.reliability_score > 2.0:
                 state.reliability_score = 2.0
                 print(
-                    f"  ⚠ Setting reliability_score to 2.0 due to parameter constraint violations"
+                    f"  [WARN] Setting reliability_score to 2.0 due to parameter constraint violations"
                 )
 
             # Mark exception
@@ -9332,7 +9388,7 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
             "llm" in exception_lower
             and ("error" in exception_lower or "failed" in exception_lower)
         ):
-            print(f"  ⚠ LLM error detected: {state.exception_type_label}")
+            print(f"  [WARN] LLM error detected: {state.exception_type_label}")
             print(f"    - Generating fallback answer and ending flow")
 
             # ========== P3-2 NEW: Enhanced Multi-Level Error Recovery ==========
@@ -9368,7 +9424,7 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
                         has_options=has_options,
                     )
 
-                    print(f"  📊 Recovery level determined: {recovery_level.value}")
+                    print(f"  [STAT] Recovery level determined: {recovery_level.value}")
 
                     # Generate recovery answer
                     recovery_result = generate_recovery_answer(
@@ -9382,7 +9438,9 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
                     )
 
                     if recovery_result.success:
-                        print(f"  ✓ Recovery successful using: {recovery_level.value}")
+                        print(
+                            f"  [OK] Recovery successful using: {recovery_level.value}"
+                        )
                         print(f"    - Confidence: {recovery_result.confidence:.2f}")
                         print(f"    - Reason: {recovery_result.reason}")
 
@@ -9401,10 +9459,10 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
 
                         return state
                     else:
-                        print(f"  ⚠ Recovery failed: {recovery_result.reason}")
+                        print(f"  [WARN] Recovery failed: {recovery_result.reason}")
 
                 except Exception as e:
-                    print(f"  ⚠ Enhanced recovery failed: {e}")
+                    print(f"  [WARN] Enhanced recovery failed: {e}")
 
             # ========== NEW: Enhanced Fallback Strategy (P1 optimization) ==========
             # Use intelligent fallback strategy instead of simple knowledge summary
@@ -9417,7 +9475,9 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
                     fallback_result = generate_fallback_answer(state, "timeout")
 
                     if fallback_result.success:
-                        print(f"  ✓ Fallback strategy: {fallback_result.strategy_used}")
+                        print(
+                            f"  [OK] Fallback strategy: {fallback_result.strategy_used}"
+                        )
                         print(f"    - Confidence: {fallback_result.confidence:.2f}")
                         print(f"    - Reasoning: {fallback_result.reasoning}")
 
@@ -9465,7 +9525,7 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
                     "Unable to generate answer due to LLM service unavailability."
                 )
 
-            print(f"  ✓ Fallback answer generated: {state.final_answer[:100]}...")
+            print(f"  [OK] Fallback answer generated: {state.final_answer[:100]}...")
 
             # CRITICAL: Clear error_message so the test considers this a success
             state.error_message = None
@@ -9487,7 +9547,7 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
             tools = get_tools_for_node("n10_exception_handling")
             print(f"  📚 Loaded {len(tools)} tool(s) for exception handling")
         except Exception as e:
-            print(f"  ⚠ Failed to load tools: {e}")
+            print(f"  [WARN] Failed to load tools: {e}")
 
     # OPTIMIZATION: Comprehensive exception type detection (全覆盖异常类型)
     # Define all possible exception types
@@ -9555,7 +9615,7 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
             exception_context["knowledge_confidence"] = metadata.get("confidence")
 
     print(
-        f"  📋 Exception Type: {exception_type} ({exception_types.get(exception_type, '未知')})"
+        f"  [INFO] Exception Type: {exception_type} ({exception_types.get(exception_type, '未知')})"
     )
     print(f"    - Knowledge Validity: {state.knowledge_validity_label}")
     print(f"    - Has Core Conclusion: {bool(state.core_conclusion)}")
@@ -9565,7 +9625,7 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
         prompt = get_exception_handling_prompt(exception_type, exception_context)
     except Exception as e:
         print(
-            f"  ⚠ Failed to generate exception handling prompt: {type(e).__name__}: {str(e)[:200]}"
+            f"  [WARN] Failed to generate exception handling prompt: {type(e).__name__}: {str(e)[:200]}"
         )
         state.error_message = (
             f"Failed to generate exception handling prompt: {str(e)[:200]}"
@@ -9595,10 +9655,10 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
             if last_error:
                 error_msg += f": {last_error[:200]}"
             state.error_message = error_msg
-            print(f"  ✗ {error_msg}")
+            print(f"  [FAIL] {error_msg}")
             return state
     except Exception as e:
-        print(f"  ⚠ Exception during LLM call: {type(e).__name__}: {str(e)[:200]}")
+        print(f"  [WARN] Exception during LLM call: {type(e).__name__}: {str(e)[:200]}")
         state.error_message = f"Exception during LLM call: {str(e)[:200]}"
         return state
 
@@ -9627,13 +9687,13 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
                     # 覆盖默认的重试目标
                     state.retry_target_node = strategy["target_node"]
                     print(
-                        f"  🔧 Smart retry strategy applied: targeting {state.retry_target_node}"
+                        f"  [TOOL] Smart retry strategy applied: targeting {state.retry_target_node}"
                     )
         except Exception as e:
-            print(f"  ⚠ Smart diagnosis enhancement failed: {e}")
+            print(f"  [WARN] Smart diagnosis enhancement failed: {e}")
 
-    print(f"✓ Exception type: {state.exception_type_label}")
-    print(f"✓ Solution suggestion: {state.solution_suggestion}")
+    print(f"[OK] Exception type: {state.exception_type_label}")
+    print(f"[OK] Solution suggestion: {state.solution_suggestion}")
 
     return state
 
@@ -9691,7 +9751,7 @@ def n11_manual_intervention_node(state: GeneralQAState) -> GeneralQAState:
     state.manual_intervention_guide = result.get("manual_intervention_guide")
     state.intermediate_result_snapshot = result.get("intermediate_result_snapshot")
 
-    print(f"✓ Manual intervention guide generated")
+    print(f"[OK] Manual intervention guide generated")
 
     return state
 
@@ -9793,7 +9853,7 @@ Respond with ONLY the JSON object, no additional text."""
                 return reasoning_analysis, critical_hints, knowledge_application
 
     except Exception as e:
-        print(f"  [Cache] ⚠ Failed to generate reasoning analysis: {e}")
+        print(f"  [Cache] [WARN] Failed to generate reasoning analysis: {e}")
 
     # Fallback: return basic analysis
     return "", [], {}
@@ -9877,10 +9937,10 @@ def _save_answer_cache_on_completion(state: GeneralQAState) -> None:
 
         if reasoning_analysis:
             print(
-                f"  [Cache] ✅ Reasoning analysis generated: {reasoning_analysis[:100]}..."
+                f"  [Cache] [SUCCESS] Reasoning analysis generated: {reasoning_analysis[:100]}..."
             )
         if critical_hints:
-            print(f"  [Cache] ✅ Critical hints: {critical_hints[:3]}")
+            print(f"  [Cache] [SUCCESS] Critical hints: {critical_hints[:3]}")
 
         # 6. Cache the correct answer with enhanced data
         success = cache_correct_answer(
@@ -9901,10 +9961,10 @@ def _save_answer_cache_on_completion(state: GeneralQAState) -> None:
 
         if success:
             print(
-                f"  [Cache] ✅ Saved CORRECT answer to cache (with reasoning analysis)"
+                f"  [Cache] [SUCCESS] Saved CORRECT answer to cache (with reasoning analysis)"
             )
         else:
-            print(f"  [Cache] ⚠ Failed to save correct answer")
+            print(f"  [Cache] [WARN] Failed to save correct answer")
     else:
         # Analyze and cache error
         reasoning_path = []
@@ -9931,9 +9991,9 @@ def _save_answer_cache_on_completion(state: GeneralQAState) -> None:
         )
 
         if success:
-            print(f"  [Cache] ✅ Saved ERROR ANALYSIS to cache")
+            print(f"  [Cache] [SUCCESS] Saved ERROR ANALYSIS to cache")
         else:
-            print(f"  [Cache] ⚠ Failed to save error analysis")
+            print(f"  [Cache] [WARN] Failed to save error analysis")
 
 
 def _check_answer_correctness(final_answer: str, expected_answer: str) -> bool:
@@ -10083,7 +10143,7 @@ def route_after_n4(state: GeneralQAState) -> str:
         if state.auto_retry_count < 1:
             state.auto_retry_count = (state.auto_retry_count or 0) + 1
             print(
-                f"  🔄 Auto-retry mechanism triggered: retrying n2_calculation_algorithm_recognition (attempt {state.auto_retry_count}/1)"
+                f"  [RUN] Auto-retry mechanism triggered: retrying n2_calculation_algorithm_recognition (attempt {state.auto_retry_count}/1)"
             )
             # Reset relevant state to allow retry
             state.calculation_steps = None
@@ -10123,7 +10183,7 @@ def route_after_n6(state: GeneralQAState) -> str:
         ]
         if any(keyword in exception_lower for keyword in unrecoverable_keywords):
             print(
-                f"  ⚠ Unrecoverable error detected in N6: {state.exception_type_label}"
+                f"  [WARN] Unrecoverable error detected in N6: {state.exception_type_label}"
             )
             print(
                 f"    - Skipping retry to prevent infinite loop, routing to exception handling"
@@ -10145,7 +10205,7 @@ def route_after_n6(state: GeneralQAState) -> str:
             # Fallback: treat as Numerical if key_parameters exist
             if state.key_parameters:
                 print(
-                    f"  ⚠ calculation_type_label='{state.calculation_type_label}' is not recognized, treating as Numerical"
+                    f"  [WARN] calculation_type_label='{state.calculation_type_label}' is not recognized, treating as Numerical"
                 )
                 return "n4_calculation_decomposition"
             else:
@@ -10157,7 +10217,7 @@ def route_after_n6(state: GeneralQAState) -> str:
         # Try to construct fallback from domain_knowledge_map
         if state.domain_knowledge_map:
             print(
-                f"  ⚠ phenomenon_knowledge_match_table not available, constructing fallback from domain_knowledge_map"
+                f"  [WARN] phenomenon_knowledge_match_table not available, constructing fallback from domain_knowledge_map"
             )
             state.phenomenon_knowledge_match_table = {}
             for domain, knowledge in state.domain_knowledge_map.items():
@@ -10175,7 +10235,7 @@ def route_after_n6(state: GeneralQAState) -> str:
                         "knowledge_points": [],
                     }
             state.match_confidence_label = "Low"
-            print(f"  ✓ Created fallback inference from domain_knowledge_map")
+            print(f"  [OK] Created fallback inference from domain_knowledge_map")
             return "n7_complete_inference"
         else:
             # Initialize node visit tracking
@@ -10186,7 +10246,7 @@ def route_after_n6(state: GeneralQAState) -> str:
             n1_visits = state.node_visit_count.get("n1_question_decomposition", 0)
             if n1_visits >= 2:
                 print(
-                    f"  ⚠ Infinite loop detected: n1_question_decomposition visited {n1_visits} times, stopping retry"
+                    f"  [WARN] Infinite loop detected: n1_question_decomposition visited {n1_visits} times, stopping retry"
                 )
                 state.exception_type_label = (
                     state.exception_type_label or "Inference Match Failed"
@@ -10201,7 +10261,7 @@ def route_after_n6(state: GeneralQAState) -> str:
                 state.auto_retry_count = (state.auto_retry_count or 0) + 1
                 state.node_visit_count["n1_question_decomposition"] = n1_visits + 1
                 print(
-                    f"  🔄 Auto-retry mechanism triggered: retrying n1_question_decomposition and n3_knowledge_retrieval (attempt {state.auto_retry_count}/1, total visits: {state.node_visit_count['n1_question_decomposition']})"
+                    f"  [RUN] Auto-retry mechanism triggered: retrying n1_question_decomposition and n3_knowledge_retrieval (attempt {state.auto_retry_count}/1, total visits: {state.node_visit_count['n1_question_decomposition']})"
                 )
                 # Reset relevant state to allow retry
                 state.phenomenon_knowledge_match_table = None
@@ -10209,7 +10269,7 @@ def route_after_n6(state: GeneralQAState) -> str:
                 # Instead of routing to n1 (which would cause KeyError), route to exception handling
                 # The retry mechanism should be handled differently - for now, route to exception handling
                 print(
-                    f"  ⚠ Auto-retry would route to n1, but that's not in route_after_n6 edges. Routing to exception handling instead."
+                    f"  [WARN] Auto-retry would route to n1, but that's not in route_after_n6 edges. Routing to exception handling instead."
                 )
                 state.exception_type_label = (
                     state.exception_type_label
@@ -10219,7 +10279,7 @@ def route_after_n6(state: GeneralQAState) -> str:
             else:
                 # No fallback available and retry exhausted, route to exception handling
                 print(
-                    f"  ⚠ No phenomenon_knowledge_match_table and no domain_knowledge_map, auto-retry exhausted, routing to exception handling"
+                    f"  [WARN] No phenomenon_knowledge_match_table and no domain_knowledge_map, auto-retry exhausted, routing to exception handling"
                 )
                 state.exception_type_label = (
                     state.exception_type_label or "Inference Match Failed"
@@ -10255,7 +10315,7 @@ def route_after_n7(state: GeneralQAState) -> str:
         ]
         if any(keyword in exception_lower for keyword in unrecoverable_keywords):
             print(
-                f"  ⚠ Unrecoverable error detected in N7: {state.exception_type_label}"
+                f"  [WARN] Unrecoverable error detected in N7: {state.exception_type_label}"
             )
             print(
                 f"    - Skipping retry to prevent infinite loop, routing to exception handling"
@@ -10291,11 +10351,13 @@ def route_after_n7(state: GeneralQAState) -> str:
                 # Proceed with available knowledge instead of retrying
                 if state.closed_inference_path and state.core_conclusion:
                     print(
-                        f"  ✓ Proceeding to answer generation with available knowledge"
+                        f"  [OK] Proceeding to answer generation with available knowledge"
                     )
                     return "n8_answer_generation"
                 else:
-                    print(f"  ⚠ Inference incomplete, proceeding to exception handling")
+                    print(
+                        f"  [WARN] Inference incomplete, proceeding to exception handling"
+                    )
                     state.exception_type_label = (
                         state.exception_type_label or "Knowledge Gaps - No Improvement"
                     )
@@ -10316,7 +10378,7 @@ def route_after_n7(state: GeneralQAState) -> str:
                         # Previous N3 attempt didn't clear the flag, meaning it didn't run or didn't help
                         already_attempted = True
                         print(
-                            f"  ⚠ Same gaps detected after previous supplementary retrieval attempt"
+                            f"  [WARN] Same gaps detected after previous supplementary retrieval attempt"
                         )
 
                 # ========== NEW: Check if gaps contain entities that already failed ==========
@@ -10393,7 +10455,7 @@ def route_after_n7(state: GeneralQAState) -> str:
                             state.key_entities.insert(0, entity)
 
                     print(
-                        f"  🔄 Knowledge gaps detected, routing to N3 for supplementary retrieval"
+                        f"  [RUN] Knowledge gaps detected, routing to N3 for supplementary retrieval"
                     )
                     print(f"    - Gaps: {knowledge_gaps[:3]}")
                     print(f"    - Missing entities: {missing_entities[:3]}")
@@ -10412,17 +10474,17 @@ def route_after_n7(state: GeneralQAState) -> str:
                 else:
                     if already_attempted:
                         print(
-                            f"  ⚠ These gaps were already attempted in previous N3 visit, skipping retry"
+                            f"  [WARN] These gaps were already attempted in previous N3 visit, skipping retry"
                         )
                     else:
                         print(
-                            f"  ⚠ No extractable missing entities from gaps, skipping supplementary retrieval"
+                            f"  [WARN] No extractable missing entities from gaps, skipping supplementary retrieval"
                         )
                     # Reset backtracking flag to prevent infinite loop
                     state.needs_backtracking = False
             else:
                 print(
-                    f"  ⚠ Maximum N3 visits reached ({n3_visits}/{MAX_N3_VISITS}), proceeding with available knowledge"
+                    f"  [WARN] Maximum N3 visits reached ({n3_visits}/{MAX_N3_VISITS}), proceeding with available knowledge"
                 )
                 # Reset backtracking flag to prevent infinite loop
                 state.needs_backtracking = False
@@ -10527,7 +10589,7 @@ def route_after_n8(state: GeneralQAState) -> str:
 
         if n7_visits >= 2 or n3_visits >= 2:
             print(
-                f"  ⚠ Infinite loop detected: n7 visited {n7_visits} times, n3 visited {n3_visits} times, stopping retry"
+                f"  [WARN] Infinite loop detected: n7 visited {n7_visits} times, n3 visited {n3_visits} times, stopping retry"
             )
             state.exception_type_label = (
                 state.exception_type_label or "Answer Generation Failed"
@@ -10547,7 +10609,7 @@ def route_after_n8(state: GeneralQAState) -> str:
                 state.auto_retry_count = (state.auto_retry_count or 0) + 1
                 state.node_visit_count["n3_knowledge_retrieval"] = n3_visits + 1
                 print(
-                    f"  🔄 Auto-retry mechanism triggered: retrying n3_knowledge_retrieval for factual question (attempt {state.auto_retry_count}/1, total visits: {state.node_visit_count['n3_knowledge_retrieval']})"
+                    f"  [RUN] Auto-retry mechanism triggered: retrying n3_knowledge_retrieval for factual question (attempt {state.auto_retry_count}/1, total visits: {state.node_visit_count['n3_knowledge_retrieval']})"
                 )
                 # Reset relevant state to allow retry
                 state.structured_answer = None
@@ -10560,7 +10622,7 @@ def route_after_n8(state: GeneralQAState) -> str:
             state.auto_retry_count = (state.auto_retry_count or 0) + 1
             state.node_visit_count["n7_complete_inference"] = n7_visits + 1
             print(
-                f"  🔄 Auto-retry mechanism triggered: retrying n7_complete_inference (attempt {state.auto_retry_count}/1, total visits: {state.node_visit_count['n7_complete_inference']})"
+                f"  [RUN] Auto-retry mechanism triggered: retrying n7_complete_inference (attempt {state.auto_retry_count}/1, total visits: {state.node_visit_count['n7_complete_inference']})"
             )
             # Reset relevant state to allow retry
             state.structured_answer = None
@@ -10570,7 +10632,7 @@ def route_after_n8(state: GeneralQAState) -> str:
             # Check if we came from n10 retry - if so, mark that retry failed
             if state.retry_count and state.retry_count > 0:
                 print(
-                    f"  ⚠ Retry from n10 failed: answer generation still unsuccessful after retry"
+                    f"  [WARN] Retry from n10 failed: answer generation still unsuccessful after retry"
                 )
                 print(
                     f"    - This indicates the issue cannot be resolved by retrying n8"
@@ -10590,7 +10652,7 @@ def route_after_n8(state: GeneralQAState) -> str:
     # Otherwise, proceed to validation (fallback for single answer)
     return "n9_result_validation"
     if state.retry_count and state.retry_count > 0:
-        print(f"  ✓ Retry successful: answer generated successfully")
+        print(f"  [OK] Retry successful: answer generated successfully")
         # Reset retry_count on success
         state.retry_count = 0
         state.retry_target_node = None
@@ -10622,7 +10684,7 @@ def route_after_n9(state: GeneralQAState) -> str:
     # If N9 has been visited 3+ times or N8 has been visited 3+ times, stop retrying
     if n9_visits >= 3 or n8_visits >= 3:
         print(
-            f"  ⚠ Infinite loop detected: N9 visited {n9_visits} times, N8 visited {n8_visits} times"
+            f"  [WARN] Infinite loop detected: N9 visited {n9_visits} times, N8 visited {n8_visits} times"
         )
         print(
             f"    - Stopping retry to prevent infinite loop, routing to manual intervention"
@@ -10644,7 +10706,7 @@ def route_after_n10(state: GeneralQAState) -> str:
     # CRITICAL: If error_message is already cleared (LLM timeout handled), end the flow
     if state.error_message is None and state.final_answer:
         # LLM timeout was already handled in n10_exception_handling_node
-        print(f"  ✓ LLM timeout already handled, ending flow with fallback answer")
+        print(f"  [OK] LLM timeout already handled, ending flow with fallback answer")
         return "end"
 
     # CRITICAL: Check for LLM timeout/error first - these should NOT retry
@@ -10653,7 +10715,7 @@ def route_after_n10(state: GeneralQAState) -> str:
         if "timeout" in exception_lower or (
             "llm" in exception_lower and "error" in exception_lower
         ):
-            print(f"  ⚠ LLM error detected: {state.exception_type_label}")
+            print(f"  [WARN] LLM error detected: {state.exception_type_label}")
             print(f"    - Not retrying, generating fallback answer and ending")
             # Generate a fallback answer if we have any knowledge or inference
             if state.domain_knowledge_map or state.core_conclusion:
@@ -10677,7 +10739,9 @@ def route_after_n10(state: GeneralQAState) -> str:
             # CRITICAL: Clear error_message so the test considers this a success
             # We have a fallback answer, so this is not a complete failure
             if state.final_answer:
-                print(f"  ✓ Fallback answer generated: {state.final_answer[:100]}...")
+                print(
+                    f"  [OK] Fallback answer generated: {state.final_answer[:100]}..."
+                )
                 state.error_message = None  # Clear error so test passes
                 state.exception_type_label = None  # Clear exception label too
             else:
@@ -10685,7 +10749,7 @@ def route_after_n10(state: GeneralQAState) -> str:
                 state.final_answer = (
                     "Unable to generate answer due to LLM service unavailability."
                 )
-                print(f"  ⚠ No fallback answer available, using generic response")
+                print(f"  [WARN] No fallback answer available, using generic response")
                 state.error_message = None  # Still clear to avoid test failure
 
             return "end"  # End the flow instead of retrying
@@ -10738,7 +10802,7 @@ def route_after_n10(state: GeneralQAState) -> str:
 
         if target_visits >= 2 or n8_visits >= 3 or n9_visits >= 3:
             print(
-                f"  ⚠ Infinite loop detected: {state.retry_target_node} visited {target_visits} times, N8 visited {n8_visits} times, N9 visited {n9_visits} times"
+                f"  [WARN] Infinite loop detected: {state.retry_target_node} visited {target_visits} times, N8 visited {n8_visits} times, N9 visited {n9_visits} times"
             )
             print(
                 f"    - Stopping retry to prevent infinite loop, routing to manual intervention"
@@ -10748,7 +10812,7 @@ def route_after_n10(state: GeneralQAState) -> str:
         # Check retry count (max 1 retry per exception type to prevent loops)
         if state.retry_count >= 1:
             print(
-                f"  ⚠ Maximum retry count (1) reached for this exception type, routing to manual intervention"
+                f"  [WARN] Maximum retry count (1) reached for this exception type, routing to manual intervention"
             )
             print(f"    - Exception type: {state.exception_type_label}")
             print(f"    - Retry target: {state.retry_target_node}")
@@ -10758,7 +10822,7 @@ def route_after_n10(state: GeneralQAState) -> str:
         state.retry_count = state.retry_count + 1
         state.node_visit_count[state.retry_target_node] = target_visits + 1
         print(
-            f"  🔄 Retry attempt {state.retry_count}/1, routing to {state.retry_target_node} (total visits: {state.node_visit_count[state.retry_target_node]})"
+            f"  [RUN] Retry attempt {state.retry_count}/1, routing to {state.retry_target_node} (total visits: {state.node_visit_count[state.retry_target_node]})"
         )
         print(f"    - If this retry fails, will route to manual intervention")
         return state.retry_target_node
@@ -10938,7 +11002,12 @@ def general_qa_input_mapper(global_state: Any) -> GeneralQAState:
     """
     from state import GlobalState
 
-    return GeneralQAState(user_input=global_state.user_input)
+    return GeneralQAState(
+        user_input=global_state.user_input,
+        progress_callback=getattr(global_state, "progress_callback", None),
+        session_id=getattr(global_state, "session_id", None),
+        parent_state=global_state,
+    )
 
 
 def general_qa_output_mapper(
@@ -10974,7 +11043,7 @@ def general_qa_output_mapper(
             general_qa_state.core_conclusion
         )
 
-    print(f"✅ General QA subgraph completed")
+    print(f"[SUCCESS] General QA subgraph completed")
     if general_qa_state.final_answer:
         print(f"  - Final answer: {general_qa_state.final_answer[:200]}...")
     if general_qa_state.error_message:

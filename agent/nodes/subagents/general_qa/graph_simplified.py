@@ -206,9 +206,11 @@ def n0_preprocess_node(state: GeneralQAState) -> GeneralQAState:
     state.core_domains = [result.get("domain", "general")]
     state.core_keywords = result.get("key_terms", [])
 
-    print(f"  ✓ 问题类型: {state.question_type_label}")
-    print(f"  ✓ 领域: {state.core_domains}")
-    print(f"  ✓ 选项数: {len(state.question_options) if state.question_options else 0}")
+    print(f"  [OK] 问题类型: {state.question_type_label}")
+    print(f"  [OK] 领域: {state.core_domains}")
+    print(
+        f"  [OK] 选项数: {len(state.question_options) if state.question_options else 0}"
+    )
 
     return state
 
@@ -222,11 +224,11 @@ def deep_research_node(state: GeneralQAState) -> GeneralQAState:
     使用deep_research子图获取充分的知识背景
     """
     print("\n" + "=" * 60)
-    print("🔬 Deep Research: 深度知识检索")
+    print("[Deep Research] 深度知识检索")
     print("=" * 60)
 
     if not DEEP_RESEARCH_AVAILABLE:
-        print("  ⚠ Deep Research不可用，跳过")
+        print("  [WARN] Deep Research不可用，跳过")
         state.domain_knowledge_map = {"general": {"facts": [], "context": ""}}
         return state
 
@@ -251,7 +253,7 @@ def deep_research_node(state: GeneralQAState) -> GeneralQAState:
 请深入研究这个问题，检索相关知识和文献，为回答问题提供充分的知识背景。
 """
 
-        print(f"  📋 研究问题: {state.cleaned_text[:100]}...")
+        print(f"  [INFO] 研究问题: {state.cleaned_text[:100]}...")
 
         # 调用Deep Research
         from agent.nodes.subagents.deep_research.configuration import Configuration
@@ -291,13 +293,15 @@ def deep_research_node(state: GeneralQAState) -> GeneralQAState:
             }
             state.deep_research_result = {"context": research_context, "success": True}
 
-            print(f"  ✓ Deep Research完成，获取 {len(research_context)} 字符的知识背景")
+            print(
+                f"  [OK] Deep Research完成，获取 {len(research_context)} 字符的知识背景"
+            )
         else:
-            print("  ⚠ Deep Research返回空结果")
+            print("  [WARN] Deep Research返回空结果")
             state.domain_knowledge_map = {"general": {"facts": [], "context": ""}}
 
     except Exception as e:
-        print(f"  ✗ Deep Research失败: {e}")
+        print(f"  [FAIL] Deep Research失败: {e}")
         state.domain_knowledge_map = {"general": {"facts": [], "context": ""}}
 
     return state
@@ -312,11 +316,11 @@ def xmasters_node(state: GeneralQAState) -> GeneralQAState:
     使用X-Masters进行多解法、批评、综合、选择
     """
     print("\n" + "=" * 60)
-    print("🎯 X-Masters: 多路径推理")
+    print("[X-Masters] X-Masters: 多路径推理")
     print("=" * 60)
 
     if not XMASTERS_AVAILABLE:
-        print("  ⚠ X-Masters不可用，使用单路径推理")
+        print("  [WARN] X-Masters不可用，使用单路径推理")
         return _fallback_inference(state)
 
     try:
@@ -350,8 +354,8 @@ def xmasters_node(state: GeneralQAState) -> GeneralQAState:
 {context[:4000]}
 """
 
-        print(f"  📋 问题长度: {len(problem)} 字符")
-        print(f"  🔄 使用 {XMASTERS_NUM_SOLVERS} 个Solver")
+        print(f"  [INFO] 问题长度: {len(problem)} 字符")
+        print(f"  [RUN] 使用 {XMASTERS_NUM_SOLVERS} 个Solver")
 
         # 构建X-Masters图
         xmasters_graph = build_xmasters_graph().compile()
@@ -378,14 +382,14 @@ def xmasters_node(state: GeneralQAState) -> GeneralQAState:
         if final_answer:
             state.final_answer = _extract_answer(final_answer, state)
             state.core_conclusion = final_answer
-            print(f"  ✓ X-Masters完成")
-            print(f"  ✓ 答案: {state.final_answer}")
+            print(f"  [OK] X-Masters完成")
+            print(f"  [OK] 答案: {state.final_answer}")
         else:
-            print("  ⚠ X-Masters返回空答案，使用备用推理")
+            print("  [WARN] X-Masters返回空答案，使用备用推理")
             return _fallback_inference(state)
 
     except Exception as e:
-        print(f"  ✗ X-Masters失败: {e}")
+        print(f"  [FAIL] X-Masters失败: {e}")
         return _fallback_inference(state)
 
     return state
@@ -434,7 +438,7 @@ def _fallback_inference(state: GeneralQAState) -> GeneralQAState:
         if result:
             state.final_answer = _extract_answer(result.get("answer", ""), state)
             state.core_conclusion = result.get("analysis", "")
-            print(f"  ✓ 备用推理完成，答案: {state.final_answer}")
+            print(f"  [OK] 备用推理完成，答案: {state.final_answer}")
         else:
             state.final_answer = response[:100]
             state.core_conclusion = response
@@ -504,7 +508,7 @@ def n8_format_node(state: GeneralQAState) -> GeneralQAState:
     print("=" * 60)
 
     if not state.final_answer:
-        print("  ⚠ 无答案可格式化")
+        print("  [WARN] 无答案可格式化")
         return state
 
     # 验证答案格式
@@ -534,8 +538,8 @@ def n8_format_node(state: GeneralQAState) -> GeneralQAState:
     state.final_answer = answer
     state.format_valid_label = "Valid"
 
-    print(f"  ✓ 最终答案: {state.final_answer}")
-    print(f"  ✓ 格式: {format_label}")
+    print(f"  [OK] 最终答案: {state.final_answer}")
+    print(f"  [OK] 格式: {format_label}")
 
     return state
 
@@ -618,7 +622,7 @@ def run_simplified_general_qa(user_input: str, **kwargs) -> Dict[str, Any]:
         包含final_answer的结果字典
     """
     print("\n" + "=" * 60)
-    print("🚀 简化版 GENERAL QA 流程")
+    print("[START] 简化版 GENERAL QA 流程")
     print("   核心: Deep Research + X-Masters")
     print("=" * 60)
 
@@ -641,7 +645,7 @@ def run_simplified_general_qa(user_input: str, **kwargs) -> Dict[str, Any]:
         elapsed = time.time() - start_time
 
         print("\n" + "=" * 60)
-        print(f"✅ 完成，耗时 {elapsed:.1f}秒")
+        print(f"[SUCCESS] 完成，耗时 {elapsed:.1f}秒")
         print("=" * 60)
 
         return {
@@ -654,7 +658,7 @@ def run_simplified_general_qa(user_input: str, **kwargs) -> Dict[str, Any]:
 
     except Exception as e:
         elapsed = time.time() - start_time
-        print(f"\n❌ 流程错误: {e}")
+        print(f"\n[ERROR] 流程错误: {e}")
 
         return {
             "final_answer": None,

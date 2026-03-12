@@ -347,7 +347,7 @@ Please evaluate the following experimental plan:
 
 **Required Output Format - Final Summary:**
 
-✅ Final Summary
+[SUCCESS] Final Summary
 
 **Framework 1 Results (0-100% scale):**
 | Metric | Score |

@@ -147,3 +147,34 @@ class ImmunityState(BaseModel):
     cache_input_hash: str = Field(
         default="", description="Hash of the input for cache lookup"
     )
+
+    def get_llm(
+        self, purpose: str = "reasoning", node_name: Optional[str] = None, **kwargs
+    ) -> Optional[Any]:
+        """
+        获取 LLM 实例（推荐方法）
+
+        复用父图的 get_llm 方法，如果父图不可用则使用本地 callback。
+
+        Args:
+            purpose: 模型用途，可选: "reasoning", "bioinformatics", "reasoning_advanced", "code"
+            node_name: 节点名称
+            **kwargs: 传递给 LLM 创建函数的其他参数
+
+        Returns:
+            LLM 实例，如果创建失败则返回 None
+        """
+        if self.parent_state and hasattr(self.parent_state, "get_llm"):
+            return self.parent_state.get_llm(
+                purpose=purpose, node_name=node_name, **kwargs
+            )
+
+        from agent.utils.llm_factory import create_llm_with_thinking
+
+        return create_llm_with_thinking(
+            purpose=purpose,
+            progress_callback=self.progress_callback,
+            session_id=self.session_id,
+            node_name=node_name,
+            **kwargs,
+        )

@@ -93,7 +93,7 @@ async def run_coding_agent_in_sandbox(
         sandbox = await executor.create_sandbox(config.sandbox_image)
         
         # 2. 准备工作目录结构
-        workspace = f"/tmp/sessions/{session_id}"
+        workspace = f"/data/sessions/{session_id}"
         await sandbox.commands.run(f"mkdir -p {workspace}/{{input,output,.agent,reports}}")
         
         # 3. 上传 tasks.md
@@ -109,7 +109,7 @@ async def run_coding_agent_in_sandbox(
         if context.file_paths:
             for file_path in context.file_paths:
                 # 假设文件路径是服务器路径，转换为容器路径
-                container_path = file_path.replace("/data/sessions/", "/tmp/sessions/", 1)
+                container_path = file_path.replace("/data/sessions/", "/data/sessions/", 1)
                 # 如果文件在本地，上传；否则假设已经在沙盒中
                 if Path(file_path).exists():
                     await executor.upload_file(file_path, container_path)

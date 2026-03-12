@@ -59,7 +59,7 @@ async def retrieve_from_qdrant(
         Retrieval result dictionary containing documents and citations
     """
     if not _check_qdrant_config():
-        print("⚠️ Qdrant configuration unavailable, skipping vector database retrieval")
+        print("[WARN]️ Qdrant configuration unavailable, skipping vector database retrieval")
         return {"documents": [], "citations": []}
     
     try:
@@ -78,7 +78,7 @@ async def retrieve_from_qdrant(
         if embedding_provider == "openai":
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
-                print("⚠️ OpenAI API Key not configured, cannot create embedding model")
+                print("[WARN]️ OpenAI API Key not configured, cannot create embedding model")
                 return {"documents": [], "citations": []}
             embedder = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=api_key)
         else:
@@ -139,14 +139,14 @@ async def retrieve_from_qdrant(
                 if citation.get("doi") or citation.get("title"):
                     all_citations.append(citation)
         
-        print(f"✅ Qdrant retrieval completed: {len(all_documents)} documents, {len(all_citations)} citations")
+        print(f"[SUCCESS] Qdrant retrieval completed: {len(all_documents)} documents, {len(all_citations)} citations")
         return {"documents": all_documents, "citations": all_citations}
     
     except ImportError:
-        print("⚠️ Qdrant-related libraries not installed, skipping vector database retrieval")
+        print("[WARN]️ Qdrant-related libraries not installed, skipping vector database retrieval")
         return {"documents": [], "citations": []}
     except Exception as e:
-        print(f"⚠️ Qdrant retrieval failed: {e}")
+        print(f"[WARN]️ Qdrant retrieval failed: {e}")
         return {"documents": [], "citations": []}
 
 
@@ -167,7 +167,7 @@ async def web_search_with_tavily(
         Retrieval result dictionary containing documents and citations
     """
     if not _check_tavily_config():
-        print("⚠️ Tavily API configuration unavailable, skipping web search")
+        print("[WARN]️ Tavily API configuration unavailable, skipping web search")
         return {"documents": [], "citations": []}
     
     try:
@@ -222,14 +222,14 @@ async def web_search_with_tavily(
                 
                 all_citations.append(citation)
         
-        print(f"✅ Tavily search completed: {len(all_documents)} documents, {len(all_citations)} citations")
+        print(f"[SUCCESS] Tavily search completed: {len(all_documents)} documents, {len(all_citations)} citations")
         return {"documents": all_documents, "citations": all_citations}
     
     except ImportError:
-        print("⚠️ Tavily library not installed, skipping web search")
+        print("[WARN]️ Tavily library not installed, skipping web search")
         return {"documents": [], "citations": []}
     except Exception as e:
-        print(f"⚠️ Tavily search failed: {e}")
+        print(f"[WARN]️ Tavily search failed: {e}")
         return {"documents": [], "citations": []}
 
 
@@ -267,13 +267,13 @@ async def web_retrieval_search(
         
         # If not configured, return empty results
         if not pubmed_api_key:
-            print("⚠️ Web retrieval API not configured, skipping Web retrieval")
+            print("[WARN]️ Web retrieval API not configured, skipping Web retrieval")
             return {"documents": [], "citations": []}
         
         return {"documents": all_documents, "citations": all_citations}
     
     except Exception as e:
-        print(f"⚠️ Web retrieval failed: {e}")
+        print(f"[WARN]️ Web retrieval failed: {e}")
         return {"documents": [], "citations": []}
 
 
@@ -378,11 +378,11 @@ Please return valid JSON format, do not include additional text or markdown mark
         
         citations = retrieval_data.get("citations", [])
         
-        print(f"✅ LLM retrieval completed: {len(documents)} documents, {len(citations)} citations")
+        print(f"[SUCCESS] LLM retrieval completed: {len(documents)} documents, {len(citations)} citations")
         return {"documents": documents, "citations": citations}
     
     except Exception as e:
-        print(f"⚠️ LLM retrieval failed: {e}")
+        print(f"[WARN]️ LLM retrieval failed: {e}")
         return {"documents": [], "citations": []}
 
 
@@ -422,7 +422,7 @@ async def parallel_retrieval(
     
     for i, result in enumerate(results):
         if isinstance(result, Exception):
-            print(f"⚠️ Retrieval method {i+1} failed: {result}")
+            print(f"[WARN]️ Retrieval method {i+1} failed: {result}")
             continue
         
         if isinstance(result, dict):
@@ -440,7 +440,7 @@ async def parallel_retrieval(
     
     # If all retrieval methods fail or return empty results, use LLM fallback solution
     if not all_documents and not all_citations:
-        print("⚠️ All retrieval methods failed, using LLM fallback solution")
+        print("[WARN]️ All retrieval methods failed, using LLM fallback solution")
         llm_result = await retrieve_with_llm(queries, original_question)
         all_documents = llm_result.get("documents", [])
         all_citations = llm_result.get("citations", [])
@@ -455,7 +455,7 @@ async def parallel_retrieval(
     # Sort documents by relevance
     all_documents.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
     
-    print(f"✅ Parallel retrieval completed: {len(all_documents)} documents, {len(all_citations)} citations")
+    print(f"[SUCCESS] Parallel retrieval completed: {len(all_documents)} documents, {len(all_citations)} citations")
     
     return {
         "context": context,

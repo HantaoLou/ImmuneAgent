@@ -280,9 +280,9 @@ class ToolFallbackChain:
         
         for name, health in sorted(self.tool_health.items()):
             status_icon = {
-                ToolStatus.HEALTHY: "✅",
-                ToolStatus.DEGRADED: "⚠️",
-                ToolStatus.FAILED: "❌",
+                ToolStatus.HEALTHY: "[SUCCESS]",
+                ToolStatus.DEGRADED: "[WARN]️",
+                ToolStatus.FAILED: "[ERROR]",
                 ToolStatus.UNKNOWN: "❓"
             }.get(health.status, "❓")
             

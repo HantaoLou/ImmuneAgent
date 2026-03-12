@@ -392,22 +392,22 @@ def correct_entity_types_in_tool_args(tool_args: Dict[str, Any]) -> Dict[str, An
         if target_type in ENTITY_TYPE_CORRECTIONS:
             corrected_target = ENTITY_TYPE_CORRECTIONS[target_type]
             if corrected_target != target_type:
-                print(f"  🔧 Target type correction: '{target_type}' -> '{corrected_target}'")
+                print(f"  [TOOL] Target type correction: '{target_type}' -> '{corrected_target}'")
                 corrected['target_type'] = corrected_target
         elif target_type not in VALID_ENTITY_TYPES:
             # Invalid type that we don't know how to correct
-            print(f"  ⚠ Invalid target_type '{target_type}' not in valid types, attempting correction")
+            print(f"  [WARN] Invalid target_type '{target_type}' not in valid types, attempting correction")
             # Try to find a close match
             if target_type and 'protein' in target_type.lower():
                 corrected['target_type'] = 'gene/protein'
-                print(f"  🔧 Auto-corrected to 'gene/protein'")
+                print(f"  [TOOL] Auto-corrected to 'gene/protein'")
             elif target_type and 'phenotype' in target_type.lower():
                 corrected['target_type'] = 'effect/phenotype'
-                print(f"  🔧 Auto-corrected to 'effect/phenotype'")
+                print(f"  [TOOL] Auto-corrected to 'effect/phenotype'")
             else:
                 # Remove invalid type to avoid validation error
                 corrected['target_type'] = None
-                print(f"  🔧 Removed invalid target_type to avoid validation error")
+                print(f"  [TOOL] Removed invalid target_type to avoid validation error")
     
     # Then, fix entity_type if present
     entity_name = tool_args.get('entity_name', '')
@@ -419,23 +419,23 @@ def correct_entity_types_in_tool_args(tool_args: Dict[str, Any]) -> Dict[str, An
         # Only update if we have high confidence
         if type_info.confidence >= 0.8:
             if type_info.inferred_type != original_type:
-                print(f"  🔧 Entity type correction: '{entity_name}' "
+                print(f"  [TOOL] Entity type correction: '{entity_name}' "
                       f"'{original_type}' -> '{type_info.inferred_type}' "
                       f"(confidence: {type_info.confidence:.2f}, source: {type_info.source})")
                 corrected['entity_type'] = type_info.inferred_type
         elif type_info.inferred_type is None and original_type:
             # Remove type restriction for broader search
-            print(f"  🔧 Removing type restriction for '{entity_name}' to allow broader search")
+            print(f"  [TOOL] Removing type restriction for '{entity_name}' to allow broader search")
             corrected['entity_type'] = None
     elif original_type:
         # P1-3 NEW: No entity_name but have entity_type - validate it
         if original_type in ENTITY_TYPE_CORRECTIONS:
             corrected_type = ENTITY_TYPE_CORRECTIONS[original_type]
             if corrected_type != original_type:
-                print(f"  🔧 Entity type correction: '{original_type}' -> '{corrected_type}'")
+                print(f"  [TOOL] Entity type correction: '{original_type}' -> '{corrected_type}'")
                 corrected['entity_type'] = corrected_type
         elif original_type not in VALID_ENTITY_TYPES:
-            print(f"  ⚠ Invalid entity_type '{original_type}' not in valid types")
+            print(f"  [WARN] Invalid entity_type '{original_type}' not in valid types")
             corrected['entity_type'] = None
     
     return corrected
@@ -468,7 +468,7 @@ def fix_tool_args_before_execution(tool_name: str, tool_args: Dict[str, Any]) ->
                 if current_type in ENTITY_TYPE_CORRECTIONS:
                     corrected = ENTITY_TYPE_CORRECTIONS[current_type]
                     if corrected != current_type:
-                        print(f"  🔧 [{tool_name}] {type_field}: '{current_type}' -> '{corrected}'")
+                        print(f"  [TOOL] [{tool_name}] {type_field}: '{current_type}' -> '{corrected}'")
                         fixed[type_field] = corrected
                 
                 # Validate against known valid types
@@ -476,10 +476,10 @@ def fix_tool_args_before_execution(tool_name: str, tool_args: Dict[str, Any]) ->
                     # Try intelligent correction
                     corrected = _intelligent_type_correction(current_type)
                     if corrected:
-                        print(f"  🔧 [{tool_name}] {type_field}: '{current_type}' -> '{corrected}' (auto-detected)")
+                        print(f"  [TOOL] [{tool_name}] {type_field}: '{current_type}' -> '{corrected}' (auto-detected)")
                         fixed[type_field] = corrected
                     else:
-                        print(f"  ⚠ [{tool_name}] {type_field}: '{current_type}' is invalid, removing")
+                        print(f"  [WARN] [{tool_name}] {type_field}: '{current_type}' is invalid, removing")
                         fixed[type_field] = None
     
     return fixed
@@ -813,37 +813,37 @@ def generate_semantic_implication(text_a: str, text_b: str,
     if unique_a & quantity_words or unique_b & quantity_words:
         # P0-1 ENHANCED: More specific quantity implications
         if 'wider' in unique_a or 'broader' in unique_a:
-            implications.append("⚠️ Option A suggests WIDER/BROADER scope - verify this matches scientific evidence")
+            implications.append("[WARN]️ Option A suggests WIDER/BROADER scope - verify this matches scientific evidence")
         elif 'narrower' in unique_a or 'narrow' in unique_a:
-            implications.append("⚠️ Option A suggests NARROWER scope - verify this matches scientific evidence")
+            implications.append("[WARN]️ Option A suggests NARROWER scope - verify this matches scientific evidence")
         else:
-            implications.append("⚠️ Quantity/frequency difference detected - verify DIRECTION of effect")
+            implications.append("[WARN]️ Quantity/frequency difference detected - verify DIRECTION of effect")
     
     # Check for presence/absence
     presence_words = {'present', 'absent', 'yes', 'no', 'with', 'without', 'have', 'lack'}
     if unique_a & presence_words or unique_b & presence_words:
-        implications.append("⚠️ Presence/absence difference detected - verify which state is correct")
+        implications.append("[WARN]️ Presence/absence difference detected - verify which state is correct")
     
     # Check for directionality
     direction_words = {'towards', 'away', 'into', 'from', 'up', 'down', 'increase', 'decrease'}
     if unique_a & direction_words or unique_b & direction_words:
-        implications.append("⚠️ Directional difference detected - verify causality")
+        implications.append("[WARN]️ Directional difference detected - verify causality")
     
     # P0-1 NEW: Check for mechanism vs outcome confusion
     mechanism_words = {'mechanism', 'pathway', 'process', 'via', 'through', 'by'}
     outcome_words = {'result', 'outcome', 'effect', 'consequence', 'leads', 'causes'}
     if (unique_a & mechanism_words and unique_b & outcome_words) or \
        (unique_a & outcome_words and unique_b & mechanism_words):
-        implications.append("⚠️ MECHANISM vs OUTCOME difference - distinguish cause from effect")
+        implications.append("[WARN]️ MECHANISM vs OUTCOME difference - distinguish cause from effect")
     
     # P0-1 NEW: Check for increase/decrease in biological context
     bio_change_words = {'activation', 'inhibition', 'stimulation', 'suppression', 
                         'upregulation', 'downregulation', 'enhancement', 'reduction'}
     if unique_a & bio_change_words or unique_b & bio_change_words:
-        implications.append("⚠️ Biological regulation difference - verify direction of change")
+        implications.append("[WARN]️ Biological regulation difference - verify direction of change")
     
     if not implications:
-        implications.append("⚠️ Qualitative difference in mechanism or outcome - careful comparison needed")
+        implications.append("[WARN]️ Qualitative difference in mechanism or outcome - careful comparison needed")
     
     return "; ".join(implications)
 
@@ -2273,13 +2273,13 @@ def validate_and_fix_entity_type(entity_type: str) -> Optional[str]:
     if entity_type_lower in ENTITY_TYPE_TO_KG_TYPE:
         mapped = ENTITY_TYPE_TO_KG_TYPE[entity_type_lower]
         if mapped is None:
-            print(f"  🔧 Entity type '{entity_type}' not valid for KG, using auto-detect (null)")
+            print(f"  [TOOL] Entity type '{entity_type}' not valid for KG, using auto-detect (null)")
         else:
-            print(f"  🔧 Entity type '{entity_type}' mapped to '{mapped}'")
+            print(f"  [TOOL] Entity type '{entity_type}' mapped to '{mapped}'")
         return mapped
     
     # Unknown type - use null for auto-detect
-    print(f"  ⚠ Unknown entity type '{entity_type}', using auto-detect (null)")
+    print(f"  [WARN] Unknown entity type '{entity_type}', using auto-detect (null)")
     return None
 
 
@@ -2318,23 +2318,23 @@ def verify_mcq_answer_before_finalizing(
     # 1. Check for wider/narrower confusion
     if 'wider' in selected_text or 'broader' in selected_text:
         if 'narrower' in conclusion_lower or 'narrow' in conclusion_lower or 'specific' in conclusion_lower:
-            warnings.append("⚠️ POTENTIAL ERROR: Selected 'wider/broader' but conclusion suggests 'narrower/specific'")
+            warnings.append("[WARN]️ POTENTIAL ERROR: Selected 'wider/broader' but conclusion suggests 'narrower/specific'")
             confidence_adjustment *= 0.5
             
     if 'narrower' in selected_text or 'narrow' in selected_text:
         if 'wider' in conclusion_lower or 'broader' in conclusion_lower or 'diverse' in conclusion_lower:
-            warnings.append("⚠️ POTENTIAL ERROR: Selected 'narrower' but conclusion suggests 'wider/broader'")
+            warnings.append("[WARN]️ POTENTIAL ERROR: Selected 'narrower' but conclusion suggests 'wider/broader'")
             confidence_adjustment *= 0.5
     
     # 2. Check for increased/decreased confusion
     if 'increased' in selected_text or 'increase' in selected_text:
         if 'decreased' in conclusion_lower or 'reduced' in conclusion_lower or 'lower' in conclusion_lower:
-            warnings.append("⚠️ POTENTIAL ERROR: Selected 'increased' but conclusion suggests 'decreased'")
+            warnings.append("[WARN]️ POTENTIAL ERROR: Selected 'increased' but conclusion suggests 'decreased'")
             confidence_adjustment *= 0.5
             
     if 'decreased' in selected_text or 'decrease' in selected_text:
         if 'increased' in conclusion_lower or 'higher' in conclusion_lower or 'elevated' in conclusion_lower:
-            warnings.append("⚠️ POTENTIAL ERROR: Selected 'decreased' but conclusion suggests 'increased'")
+            warnings.append("[WARN]️ POTENTIAL ERROR: Selected 'decreased' but conclusion suggests 'increased'")
             confidence_adjustment *= 0.5
     
     # 3. Check for mechanism vs outcome confusion in question
@@ -2348,14 +2348,14 @@ def verify_mcq_answer_before_finalizing(
         conclusion_has_mechanism = any(m in conclusion_lower for m in mechanism_indicators)
         
         if selected_has_outcome and not selected_has_mechanism and conclusion_has_mechanism:
-            warnings.append("⚠️ Question asks about MECHANISM, but selected option describes OUTCOME")
+            warnings.append("[WARN]️ Question asks about MECHANISM, but selected option describes OUTCOME")
             confidence_adjustment *= 0.7
     
     # 4. Check for hypermutator-specific confusion (common error pattern)
     if 'hypermutator' in question_lower or 'mutation rate' in question_lower:
         if 'wider' in selected_text and 'narrower' not in selected_text:
             # Hypermutator strains typically have NARROWER spectrum despite more mutations
-            warnings.append("⚠️ HYPERMUTATOR CONTEXT: High mutation rate → hotspots → NARROWER spectrum (not wider)")
+            warnings.append("[WARN]️ HYPERMUTATOR CONTEXT: High mutation rate → hotspots → NARROWER spectrum (not wider)")
             confidence_adjustment *= 0.4
     
     # 5. Check if selected answer aligns with question focus
@@ -2365,7 +2365,7 @@ def verify_mcq_answer_before_finalizing(
     
     overlap = question_keywords & selected_keywords
     if len(overlap) == 0 and len(question_keywords) > 2:
-        warnings.append("⚠️ Selected answer has NO keyword overlap with question - may be misaligned")
+        warnings.append("[WARN]️ Selected answer has NO keyword overlap with question - may be misaligned")
         confidence_adjustment *= 0.8
     
     return {
@@ -2394,7 +2394,7 @@ def get_confusion_pattern_warning(question_context: str, options: Dict[str, str]
         option_texts = ' '.join(options.values()).lower()
         if 'wider' in option_texts and 'narrower' in option_texts:
             return """
-⚠️ SPECTRUM QUESTION DETECTED: 
+[WARN]️ SPECTRUM QUESTION DETECTED: 
 When considering mutation spectrum changes:
 - MORE mutations ≠ WIDER spectrum
 - Mutations often occur at HOTSPOTS → narrower but more frequent
@@ -2404,7 +2404,7 @@ When considering mutation spectrum changes:
     # Check for hypermutator questions
     if 'hypermutator' in q_lower or 'mutator strain' in q_lower:
         return """
-⚠️ HYPERMUTATOR CONTEXT:
+[WARN]️ HYPERMUTATOR CONTEXT:
 - Hypermutator strains have increased mutation RATE
 - But mutations are concentrated at specific HOTSPOTS
 - This leads to NARROWER spectrum, not wider
@@ -2526,7 +2526,7 @@ def verify_vaccine_coverage_calculation(
         
         if naive_error < 5:
             warnings.append(
-                f"⚠️ APPEARS TO FORGET BREAKTHROUGH RATE: "
+                f"[WARN]️ APPEARS TO FORGET BREAKTHROUGH RATE: "
                 f"Calculated {calculated_answer:.1f}% ≈ naive threshold {naive_threshold:.1f}%, "
                 f"but should account for {breakthrough_rate*100:.0f}% breakthrough rate"
             )
@@ -2537,7 +2537,7 @@ def verify_vaccine_coverage_calculation(
         
         # Check if they used wrong R₀
         if calculated_answer < 50:
-            warnings.append(f"⚠️ Value {calculated_answer:.1f}% seems too low for R₀={r0}")
+            warnings.append(f"[WARN]️ Value {calculated_answer:.1f}% seems too low for R₀={r0}")
     
     is_valid = relative_error < 2  # Within 2% tolerance
     should_correct = relative_error > 5
@@ -2589,7 +2589,7 @@ def verify_heritability_calculation(
     if question_type == "narrow_sense":
         if calculated_answer > H2:
             warnings.append(
-                f"⚠️ IMPOSSIBLE: Narrow-sense heritability (h²={calculated_answer}) "
+                f"[WARN]️ IMPOSSIBLE: Narrow-sense heritability (h²={calculated_answer}) "
                 f"cannot exceed broad-sense heritability (H²={H2})"
             )
             return CalculationVerificationResult(
@@ -2714,7 +2714,7 @@ def get_calculation_verification_prompt(
     prompts = {
         'vaccine_coverage': """
 
-⚠️ CALCULATION VERIFICATION CHECK - Vaccine Coverage:
+[WARN]️ CALCULATION VERIFICATION CHECK - Vaccine Coverage:
 1. Did you account for vaccine EFFICACY (not 100%)?
 2. Formula: Required coverage = (1 - 1/R₀) / (1 - breakthrough_rate)
 3. Example: R₀=3, breakthrough=6% → threshold = (1-1/3)/(1-0.06) = 0.667/0.94 ≈ 71%
@@ -2722,7 +2722,7 @@ def get_calculation_verification_prompt(
 """,
         'heritability': """
 
-⚠️ CALCULATION VERIFICATION CHECK - Heritability:
+[WARN]️ CALCULATION VERIFICATION CHECK - Heritability:
 1. Broad-sense H² = Vg/Vp (total genetic variance / phenotypic variance)
 2. Narrow-sense h² = Va/Vp (additive genetic variance / phenotypic variance)
 3. Key constraint: h² ≤ H² always (narrow-sense cannot exceed broad-sense)
@@ -2730,7 +2730,7 @@ def get_calculation_verification_prompt(
 """,
         'probability': """
 
-⚠️ CALCULATION VERIFICATION CHECK - Probability:
+[WARN]️ CALCULATION VERIFICATION CHECK - Probability:
 1. Check: Are events independent or conditional?
 2. For independent: P(A∩B) = P(A) × P(B)
 3. For conditional: P(A|B) = P(A∩B) / P(B)
@@ -2738,7 +2738,7 @@ def get_calculation_verification_prompt(
 """,
         'dosage': """
 
-⚠️ CALCULATION VERIFICATION CHECK - Dosage:
+[WARN]️ CALCULATION VERIFICATION CHECK - Dosage:
 1. Check units: mg/kg, μg/mL, etc.
 2. Verify conversion factors (mg to g, etc.)
 3. For body weight: dose = mg/kg × weight(kg)
@@ -3971,7 +3971,7 @@ def get_term_context_for_prompt(question_text: str, max_terms: int = 5) -> str:
     if not found_terms:
         return ""
     
-    context_parts = ["\n📊 TECHNICAL CONTEXT:"]
+    context_parts = ["\n[STAT] TECHNICAL CONTEXT:"]
     
     for term, info, _ in found_terms:
         context_parts.append(f"""
@@ -4069,7 +4069,7 @@ def get_confusion_warning(text: str) -> str:
     warnings = []
     for term, (correct, confusion) in confusing_pairs.items():
         if term in text_lower:
-            warnings.append(f"⚠️ **{term}**: {correct}. NOTE: {confusion}")
+            warnings.append(f"[WARN]️ **{term}**: {correct}. NOTE: {confusion}")
     
     if not warnings:
         return ""

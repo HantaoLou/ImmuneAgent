@@ -332,7 +332,7 @@ def generate_domain_prompt(domain_name: str, output_dir: str = None) -> str:
     
     # Write file
     output_path.write_text(content, encoding='utf-8')
-    print(f"✓ Generated domain prompt module: {output_path}")
+    print(f"[OK] Generated domain prompt module: {output_path}")
     print(f"  Domain: {domain_name}")
     print(f"  Module: {module_name}")
     print(f"\nNext steps:")

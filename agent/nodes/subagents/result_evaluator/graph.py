@@ -25,16 +25,22 @@ from langgraph.graph import StateGraph, START, END
 
 # 添加 agent 目录到路径
 import sys
+
 agent_dir = Path(__file__).parent.parent.parent.parent
 if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
 from state import GlobalState
-from utils.llm_factory import create_bioinformatics_llm, create_reasoning_llm
+from utils.llm_factory import (
+    create_bioinformatics_llm,
+    create_reasoning_llm,
+    create_llm_with_thinking,
+)
 from .state import ResultEvaluatorState, TaskResultSummary, ToolOutputSummary
 
 
 # ===================== 辅助函数 =====================
+
 
 def _save_report(content: str, report_type: str, sandbox_dir: str) -> str:
     """
@@ -55,13 +61,13 @@ def _save_report(content: str, report_type: str, sandbox_dir: str) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         report_file = reports_dir / f"{report_type}_{timestamp}.md"
 
-        with open(report_file, 'w', encoding='utf-8') as f:
+        with open(report_file, "w", encoding="utf-8") as f:
             f.write(content)
 
         print(f"📄 {report_type} 报告已保存到: {report_file}")
         return str(report_file)
     except Exception as e:
-        print(f"⚠️ 保存报告失败: {e}")
+        print(f"[WARN]️ 保存报告失败: {e}")
         return ""
 
 
@@ -84,13 +90,13 @@ def _save_txt_report(content: str, report_type: str, sandbox_dir: str) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         report_file = reports_dir / f"{report_type}_{timestamp}.txt"
 
-        with open(report_file, 'w', encoding='utf-8') as f:
+        with open(report_file, "w", encoding="utf-8") as f:
             f.write(content)
 
         print(f"📄 {report_type} TXT 报告已保存到: {report_file}")
         return str(report_file)
     except Exception as e:
-        print(f"⚠️ 保存 TXT 报告失败: {e}")
+        print(f"[WARN]️ 保存 TXT 报告失败: {e}")
         return ""
 
 
@@ -123,7 +129,13 @@ def _generate_txt_analysis_report(state: "ResultEvaluatorState", llm: Any) -> st
     # 构建任务列表文本
     task_list_text = ""
     for i, task in enumerate(state.all_tasks, 1):
-        status_str = "✓" if task.status.upper() == "COMPLETED" else "✗" if task.status.upper() == "FAILED" else "⏳"
+        status_str = (
+            "[OK]"
+            if task.status.upper() == "COMPLETED"
+            else "[FAIL]"
+            if task.status.upper() == "FAILED"
+            else "⏳"
+        )
         task_list_text += f"\n{i}. [{status_str}] {task.task_id}: {task.task_type}\n"
         task_list_text += f"   内容: {_truncate_text(task.content, 150)}\n"
         if task.error:
@@ -154,14 +166,23 @@ def _generate_txt_analysis_report(state: "ResultEvaluatorState", llm: Any) -> st
     # 构建 Task List 推导依据文本
     derivation_text = ""
     if state.task_list_derivation and state.task_list_derivation.decomposition_summary:
-        derivation_text = f"\n{state.task_list_derivation.decomposition_summary}\n\n所需服务:\n"
+        derivation_text = (
+            f"\n{state.task_list_derivation.decomposition_summary}\n\n所需服务:\n"
+        )
         for service in state.task_list_derivation.required_services[:10]:
             derivation_text += f"- {service}\n"
-        derivation_text += f"\n依赖关系依据:\n{state.task_list_derivation.dependency_rationale}\n"
+        derivation_text += (
+            f"\n依赖关系依据:\n{state.task_list_derivation.dependency_rationale}\n"
+        )
         if state.task_list_derivation.parallel_groups:
             derivation_text += "\n并行执行组:\n"
-            for group_id, group_info in state.task_list_derivation.parallel_groups.items():
-                derivation_text += f"- {group_id}: {group_info.get('subtask_count', 0)} 个子任务\n"
+            for (
+                group_id,
+                group_info,
+            ) in state.task_list_derivation.parallel_groups.items():
+                derivation_text += (
+                    f"- {group_id}: {group_info.get('subtask_count', 0)} 个子任务\n"
+                )
 
     # 构建输出文件文本
     output_files_text = ""
@@ -187,7 +208,7 @@ def _generate_txt_analysis_report(state: "ResultEvaluatorState", llm: Any) -> st
 
             # 提取原始问题的关键信息（如样本数、预测目标等）
             user_question = state.user_input[:2000]
-            
+
             analysis_prompt = f"""
 你是一个专业的生物医药研究分析专家。请根据以下计算分析过程和结果，生成一份专业的分析报告摘要。
 
@@ -235,31 +256,36 @@ def _generate_txt_analysis_report(state: "ResultEvaluatorState", llm: Any) -> st
 """
 
             response = llm.invoke([HumanMessage(content=analysis_prompt)])
-            response_content = response.content if hasattr(response, 'content') else str(response)
+            response_content = (
+                response.content if hasattr(response, "content") else str(response)
+            )
 
             # 解析 JSON
             import re
-            json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
+
+            json_match = re.search(r"\{.*\}", response_content, re.DOTALL)
             if json_match:
                 analysis_result = json.loads(json_match.group())
-                methodology = analysis_result.get('methodology', '')
-                scientific_rationale = analysis_result.get('scientific_rationale', '')
-                limitations = analysis_result.get('limitations', [])
-                validation_recommendations = analysis_result.get('validation_recommendations', [])
+                methodology = analysis_result.get("methodology", "")
+                scientific_rationale = analysis_result.get("scientific_rationale", "")
+                limitations = analysis_result.get("limitations", [])
+                validation_recommendations = analysis_result.get(
+                    "validation_recommendations", []
+                )
 
         except Exception as e:
-            print(f"⚠️ 生成深度分析失败: {e}")
+            print(f"[WARN]️ 生成深度分析失败: {e}")
             methodology = "This computational method integrates multiple analytical tools and domain knowledge to address the research question through a multi-stage workflow approach."
             scientific_rationale = "The analysis is based on established biological principles and computational methods from the bioinformatics domain."
             limitations = [
                 "Results require experimental validation before drawing final conclusions",
                 "Analysis quality depends on input data completeness and accuracy",
-                "Computational predictions may not capture all biological complexity"
+                "Computational predictions may not capture all biological complexity",
             ]
             validation_recommendations = [
                 "Perform experimental validation using appropriate assays",
                 "Verify input data quality and completeness",
-                "Cross-reference results with known literature"
+                "Cross-reference results with known literature",
             ]
 
     # 更新状态
@@ -269,7 +295,7 @@ def _generate_txt_analysis_report(state: "ResultEvaluatorState", llm: Any) -> st
     state.validation_recommendations = validation_recommendations
 
     # 生成完整的 TXT 报告
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # 构建关键发现文本
     key_findings_text = ""
@@ -297,7 +323,9 @@ def _generate_txt_analysis_report(state: "ResultEvaluatorState", llm: Any) -> st
         for i, f in enumerate(state.output_files[:20], 1):
             files_generated_text += f"{i}. {f}\n"
         if len(state.output_files) > 20:
-            files_generated_text += f"... and {len(state.output_files) - 20} more files\n"
+            files_generated_text += (
+                f"... and {len(state.output_files) - 20} more files\n"
+            )
     else:
         files_generated_text = "No output files generated.\n"
 
@@ -307,7 +335,9 @@ def _generate_txt_analysis_report(state: "ResultEvaluatorState", llm: Any) -> st
     if "antibod" in state.user_input.lower():
         if "neutraliz" in state.user_input.lower():
             if "broad" in state.user_input.lower():
-                title = "BROADLY NEUTRALIZING ANTIBODY (BNAB) PREDICTION ANALYSIS REPORT"
+                title = (
+                    "BROADLY NEUTRALIZING ANTIBODY (BNAB) PREDICTION ANALYSIS REPORT"
+                )
             else:
                 title = "ANTIBODY NEUTRALIZATION PREDICTION ANALYSIS REPORT"
         elif "bind" in state.user_input.lower():
@@ -324,9 +354,9 @@ def _generate_txt_analysis_report(state: "ResultEvaluatorState", llm: Any) -> st
 
     # ========== 生成完整报告 ==========
     txt_report = f"""
-{'='*70}
+{"=" * 70}
 {title}
-{'='*70}
+{"=" * 70}
 
 ANALYSIS OVERVIEW
 -----------------
@@ -454,9 +484,9 @@ using a multi-stage workflow approach. The results should be validated
 experimentally before drawing final conclusions.
 
 Generated: {timestamp}
-Session ID: {state.session_id or 'N/A'}
+Session ID: {state.session_id or "N/A"}
 
-{'='*70}
+{"=" * 70}
 """
 
     return txt_report
@@ -471,10 +501,10 @@ def _extract_output_files(task_result: Any) -> List[str]:
 
     # 尝试从 output 中提取文件路径
     output = None
-    if hasattr(task_result, 'output'):
+    if hasattr(task_result, "output"):
         output = task_result.output
     elif isinstance(task_result, dict):
-        output = task_result.get('output')
+        output = task_result.get("output")
 
     if output is None:
         return output_files
@@ -485,7 +515,7 @@ def _extract_output_files(task_result: Any) -> List[str]:
             output = json.loads(output)
         except (json.JSONDecodeError, TypeError):
             # 如果不是 JSON，检查是否是文件路径
-            if '/' in output or '\\' in output:
+            if "/" in output or "\\" in output:
                 output_files.append(output)
             return output_files
 
@@ -494,9 +524,18 @@ def _extract_output_files(task_result: Any) -> List[str]:
 
     # 常见的文件路径字段名
     file_fields = [
-        'output_file', 'output_path', 'file_path', 'result_file',
-        'output_files', 'files', 'result_files', 'saved_files',
-        'csv_file', 'json_file', 'report_file', 'log_file'
+        "output_file",
+        "output_path",
+        "file_path",
+        "result_file",
+        "output_files",
+        "files",
+        "result_files",
+        "saved_files",
+        "csv_file",
+        "json_file",
+        "report_file",
+        "log_file",
     ]
 
     for field in file_fields:
@@ -508,8 +547,8 @@ def _extract_output_files(task_result: Any) -> List[str]:
                 output_files.extend([f for f in value if isinstance(f, str)])
 
     # 检查 final_result 中的文件
-    if 'final_result' in output:
-        final_result = output['final_result']
+    if "final_result" in output:
+        final_result = output["final_result"]
         if isinstance(final_result, dict):
             for field in file_fields:
                 if field in final_result:
@@ -529,48 +568,51 @@ def _truncate_text(text: str, max_length: int = 500) -> str:
     return text[:max_length] + "..."
 
 
-def _collect_output_files_from_sandbox(sandbox_dir: str, session_id: Optional[str] = None, 
-                                        parent_state: Any = None) -> List[ToolOutputSummary]:
+def _collect_output_files_from_sandbox(
+    sandbox_dir: str, session_id: Optional[str] = None, parent_state: Any = None
+) -> List[ToolOutputSummary]:
     """
     从沙盒 output 目录收集所有工具输出文件
-    
+
     通过 CodeAct 子图统一执行代码，遵循架构原则：
     - 其他子图不直接调用 OpenSandbox
     - 所有沙盒操作通过 CodeAct 执行
-    
+
     沙盒目录结构：
-    - sandbox_dir 可能是 /data/sessions/{session_id} 或容器内路径 /tmp/sessions/{session_id}
+    - sandbox_dir 可能是 /data/sessions/{session_id} 或容器内路径 /data/sessions/{session_id}
     - 输出文件位于 {sandbox_dir}/output/ 目录下
-    
+
     Args:
         sandbox_dir: 沙盒目录路径
         session_id: 会话ID
         parent_state: 父状态，用于获取 opensandbox_id
-        
+
     Returns:
         工具输出摘要列表
     """
     tool_outputs = []
-    
+
     if not sandbox_dir:
         return tool_outputs
-    
+
     # 获取现有的 sandbox_id（如果有的话）
     existing_sandbox_id = None
     if parent_state:
-        merged_result = getattr(parent_state, 'merged_result', None) or {}
-        existing_sandbox_id = merged_result.get('opensandbox_id')
-    
+        merged_result = getattr(parent_state, "merged_result", None) or {}
+        existing_sandbox_id = merged_result.get("opensandbox_id")
+
     # 使用 CodeAct 统一接口执行代码（架构原则：唯一与 OpenSandbox 沟通的入口）
     from utils.codeact_executor import execute_code_via_codeact, is_codeact_available
-    
+
     if not is_codeact_available():
         print(f"  [OutputCollector] CodeAct/OpenSandbox 未启用，无法读取远程文件")
         return tool_outputs
-    
+
     print(f"  [OutputCollector] 通过 CodeAct 读取远程文件...")
-    print(f"  [OutputCollector] sandbox_dir={sandbox_dir}, sandbox_id={existing_sandbox_id}")
-    
+    print(
+        f"  [OutputCollector] sandbox_dir={sandbox_dir}, sandbox_id={existing_sandbox_id}"
+    )
+
     # 构建在沙盒内执行的代码
     # 这段代码会扫描 output 目录，收集文件列表和内容预览
     collector_code = f'''
@@ -653,7 +695,7 @@ print("__OUTPUT_FILES_JSON_START__")
 print(json.dumps(results, ensure_ascii=False))
 print("__OUTPUT_FILES_JSON_END__")
 '''
-    
+
     try:
         # 通过 CodeAct 统一接口执行代码
         result = execute_code_via_codeact(
@@ -661,76 +703,88 @@ print("__OUTPUT_FILES_JSON_END__")
             code_template=collector_code,
             sandbox_id=existing_sandbox_id,
             timeout_seconds=60,
-            keep_alive=True
+            keep_alive=True,
         )
-        
+
         if not result.is_success():
             print(f"  [OutputCollector] 沙盒执行失败: {result.error}")
             return tool_outputs
-        
+
         # 解析输出
         stdout = result.output
-        
+
         # 提取 JSON 结果
         import re
-        json_match = re.search(r'__OUTPUT_FILES_JSON_START__\s*(.*?)\s*__OUTPUT_FILES_JSON_END__', stdout, re.DOTALL)
-        
+
+        json_match = re.search(
+            r"__OUTPUT_FILES_JSON_START__\s*(.*?)\s*__OUTPUT_FILES_JSON_END__",
+            stdout,
+            re.DOTALL,
+        )
+
         if json_match:
             files_data = json.loads(json_match.group(1))
             for file_data in files_data:
-                tool_outputs.append(ToolOutputSummary(
-                    file_path=file_data.get("file_path", ""),
-                    file_type=file_data.get("file_type", "Unknown"),
-                    content_preview=file_data.get("content_preview", ""),
-                    key_results=file_data.get("key_results", [])
-                ))
-            
+                tool_outputs.append(
+                    ToolOutputSummary(
+                        file_path=file_data.get("file_path", ""),
+                        file_type=file_data.get("file_type", "Unknown"),
+                        content_preview=file_data.get("content_preview", ""),
+                        key_results=file_data.get("key_results", []),
+                    )
+                )
+
             print(f"  [OutputCollector] 找到 {len(tool_outputs)} 个输出文件")
         else:
             # 尝试使用自动解析的结果
             if result.parsed_result and isinstance(result.parsed_result, dict):
                 items = result.parsed_result.get("items", [])
                 for file_data in items:
-                    tool_outputs.append(ToolOutputSummary(
-                        file_path=file_data.get("file_path", ""),
-                        file_type=file_data.get("file_type", "Unknown"),
-                        content_preview=file_data.get("content_preview", ""),
-                        key_results=file_data.get("key_results", [])
-                    ))
-                print(f"  [OutputCollector] 通过自动解析找到 {len(tool_outputs)} 个输出文件")
+                    tool_outputs.append(
+                        ToolOutputSummary(
+                            file_path=file_data.get("file_path", ""),
+                            file_type=file_data.get("file_type", "Unknown"),
+                            content_preview=file_data.get("content_preview", ""),
+                            key_results=file_data.get("key_results", []),
+                        )
+                    )
+                print(
+                    f"  [OutputCollector] 通过自动解析找到 {len(tool_outputs)} 个输出文件"
+                )
             else:
                 print(f"  [OutputCollector] 未找到输出文件 JSON 结果")
-    
+
     except Exception as e:
         print(f"  [OutputCollector] 收集文件失败: {e}")
         import traceback
+
         traceback.print_exc()
-    
+
     return tool_outputs
 
 
 def _analyze_tool_outputs_for_report(tool_outputs: List[ToolOutputSummary]) -> str:
     """
     分析工具输出，生成用于报告的文本摘要
-    
+
     Args:
         tool_outputs: 工具输出摘要列表
-        
+
     Returns:
         用于报告的文本摘要
     """
     if not tool_outputs:
         return "No tool output files generated."
-    
+
     # 按文件类型分组
     by_type: Dict[str, List[ToolOutputSummary]] = {}
     for output in tool_outputs:
         if output.file_type not in by_type:
             by_type[output.file_type] = []
         by_type[output.file_type].append(output)
-    
+
     summary_lines = [f"Total output files: {len(tool_outputs)}", ""]
-    
+
     for file_type, files in by_type.items():
         summary_lines.append(f"{file_type} ({len(files)} files):")
         for f in files[:5]:  # 每种类型最多显示5个
@@ -738,11 +792,12 @@ def _analyze_tool_outputs_for_report(tool_outputs: List[ToolOutputSummary]) -> s
         if len(files) > 5:
             summary_lines.append(f"  ... and {len(files) - 5} more")
         summary_lines.append("")
-    
+
     return "\n".join(summary_lines)
 
 
 # ===================== 节点 1: 结果收集 =====================
+
 
 def collect_results_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
     """
@@ -752,7 +807,7 @@ def collect_results_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
     增强功能：通过 OpenSandbox 从远程沙盒 output 目录读取所有工具输出文件
     """
     print("\n" + "=" * 60)
-    print("📊 阶段 1: 收集执行结果")
+    print("[STAT] 阶段 1: 收集执行结果")
     print("=" * 60)
 
     # 统计任务状态
@@ -776,28 +831,28 @@ def collect_results_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
 
     # ========== 增强：通过 OpenSandbox 从远程沙盒 output 目录收集工具输出文件 ==========
     print(f"  [OutputCollector] 从远程沙盒目录收集工具输出文件...")
-    
+
     # 优先使用 sandbox_data_dir（会话目录格式：/data/sessions/{session_id}）
     # 然后回退到 sandbox_dir
     sandbox_dir = None
     if state.parent_state:
-        sandbox_dir = getattr(state.parent_state, 'sandbox_data_dir', None)
+        sandbox_dir = getattr(state.parent_state, "sandbox_data_dir", None)
     if not sandbox_dir:
         sandbox_dir = state.sandbox_dir
-    
+
     # 传递 parent_state 以获取现有的 sandbox_id
     tool_outputs = _collect_output_files_from_sandbox(
-        sandbox_dir=sandbox_dir, 
+        sandbox_dir=sandbox_dir,
         session_id=state.session_id,
-        parent_state=state.parent_state
+        parent_state=state.parent_state,
     )
     state.tool_output_summaries = tool_outputs
-    
+
     # 将工具输出文件路径也添加到 output_files
     for tool_output in tool_outputs:
         if tool_output.file_path not in state.output_files:
             state.output_files.append(tool_output.file_path)
-    
+
     print(f"  [OutputCollector] 收集到 {len(tool_outputs)} 个工具输出文件")
 
     # 生成错误摘要
@@ -813,7 +868,7 @@ def collect_results_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
     else:
         state.error_summary = "无错误"
 
-    print(f"✅ 结果收集完成")
+    print(f"[SUCCESS] 结果收集完成")
     print(f"  - 总任务数: {total}")
     print(f"  - 完成数: {completed}")
     print(f"  - 失败数: {failed}")
@@ -826,6 +881,7 @@ def collect_results_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
 
 # ===================== 节点 2: 结果分析 =====================
 
+
 def analyze_results_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
     """
     节点 2: 结果分析
@@ -836,9 +892,17 @@ def analyze_results_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
     print("🔍 阶段 2: 分析执行结果")
     print("=" * 60)
 
-    llm = create_bioinformatics_llm()
+    llm = (
+        create_llm_with_thinking(
+            purpose="bioinformatics",
+            progress_callback=getattr(state, "progress_callback", None),
+            session_id=getattr(state, "session_id", None),
+            node_name="result_evaluator",
+        )
+        or create_bioinformatics_llm()
+    )
     if not llm:
-        print("⚠️ LLM 不可用，使用简单分析")
+        print("[WARN]️ LLM 不可用，使用简单分析")
         state.key_findings = ["LLM 不可用，无法进行深度分析"]
         state.recommendations = ["请检查 LLM 配置"]
         return state
@@ -868,7 +932,9 @@ def analyze_results_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
         # 输出文件信息
         files_text = ""
         if state.output_files:
-            files_text = "输出文件:\n" + "\n".join([f"- {f}" for f in state.output_files[:20]])
+            files_text = "输出文件:\n" + "\n".join(
+                [f"- {f}" for f in state.output_files[:20]]
+            )
 
         analysis_prompt = f"""
 你是一个专业的数据分析助手。请分析以下任务执行结果并生成总结。
@@ -907,34 +973,38 @@ def analyze_results_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
         messages = [HumanMessage(content=analysis_prompt)]
 
         response = llm.invoke(messages)
-        response_content = response.content if hasattr(response, 'content') else str(response)
+        response_content = (
+            response.content if hasattr(response, "content") else str(response)
+        )
 
         # 尝试解析 JSON
         try:
             # 尝试提取 JSON 块
             import re
-            json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
+
+            json_match = re.search(r"\{.*\}", response_content, re.DOTALL)
             if json_match:
                 analysis_result = json.loads(json_match.group())
             else:
                 analysis_result = json.loads(response_content)
 
-            state.key_findings = analysis_result.get('key_findings', [])
-            state.recommendations = analysis_result.get('recommendations', [])
+            state.key_findings = analysis_result.get("key_findings", [])
+            state.recommendations = analysis_result.get("recommendations", [])
 
         except (json.JSONDecodeError, TypeError) as e:
-            print(f"⚠️ JSON 解析失败: {e}")
+            print(f"[WARN]️ JSON 解析失败: {e}")
             # 使用默认值
             state.key_findings = ["任务执行完成，请查看详细报告"]
             state.recommendations = ["建议检查输出文件以获取更多信息"]
 
-        print(f"✅ 结果分析完成")
+        print(f"[SUCCESS] 结果分析完成")
         print(f"  - 关键发现数: {len(state.key_findings)}")
         print(f"  - 建议数: {len(state.recommendations)}")
 
     except Exception as e:
-        print(f"⚠️ 结果分析失败: {e}")
+        print(f"[WARN]️ 结果分析失败: {e}")
         import traceback
+
         traceback.print_exc()
         state.key_findings = [f"分析过程出错: {str(e)}"]
         state.recommendations = ["请检查系统配置"]
@@ -943,6 +1013,7 @@ def analyze_results_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
 
 
 # ===================== 节点 3: 报告生成 =====================
+
 
 def generate_report_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
     """
@@ -954,13 +1025,27 @@ def generate_report_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
     print("📝 阶段 3: 生成总结报告")
     print("=" * 60)
 
-    llm = create_bioinformatics_llm()
+    llm = (
+        create_llm_with_thinking(
+            purpose="bioinformatics",
+            progress_callback=getattr(state, "progress_callback", None),
+            session_id=getattr(state, "session_id", None),
+            node_name="result_evaluator",
+        )
+        or create_bioinformatics_llm()
+    )
 
     try:
         # 构建任务结果摘要
         task_results_text = ""
         for task in state.all_tasks:
-            status_icon = "✅" if task.status.upper() == "COMPLETED" else "❌" if task.status.upper() == "FAILED" else "⏳"
+            status_icon = (
+                "[SUCCESS]"
+                if task.status.upper() == "COMPLETED"
+                else "[ERROR]"
+                if task.status.upper() == "FAILED"
+                else "⏳"
+            )
             task_results_text += f"\n{status_icon} **{task.task_id}** ({task.status})\n"
             task_results_text += f"   - 类型: {task.task_type}\n"
             task_results_text += f"   - 内容: {_truncate_text(task.content, 100)}\n"
@@ -976,7 +1061,9 @@ def generate_report_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
         # 输出文件
         files_text = ""
         if state.output_files:
-            files_text = "\n### 输出文件\n\n" + "\n".join([f"- `{f}`" for f in state.output_files])
+            files_text = "\n### 输出文件\n\n" + "\n".join(
+                [f"- `{f}`" for f in state.output_files]
+            )
 
         # 使用 LLM 生成报告摘要
         summary_text = ""
@@ -1002,17 +1089,19 @@ def generate_report_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
 """
 
                 response = llm.invoke([HumanMessage(content=summary_prompt)])
-                summary_text = response.content if hasattr(response, 'content') else str(response)
+                summary_text = (
+                    response.content if hasattr(response, "content") else str(response)
+                )
 
             except Exception as e:
-                print(f"⚠️ 生成摘要失败: {e}")
+                print(f"[WARN]️ 生成摘要失败: {e}")
                 summary_text = f"任务执行完成率 {state.success_rate:.1f}%，共完成 {state.completed_tasks}/{state.total_tasks} 个任务。"
 
         # 生成详细报告
         detailed_report = f"""# 任务执行总结报告
 
-**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-**会话ID**: {state.session_id or 'N/A'}
+**生成时间**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+**会话ID**: {state.session_id or "N/A"}
 
 ---
 
@@ -1084,7 +1173,9 @@ def generate_report_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
         state.summary_report = summary_text
 
         # 保存 Markdown 报告
-        report_path = _save_report(detailed_report, "result_evaluation", state.sandbox_dir)
+        report_path = _save_report(
+            detailed_report, "result_evaluation", state.sandbox_dir
+        )
         state.report_path = report_path
 
         # ========== 生成 TXT 格式分析报告 ==========
@@ -1092,16 +1183,19 @@ def generate_report_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
         state.txt_report = txt_report
 
         # 保存 TXT 报告
-        txt_report_path = _save_txt_report(txt_report, "analysis_report", state.sandbox_dir)
+        txt_report_path = _save_txt_report(
+            txt_report, "analysis_report", state.sandbox_dir
+        )
         state.txt_report_path = txt_report_path
 
-        print(f"✅ 报告生成完成")
+        print(f"[SUCCESS] 报告生成完成")
         print(f"  - Markdown 报告路径: {report_path}")
         print(f"  - TXT 分析报告路径: {txt_report_path}")
 
     except Exception as e:
-        print(f"⚠️ 报告生成失败: {e}")
+        print(f"[WARN]️ 报告生成失败: {e}")
         import traceback
+
         traceback.print_exc()
         state.detailed_report = f"报告生成失败: {str(e)}"
         state.summary_report = "无法生成报告"
@@ -1110,6 +1204,7 @@ def generate_report_node(state: ResultEvaluatorState) -> ResultEvaluatorState:
 
 
 # ===================== 输入/输出映射 =====================
+
 
 def result_evaluator_input_mapper(global_state: GlobalState) -> ResultEvaluatorState:
     """
@@ -1141,7 +1236,7 @@ def result_evaluator_input_mapper(global_state: GlobalState) -> ResultEvaluatorS
     seen_task_ids = {task.task_id for task in all_subtasks}
 
     for group in global_state.parallel_task_groups.values():
-        if hasattr(group, 'subtasks'):
+        if hasattr(group, "subtasks"):
             for task in group.subtasks:
                 if task.task_id not in seen_task_ids:
                     all_subtasks.append(task)
@@ -1157,44 +1252,50 @@ def result_evaluator_input_mapper(global_state: GlobalState) -> ResultEvaluatorS
         # 提取状态
         status = "PENDING"
         if exec_result:
-            if hasattr(exec_result, 'status'):
-                status = exec_result.status.value if hasattr(exec_result.status, 'value') else str(exec_result.status)
+            if hasattr(exec_result, "status"):
+                status = (
+                    exec_result.status.value
+                    if hasattr(exec_result.status, "value")
+                    else str(exec_result.status)
+                )
             elif isinstance(exec_result, dict):
-                status = exec_result.get('status', 'PENDING')
+                status = exec_result.get("status", "PENDING")
 
         # 提取错误
         error = None
         if exec_result:
-            if hasattr(exec_result, 'error'):
+            if hasattr(exec_result, "error"):
                 error = exec_result.error
             elif isinstance(exec_result, dict):
-                error = exec_result.get('error')
+                error = exec_result.get("error")
 
         # 提取输出
         output = None
         if exec_result:
-            if hasattr(exec_result, 'output'):
+            if hasattr(exec_result, "output"):
                 output = exec_result.output
             elif isinstance(exec_result, dict):
-                output = exec_result.get('output')
+                output = exec_result.get("output")
 
         # 提取执行时间
         execution_time = None
         if exec_result:
-            if hasattr(exec_result, 'execution_time'):
+            if hasattr(exec_result, "execution_time"):
                 execution_time = exec_result.execution_time
             elif isinstance(exec_result, dict):
-                execution_time = exec_result.get('execution_time')
+                execution_time = exec_result.get("execution_time")
 
         task_summary = TaskResultSummary(
             task_id=task_id,
-            task_type=task.task_type.value if hasattr(task.task_type, 'value') else str(task.task_type),
+            task_type=task.task_type.value
+            if hasattr(task.task_type, "value")
+            else str(task.task_type),
             status=status,
             content=task.content,
             error=error,
             output=output,
             output_files=[],  # 将在 collect_results_node 中填充
-            execution_time=execution_time
+            execution_time=execution_time,
         )
 
         task_results[task_id] = task_summary
@@ -1216,14 +1317,14 @@ def result_evaluator_input_mapper(global_state: GlobalState) -> ResultEvaluatorS
         key_insights=immunity_plan.get("research_insights", []),
         evidence=immunity_plan.get("research_evidence", []),
         knowledge_gaps=immunity_plan.get("research_gaps", []),
-        confidence=immunity_plan.get("research_confidence", 0.0)
+        confidence=immunity_plan.get("research_confidence", 0.0),
     )
 
     # 收集 Hypothesis 信息（增强：收集更完整的信息）
     hypothesis = HypothesisInfo(
         hypothesis_summary=immunity_plan.get("hypothesis_summary", ""),
         testable_predictions=immunity_plan.get("testable_predictions", []),
-        confidence=immunity_plan.get("hypothesis_confidence", 0.0)
+        confidence=immunity_plan.get("hypothesis_confidence", 0.0),
     )
 
     # 收集 Task List 推导依据（增强：收集更完整的分解依据）
@@ -1234,24 +1335,36 @@ def result_evaluator_input_mapper(global_state: GlobalState) -> ResultEvaluatorS
     # 构建更详细的任务分解摘要
     decomposition_details = []
     if required_service_ids:
-        decomposition_details.append(f"所需服务: {', '.join(required_service_ids[:10])}")
+        decomposition_details.append(
+            f"所需服务: {', '.join(required_service_ids[:10])}"
+        )
     if raw_tasks:
         decomposition_details.append(f"初始任务数: {len(raw_tasks)}")
-    
+
     # 收集并行组信息
     parallel_group_info = {}
     for group_id, group in global_state.parallel_task_groups.items():
-        if hasattr(group, 'subtasks'):
+        if hasattr(group, "subtasks"):
             parallel_group_info[group_id] = {
                 "subtask_count": len(group.subtasks),
-                "task_types": list(set(t.task_type.value if hasattr(t.task_type, 'value') else str(t.task_type) for t in group.subtasks))
+                "task_types": list(
+                    set(
+                        t.task_type.value
+                        if hasattr(t.task_type, "value")
+                        else str(t.task_type)
+                        for t in group.subtasks
+                    )
+                ),
             }
 
     task_list_derivation = TaskListDerivation(
-        decomposition_summary=f"基于执行计划分解为 {len(all_subtasks)} 个子任务。" + (" ".join(decomposition_details) if decomposition_details else ""),
-        required_services=required_service_ids if isinstance(required_service_ids, list) else [],
+        decomposition_summary=f"基于执行计划分解为 {len(all_subtasks)} 个子任务。"
+        + (" ".join(decomposition_details) if decomposition_details else ""),
+        required_services=required_service_ids
+        if isinstance(required_service_ids, list)
+        else [],
         dependency_rationale="任务按数据流和依赖关系排序执行，确保上游任务的输出可作为下游任务的输入。",
-        parallel_groups=parallel_group_info
+        parallel_groups=parallel_group_info,
     )
 
     return ResultEvaluatorState(
@@ -1264,11 +1377,13 @@ def result_evaluator_input_mapper(global_state: GlobalState) -> ResultEvaluatorS
         all_tasks=all_tasks,
         sandbox_dir=sandbox_dir,
         session_id=global_state.session_id,
-        parent_state=global_state
+        parent_state=global_state,
     )
 
 
-def result_evaluator_output_mapper(evaluator_state: ResultEvaluatorState, global_state: GlobalState) -> GlobalState:
+def result_evaluator_output_mapper(
+    evaluator_state: ResultEvaluatorState, global_state: GlobalState
+) -> GlobalState:
     """
     将 Result Evaluator 子图状态映射回主图状态
 
@@ -1295,28 +1410,32 @@ def result_evaluator_output_mapper(evaluator_state: ResultEvaluatorState, global
         methodology = evaluator_state.get("methodology", "")
         scientific_rationale = evaluator_state.get("scientific_rationale", "")
         limitations = evaluator_state.get("limitations", [])
-        validation_recommendations = evaluator_state.get("validation_recommendations", [])
+        validation_recommendations = evaluator_state.get(
+            "validation_recommendations", []
+        )
         total_tasks = evaluator_state.get("total_tasks", 0)
         completed_tasks = evaluator_state.get("completed_tasks", 0)
         failed_tasks = evaluator_state.get("failed_tasks", 0)
         success_rate = evaluator_state.get("success_rate", 0.0)
     else:
-        summary_report = getattr(evaluator_state, 'summary_report', "")
-        detailed_report = getattr(evaluator_state, 'detailed_report', "")
-        txt_report = getattr(evaluator_state, 'txt_report', "")
-        report_path = getattr(evaluator_state, 'report_path', "")
-        txt_report_path = getattr(evaluator_state, 'txt_report_path', "")
-        key_findings = getattr(evaluator_state, 'key_findings', []) or []
-        recommendations = getattr(evaluator_state, 'recommendations', []) or []
-        output_files = getattr(evaluator_state, 'output_files', []) or []
-        methodology = getattr(evaluator_state, 'methodology', "")
-        scientific_rationale = getattr(evaluator_state, 'scientific_rationale', "")
-        limitations = getattr(evaluator_state, 'limitations', []) or []
-        validation_recommendations = getattr(evaluator_state, 'validation_recommendations', []) or []
-        total_tasks = getattr(evaluator_state, 'total_tasks', 0)
-        completed_tasks = getattr(evaluator_state, 'completed_tasks', 0)
-        failed_tasks = getattr(evaluator_state, 'failed_tasks', 0)
-        success_rate = getattr(evaluator_state, 'success_rate', 0.0)
+        summary_report = getattr(evaluator_state, "summary_report", "")
+        detailed_report = getattr(evaluator_state, "detailed_report", "")
+        txt_report = getattr(evaluator_state, "txt_report", "")
+        report_path = getattr(evaluator_state, "report_path", "")
+        txt_report_path = getattr(evaluator_state, "txt_report_path", "")
+        key_findings = getattr(evaluator_state, "key_findings", []) or []
+        recommendations = getattr(evaluator_state, "recommendations", []) or []
+        output_files = getattr(evaluator_state, "output_files", []) or []
+        methodology = getattr(evaluator_state, "methodology", "")
+        scientific_rationale = getattr(evaluator_state, "scientific_rationale", "")
+        limitations = getattr(evaluator_state, "limitations", []) or []
+        validation_recommendations = (
+            getattr(evaluator_state, "validation_recommendations", []) or []
+        )
+        total_tasks = getattr(evaluator_state, "total_tasks", 0)
+        completed_tasks = getattr(evaluator_state, "completed_tasks", 0)
+        failed_tasks = getattr(evaluator_state, "failed_tasks", 0)
+        success_rate = getattr(evaluator_state, "success_rate", 0.0)
 
     # 存储评估结果
     global_state.merged_result["result_evaluation"] = {
@@ -1336,8 +1455,8 @@ def result_evaluator_output_mapper(evaluator_state: ResultEvaluatorState, global
             "total_tasks": total_tasks,
             "completed_tasks": completed_tasks,
             "failed_tasks": failed_tasks,
-            "success_rate": success_rate
-        }
+            "success_rate": success_rate,
+        },
     }
 
     # 存储输出文件路径到专门的列表字段（file_paths 的值必须是 str 类型）
@@ -1348,7 +1467,7 @@ def result_evaluator_output_mapper(evaluator_state: ResultEvaluatorState, global
             if f not in existing:
                 global_state.completed_output_files.append(f)
 
-    print(f"✅ Result Evaluator 子图完成")
+    print(f"[SUCCESS] Result Evaluator 子图完成")
     print(f"  - 总结报告长度: {len(summary_report)} 字符")
     print(f"  - 详细报告长度: {len(detailed_report)} 字符")
     print(f"  - TXT 报告长度: {len(txt_report)} 字符")
@@ -1358,6 +1477,7 @@ def result_evaluator_output_mapper(evaluator_state: ResultEvaluatorState, global
 
 
 # ===================== 构建 Result Evaluator 子图 =====================
+
 
 def build_result_evaluator_subgraph():
     """
@@ -1383,4 +1503,3 @@ def build_result_evaluator_subgraph():
     graph.add_edge("generate_report", END)
 
     return graph.compile()
-

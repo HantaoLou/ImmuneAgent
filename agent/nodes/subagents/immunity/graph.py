@@ -69,10 +69,10 @@ class ImmunityProgressLogger:
     STAGES = [
         ("query_decomposition", "📝 Query Decomposition", 1),
         ("retrieval", "📚 Immunology Retrieval", 2),
-        ("deep_research", "🔬 Deep Research Analysis", 3),
+        ("deep_research", "[Deep Research] Deep Research Analysis", 3),
         ("hypothesis_generation", "🧬 Hypothesis Generation", 4),
-        ("planning", "🔧 Plan Generation", 5),
-        ("evaluation", "📊 Plan Evaluation", 6),
+        ("planning", "[TOOL] Plan Generation", 5),
+        ("evaluation", "[STAT] Plan Evaluation", 6),
     ]
     TOTAL_STAGES = 6
 
@@ -94,13 +94,13 @@ class ImmunityProgressLogger:
         """开始工作流"""
         self.workflow_start_time = time.perf_counter()
         self._flush_print("\n" + "=" * 80)
-        self._flush_print(f"[{self._timestamp()}] 🚀 IMMUNITY SUBGRAPH 工作流开始")
+        self._flush_print(f"[{self._timestamp()}] [START] IMMUNITY SUBGRAPH 工作流开始")
         self._flush_print("=" * 80)
 
     def end_workflow(self, success: bool = True):
         """结束工作流"""
         total_time = time.perf_counter() - self.workflow_start_time
-        status = "✅ 成功完成" if success else "❌ 失败"
+        status = "[SUCCESS] 成功完成" if success else "[ERROR] 失败"
         self._flush_print("\n" + "=" * 80)
         self._flush_print(f"[{self._timestamp()}] {status}")
         self._flush_print(f"  总耗时: {total_time:.2f} 秒 ({total_time / 60:.1f} 分钟)")
@@ -122,10 +122,10 @@ class ImmunityProgressLogger:
 
         self._flush_print("\n" + "-" * 80)
         self._flush_print(
-            f"[{self._timestamp()}] 🔄 STAGE {stage_num}/{self.TOTAL_STAGES} ({progress_pct:.0f}%): {stage_name}"
+            f"[{self._timestamp()}] [RUN] STAGE {stage_num}/{self.TOTAL_STAGES} ({progress_pct:.0f}%): {stage_name}"
         )
         if description:
-            self._flush_print(f"  📋 {description}")
+            self._flush_print(f"  [INFO] {description}")
         self._flush_print("-" * 80)
 
     def end_stage(self, stage_name: str, success: bool = True, details: str = ""):
@@ -142,14 +142,14 @@ class ImmunityProgressLogger:
                 break
 
         progress_pct = (stage_num / self.TOTAL_STAGES) * 100
-        status = "✅" if success else "❌"
+        status = "[SUCCESS]" if success else "[ERROR]"
 
         self._flush_print(
             f"[{self._timestamp()}] {status} STAGE {stage_num}/{self.TOTAL_STAGES} 完成 ({progress_pct:.0f}%)"
         )
         self._flush_print(f"  ⏱️ 阶段耗时: {elapsed:.2f} 秒")
         if details:
-            self._flush_print(f"  📊 {details}")
+            self._flush_print(f"  [STAT] {details}")
 
     def log_llm_start(self, model_info: dict, prompt_len: int):
         """记录 LLM 调用开始"""
@@ -162,7 +162,7 @@ class ImmunityProgressLogger:
 
     def log_llm_end(self, elapsed: float, response_len: int = 0, success: bool = True):
         """记录 LLM 调用结束"""
-        status = "✅" if success else "❌"
+        status = "[SUCCESS]" if success else "[ERROR]"
         self._flush_print(f"[{self._timestamp()}] {status} LLM 调用完成")
         self._flush_print(f"  ⏱️ 响应时间: {elapsed:.2f} 秒")
         if response_len > 0:
@@ -174,11 +174,11 @@ class ImmunityProgressLogger:
 
     def log_warning(self, message: str):
         """记录警告"""
-        self._flush_print(f"[{self._timestamp()}] ⚠️ {message}")
+        self._flush_print(f"[{self._timestamp()}] [WARN]️ {message}")
 
     def log_error(self, message: str, error: Exception = None):
         """记录错误"""
-        self._flush_print(f"[{self._timestamp()}] ❌ {message}")
+        self._flush_print(f"[{self._timestamp()}] [ERROR] {message}")
         if error:
             self._flush_print(f"  错误详情: {type(error).__name__}: {str(error)}")
 
@@ -201,19 +201,26 @@ def _get_llm_with_callback(state, purpose="bioinformatics"):
     Returns:
         LLM实例（带或不带progress_callback）
     """
-    # 🔥 获取progress_callback（优先从state，其次从parent_state）
+    # [HOT] 获取progress_callback（优先从state，其次从parent_state）
     progress_callback = None
+    session_id = None
     if hasattr(state, "progress_callback") and state.progress_callback:
         progress_callback = state.progress_callback
+    if hasattr(state, "session_id") and state.session_id:
+        session_id = state.session_id
     elif hasattr(state, "parent_state") and state.parent_state:
         progress_callback = getattr(state.parent_state, "progress_callback", None)
+        session_id = getattr(state.parent_state, "session_id", None)
 
     # 创建带SSE推送的LLM实例
-    if progress_callback:
-        from utils.llm_factory import create_llm_with_callback
+    if progress_callback or session_id:
+        from utils.llm_factory import create_llm_with_thinking
 
-        return create_llm_with_callback(
-            purpose=purpose, progress_callback=progress_callback
+        return create_llm_with_thinking(
+            purpose=purpose,
+            progress_callback=progress_callback,
+            session_id=session_id,
+            node_name="immunity",
         )
     else:
         # 回退到普通创建
@@ -240,10 +247,10 @@ def _load_tools_json() -> str:
                 tools_data = json.load(f)
                 return json.dumps(tools_data, ensure_ascii=False, indent=2)
         else:
-            print(f"⚠️ mcp_tools.json does not exist: {mcp_tools_path}")
+            print(f"[WARN]️ mcp_tools.json does not exist: {mcp_tools_path}")
             return "[]"
     except Exception as e:
-        print(f"⚠️ Failed to load tool information: {e}")
+        print(f"[WARN]️ Failed to load tool information: {e}")
         return "[]"
 
 
@@ -276,7 +283,7 @@ def _get_opensandbox_id(state: "ImmunityState") -> Optional[str]:
         print(f"[Immunity] 从 state 获取到 opensandbox_id: {opensandbox_id}")
         return opensandbox_id
 
-    print("[Immunity] ⚠️ 未获取到 opensandbox_id，将创建新沙盒")
+    print("[Immunity] [WARN]️ 未获取到 opensandbox_id，将创建新沙盒")
     return None
 
 
@@ -295,7 +302,7 @@ def _save_report(
     报告保存策略（遵循架构原则：通过 CodeAct 统一执行）：
     1. 远程沙盒环境：通过 CodeAct 执行代码保存到 {sandbox_dir}/output/reports/
     2. 本地环境回退：保存到 {local_sandbox_dir}/output/reports/
-    3. 🔥 同时通过SSE推送文件内容到前端
+    3. [HOT] 同时通过SSE推送文件内容到前端
 
     Args:
         content: Report content
@@ -349,7 +356,7 @@ def _save_report(
 
                     # 容器内路径
                     container_path = remote_path.replace(
-                        "/data/sessions/", "/tmp/sessions/", 1
+                        "/data/sessions/", "/data/sessions/", 1
                     )
 
                     # 使用更安全的代码模板（避免三引号问题）
@@ -433,21 +440,21 @@ except Exception as e:
                                     },
                                 )
                                 print(
-                                    f"  ✅ 已推送 {report_type} 文件内容到前端 ({len(content)} 字符)"
+                                    f"  [SUCCESS] 已推送 {report_type} 文件内容到前端 ({len(content)} 字符)"
                                 )
                             except Exception as e:
-                                print(f"  ⚠️ 推送文件内容到前端失败: {e}")
+                                print(f"  [WARN]️ 推送文件内容到前端失败: {e}")
                         return remote_path
                     else:
                         print(
-                            f"⚠️ Failed to save to remote sandbox via CodeAct: {result.error}"
+                            f"[WARN]️ Failed to save to remote sandbox via CodeAct: {result.error}"
                         )
                         print(f"ℹ️ Falling back to local save")
                 else:
                     print(f"ℹ️ CodeAct not available, falling back to local save")
 
             except Exception as e:
-                print(f"⚠️ Failed to save to remote sandbox via CodeAct: {e}")
+                print(f"[WARN]️ Failed to save to remote sandbox via CodeAct: {e}")
                 import traceback
 
                 traceback.print_exc()
@@ -505,18 +512,18 @@ except Exception as e:
                         },
                     )
                     print(
-                        f"  ✅ 已推送 {report_type} 文件内容到前端 ({len(content)} 字符)"
+                        f"  [SUCCESS] 已推送 {report_type} 文件内容到前端 ({len(content)} 字符)"
                     )
                 except Exception as e:
-                    print(f"  ⚠️ 推送文件内容到前端失败: {e}")
+                    print(f"  [WARN]️ 推送文件内容到前端失败: {e}")
             return str(report_file)
         except Exception as e:
             print(
-                f"⚠️ Failed to save {report_type} report to {path_type} path {report_file}: {e}"
+                f"[WARN]️ Failed to save {report_type} report to {path_type} path {report_file}: {e}"
             )
             continue
 
-    print(f"❌ All save attempts failed for {report_type} report")
+    print(f"[ERROR] All save attempts failed for {report_type} report")
     return ""
 
 
@@ -609,7 +616,7 @@ def cache_check_node(state: ImmunityState) -> ImmunityState:
         )
 
         if is_cached and cached_trace:
-            _progress_logger.log_info("✅ 缓存命中！从 Mem0 加载结果...")
+            _progress_logger.log_info("[SUCCESS] 缓存命中！从 Mem0 加载结果...")
 
             # 从缓存加载所有结果
             state.cache_hit = True
@@ -651,10 +658,10 @@ def cache_check_node(state: ImmunityState) -> ImmunityState:
             _progress_logger.log_info(f"  - 计划长度: {len(state.final_enhanced_plan)}")
 
             _progress_logger.end_stage(
-                "cache_check", success=True, details="✅ 缓存命中"
+                "cache_check", success=True, details="[SUCCESS] 缓存命中"
             )
         else:
-            _progress_logger.log_info("❌ 缓存未命中，将继续执行 immunity 阶段")
+            _progress_logger.log_info("[ERROR] 缓存未命中，将继续执行 immunity 阶段")
             state.cache_hit = False
             state.skip_immunity_stages = False
             _progress_logger.end_stage(
@@ -698,7 +705,7 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
 
     _progress_logger.log_info(f"原始问题: {state.original_question[:150]}...")
 
-    # 🔥 获取progress_callback（优先从parent_state，然后从state）
+    # [HOT] 获取progress_callback（优先从parent_state，然后从state）
     progress_callback = None
     if hasattr(state, "progress_callback") and state.progress_callback:
         progress_callback = state.progress_callback
@@ -782,7 +789,7 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
             if hasattr(response, "tool_calls") and response.tool_calls:
                 tool_iterations += 1
                 _progress_logger.log_info(
-                    f"  🔧 LLM 请求工具调用 (迭代 {tool_iterations}/{max_tool_iterations})"
+                    f"  [TOOL] LLM 请求工具调用 (迭代 {tool_iterations}/{max_tool_iterations})"
                 )
 
                 # Add AI message with tool calls to conversation
@@ -816,7 +823,7 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
         _progress_logger.log_llm_end(elapsed, len(str(response)) if response else 0)
 
         if tool_iterations > 0:
-            _progress_logger.log_info(f"  📊 工具调用总次数: {tool_iterations}")
+            _progress_logger.log_info(f"  [STAT] 工具调用总次数: {tool_iterations}")
 
         # Parse the response to extract queries
         response_content = (
@@ -1537,7 +1544,7 @@ def planning_node(state: ImmunityState) -> ImmunityState:
             if hasattr(response, "tool_calls") and response.tool_calls:
                 tool_iterations += 1
                 _progress_logger.log_info(
-                    f"  🔧 LLM 请求工具调用 (迭代 {tool_iterations}/{max_tool_iterations})"
+                    f"  [TOOL] LLM 请求工具调用 (迭代 {tool_iterations}/{max_tool_iterations})"
                 )
 
                 # Add AI message with tool calls to conversation
@@ -1573,7 +1580,7 @@ def planning_node(state: ImmunityState) -> ImmunityState:
         )
 
         if tool_iterations > 0:
-            _progress_logger.log_info(f"  📊 工具调用总次数: {tool_iterations}")
+            _progress_logger.log_info(f"  [STAT] 工具调用总次数: {tool_iterations}")
 
         plan_content = (
             response.content.strip() if hasattr(response, "content") else str(response)
@@ -1773,7 +1780,7 @@ def immunity_input_mapper(global_state: GlobalState) -> ImmunityState:
         sandbox_dir=sandbox_data_dir,  # 主路径：沙盒服务器路径
         local_sandbox_dir=local_sandbox_dir,  # 回退路径：本地路径
         parent_state=global_state,
-        # 🔥 传递progress_callback和session_id，确保SSE消息能推送到前端
+        # [HOT] 传递progress_callback和session_id，确保SSE消息能推送到前端
         progress_callback=getattr(global_state, "progress_callback", None),
         session_id=getattr(global_state, "session_id", None),
         # Mem0 缓存相关字段初始化
@@ -1873,7 +1880,7 @@ def immunity_output_mapper(
         f"  - 计划文档长度: {len(final_enhanced_plan or '')} 字符"
     )
 
-    # 🔥 推送生成的文件内容到前端（通过SSE）
+    # [HOT] 推送生成的文件内容到前端（通过SSE）
     if hasattr(global_state, "progress_callback") and global_state.progress_callback:
         try:
             # 获取session_id和沙盒目录
@@ -1896,7 +1903,7 @@ def immunity_output_mapper(
                         },
                     )
                     _progress_logger.log_info(
-                        f"  ✅ 已推送实验计划到前端 ({len(plan_content)} 字符)"
+                        f"  [SUCCESS] 已推送实验计划到前端 ({len(plan_content)} 字符)"
                     )
 
                 # 推送研究报告（如果有）
@@ -1913,7 +1920,7 @@ def immunity_output_mapper(
                         },
                     )
                     _progress_logger.log_info(
-                        f"  ✅ 已推送研究报告到前端 ({len(research_summary)} 字符)"
+                        f"  [SUCCESS] 已推送研究报告到前端 ({len(research_summary)} 字符)"
                     )
 
                 # 推送假设生成报告（如果有）
@@ -1930,14 +1937,14 @@ def immunity_output_mapper(
                         },
                     )
                     _progress_logger.log_info(
-                        f"  ✅ 已推送假设报告到前端 ({len(hypothesis_summary)} 字符)"
+                        f"  [SUCCESS] 已推送假设报告到前端 ({len(hypothesis_summary)} 字符)"
                     )
 
                 # 推送评估报告（如果有）
                 if final_evaluation:
                     global_state.progress_callback(
                         event_type="file_content",
-                        message=f"📊 评估报告已生成",
+                        message=f"[STAT] 评估报告已生成",
                         details={
                             "file_type": "evaluation_report",
                             "file_name": "evaluation_report.md",
@@ -1947,7 +1954,7 @@ def immunity_output_mapper(
                         },
                     )
                     _progress_logger.log_info(
-                        f"  ✅ 已推送评估报告到前端 ({len(final_evaluation)} 字符)"
+                        f"  [SUCCESS] 已推送评估报告到前端 ({len(final_evaluation)} 字符)"
                     )
 
         except Exception as e:

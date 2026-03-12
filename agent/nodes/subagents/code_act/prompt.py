@@ -30,14 +30,14 @@ Based on the provided MCP tool information and parameters, generate Python code 
 **The following patterns are STRICTLY FORBIDDEN:**
 
 ```python
-# ❌ FORBIDDEN - These will cause IMMEDIATE REJECTION
+# [ERROR] FORBIDDEN - These will cause IMMEDIATE REJECTION
 def call_tool():  # WRONG: Do not define your own call_tool
     return "Tool called successfully"  # WRONG: No simulation
 
-# ❌ FORBIDDEN - Wrong import
+# [ERROR] FORBIDDEN - Wrong import
 from mcp import call_tool  # WRONG MODULE!
 
-# ❌ FORBIDDEN - Simulation patterns
+# [ERROR] FORBIDDEN - Simulation patterns
 # Simulate the call to a tool
 return "Tool called successfully"
 output = "Mock result"
@@ -186,18 +186,18 @@ Based on the user's task description, generate complete, executable Python code 
 **The following patterns are STRICTLY FORBIDDEN and will cause immediate rejection:**
 
 ```python
-# ❌ FORBIDDEN - Simulation/placeholder code
+# [ERROR] FORBIDDEN - Simulation/placeholder code
 def call_tool():
     # Simulate the call to a tool
     return "Tool called successfully"
 
-# ❌ FORBIDDEN - Mock implementations
+# [ERROR] FORBIDDEN - Mock implementations
 output = "Tool called successfully"  # Mock result
 
-# ❌ FORBIDDEN - Placeholder returns
+# [ERROR] FORBIDDEN - Placeholder returns
 return "Some placeholder text"
 
-# ❌ FORBIDDEN - Skipping actual work
+# [ERROR] FORBIDDEN - Skipping actual work
 result = {"status": "success", "output": "Task completed"}  # Without actual work
 ```
 

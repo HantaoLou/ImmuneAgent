@@ -79,7 +79,7 @@ def load_all_skills() -> Dict[str, Dict[str, Any]]:
             meta = skill_data.get("meta", {})
             service_name = meta.get("name", skill_dir.name)
             skills[service_name] = skill_data
-            print(f"  ✓ Loaded skill: {service_name}")
+            print(f"  [OK] Loaded skill: {service_name}")
     
     return skills
 
@@ -444,7 +444,7 @@ def load_tool_parameters_from_skills() -> Dict[str, Dict[str, Any]]:
                 tools_params_map[tool_name] = tool_params
     
     _tool_params_cache = tools_params_map
-    print(f"✓ 从 skill.yaml 加载了 {len(tools_params_map)} 个工具参数定义")
+    print(f"[OK] 从 skill.yaml 加载了 {len(tools_params_map)} 个工具参数定义")
     return tools_params_map
 
 

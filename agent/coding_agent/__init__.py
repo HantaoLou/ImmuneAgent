@@ -36,32 +36,32 @@ Coding Agent 模块 - 在 OpenSandbox 中运行 OpenCode
 使用示例：
     # 方式一：直接运行 Coding Agent
     from coding_agent import run_coding_agent_in_sandbox, TaskContext
-    
+
     result = await run_coding_agent_in_sandbox(
         tasks_md_content=tasks_md,
         context=TaskContext(session_id="test", user_input="分析数据"),
         session_id="test",
     )
-    
+
     # 方式二：从 GlobalState 运行（用于 main_graph.py）
     from coding_agent import coding_agent_node
-    
+
     state = await coding_agent_node(state)
-    
+
     # 方式三：使用迭代执行器（推荐）
     from coding_agent import IterativeOpenCodeExecutor, OpenCodeConfig
-    
+
     executor = IterativeOpenCodeExecutor(
         config=OpenCodeConfig(model_provider="glm-5"),
         max_iterations=3,
     )
-    
+
     input_data = {
         "session_id": "test_001",
         "input_files": ["/data/input.csv"],
         "params": {"threshold": 0.6},
     }
-    
+
     result = await executor.execute(input_data)
     print(f"总迭代次数: {result.total_iterations}")
     print(f"最终状态: {result.final_status}")
@@ -92,6 +92,19 @@ from coding_agent.config import (
 from coding_agent.opencode_executor import (
     OpenCodeExecutor,
     OpenCodeExecutorSync,
+)
+
+# 本地沙箱
+from coding_agent.local_sandbox import (
+    LocalSandbox,
+    LocalFiles,
+    LocalCommands,
+    CommandResult,
+)
+
+# OpenCode Server
+from coding_agent.opencode_server import (
+    OpenCodeServer,
 )
 
 # 迭代执行器
@@ -145,11 +158,16 @@ __all__ = [
     "TasksMDConfig",
     "DEFAULT_MCP_CONFIG",
     "DEFAULT_OPENCODE_CONFIG",
-    
     # 执行器
     "OpenCodeExecutor",
     "OpenCodeExecutorSync",
-    
+    # 本地沙箱
+    "LocalSandbox",
+    "LocalFiles",
+    "LocalCommands",
+    "CommandResult",
+    # OpenCode Server
+    "OpenCodeServer",
     # 迭代执行器
     "IterationStatus",
     "EvaluationLevel",
@@ -160,17 +178,14 @@ __all__ = [
     "IterativeExecutionResult",
     "IterativeOpenCodeExecutor",
     "IterativeOpenCodeExecutorSync",
-    
     # 执行追踪器
     "ExecutionTracker",
     "MCPLogEntry",
     "TaskExecution",
-    
     # tasks.md 生成器
     "generate_tasks_md_content",
     "generate_and_save_tasks_md",
     "create_simple_tasks_md",
-    
     # 集成接口
     "run_coding_agent_in_sandbox",
     "run_coding_agent_sync",

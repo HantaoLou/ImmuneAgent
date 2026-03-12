@@ -94,12 +94,13 @@ except ImportError as e:
 # LLM 相关导入
 try:
     from langchain_core.messages import HumanMessage, SystemMessage
-    from utils.llm_factory import create_reasoning_llm
+    from utils.llm_factory import create_reasoning_llm, create_llm_with_thinking
 
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
     create_reasoning_llm = None
+    create_llm_with_thinking = None
     HumanMessage = None
     SystemMessage = None
     print(
@@ -273,7 +274,11 @@ def _generate_session_id() -> str:
     return f"{timestamp}_{short_uuid}"
 
 
-def _get_llm(progress_callback: Optional[Callable] = None):
+def _get_llm(
+    progress_callback: Optional[Callable] = None,
+    session_id: Optional[str] = None,
+    node_name: str = "supervisor",
+):
     """
     获取推理模型实例（用于任务分类和参数提取）
 
@@ -281,26 +286,28 @@ def _get_llm(progress_callback: Optional[Callable] = None):
 
     Args:
         progress_callback: 进度回调函数，用于实时推送 LLM 思考过程
+        session_id: 会话ID，用于多会话隔离
+        node_name: 节点名称，用于追踪
 
     Returns:
         LLM 实例，如果不可用则返回 None
     """
-    if not LLM_AVAILABLE or create_reasoning_llm is None:
+    if not LLM_AVAILABLE:
         return None
 
-    if progress_callback:
-        try:
-            from utils.llm_factory import create_llm_with_callback
+    if create_llm_with_thinking is not None:
+        return create_llm_with_thinking(
+            purpose="reasoning",
+            temperature=0.1,
+            progress_callback=progress_callback,
+            session_id=session_id,
+            node_name=node_name,
+        )
 
-            return create_llm_with_callback(
-                purpose="reasoning",
-                temperature=0.1,
-                progress_callback=progress_callback,
-            )
-        except ImportError:
-            pass
+    if create_reasoning_llm is not None:
+        return create_reasoning_llm(temperature=0.1)
 
-    return create_reasoning_llm(temperature=0.1)
+    return None
 
 
 def _classify_file_source(file_path: str) -> FileSourceType:
@@ -424,7 +431,7 @@ def _build_file_upload_task(detected_files: List[DetectedFile], session_id: str)
         格式化的任务描述
     """
     sandbox_input_dir = f"/data/sessions/{session_id}/input"
-    container_input_dir = f"/tmp/sessions/{session_id}/input"
+    container_input_dir = f"/data/sessions/{session_id}/input"
 
     # 去重
     unique_files = {}
@@ -639,7 +646,7 @@ def _call_iterative_executor(
                 "session_id": state.session_id,
                 "user_input": """【系统内部任务 - 文件转存阶段】
 
-⚠️ 重要限定：这是一个系统内部任务，仅执行文件转存操作！
+[WARN]️ 重要限定：这是一个系统内部任务，仅执行文件转存操作！
 
 **你的任务范围**：
 1. 将文件从源位置复制/移动到目标沙盒会话目录
@@ -647,11 +654,11 @@ def _call_iterative_executor(
 3. 生成文件转存映射表
 
 **禁止执行的操作**：
-❌ 不要进行任何数据分析
-❌ 不要调用任何 MCP 工具
-❌ 不要进行任何生信分析
-❌ 不要生成分析报告
-❌ 不要执行用户的原始任务
+[ERROR] 不要进行任何数据分析
+[ERROR] 不要调用任何 MCP 工具
+[ERROR] 不要进行任何生信分析
+[ERROR] 不要生成分析报告
+[ERROR] 不要执行用户的原始任务
 
 **任务描述**：
 """
@@ -665,7 +672,7 @@ def _call_iterative_executor(
                 "session_id": state.session_id,
                 "user_input": """【系统内部任务 - 基础文件分析阶段】
 
-⚠️ 重要限定：这是一个系统内部任务，仅执行基础文件信息提取！
+[WARN]️ 重要限定：这是一个系统内部任务，仅执行基础文件信息提取！
 
 **你的任务范围（仅限以下操作）**：
 1. 识别文件类型（CSV、JSON、H5AD、FASTA、TXT等）
@@ -679,12 +686,12 @@ def _call_iterative_executor(
 5. 生成文件内容的一句话总结
 
 **禁止执行的操作**：
-❌ 不要进行任何复杂的生信分析
-❌ 不要调用任何 MCP 工具进行数据分析
-❌ 不要执行任何统计分析
-❌ 不要生成可视化图表
-❌ 不要执行用户的原始任务
-❌ 不要进行任何数据转换或处理
+[ERROR] 不要进行任何复杂的生信分析
+[ERROR] 不要调用任何 MCP 工具进行数据分析
+[ERROR] 不要执行任何统计分析
+[ERROR] 不要生成可视化图表
+[ERROR] 不要执行用户的原始任务
+[ERROR] 不要进行任何数据转换或处理
 
 **输出要求**：
 只输出文件的基础信息到指定位置，格式为 JSON。
@@ -1199,7 +1206,7 @@ def preprocess_user_input_node(state: SupervisorState) -> SupervisorState:
 
     # 2. 在远程沙盒中创建目录结构
     sandbox_data_dir = f"/data/sessions/{session_id}"
-    sandbox_container_dir = f"/tmp/sessions/{session_id}"
+    sandbox_container_dir = f"/data/sessions/{session_id}"
 
     # 使用 CodeAct 统一接口创建目录（遵循架构原则）
     try:
@@ -1237,18 +1244,18 @@ print("__SANDBOX_DIRS_CREATED__:success")
             )
 
             if result.is_success() and "__SANDBOX_DIRS_CREATED__" in result.output:
-                logger.info(f"  ✅ 沙盒目录结构已创建: {sandbox_data_dir}")
+                logger.info(f"  [SUCCESS] 沙盒目录结构已创建: {sandbox_data_dir}")
                 # 保存 sandbox_id 到状态
                 if result.sandbox_id:
                     state.opensandbox_id = result.sandbox_id
                     logger.debug(f"  OpenSandbox ID: {result.sandbox_id}")
             else:
-                logger.warning(f"  ⚠️ 沙盒目录创建可能失败: {result.error}")
+                logger.warning(f"  [WARN]️ 沙盒目录创建可能失败: {result.error}")
         else:
-            logger.warning("  ⚠️ CodeAct 不可用，跳过沙盒目录创建")
+            logger.warning("  [WARN]️ CodeAct 不可用，跳过沙盒目录创建")
 
     except Exception as e:
-        logger.warning(f"  ⚠️ 创建沙盒目录失败: {e}")
+        logger.warning(f"  [WARN]️ 创建沙盒目录失败: {e}")
 
     # 3. LLM 结构化提取
     logger.info("  正在执行 LLM 结构化提取...")

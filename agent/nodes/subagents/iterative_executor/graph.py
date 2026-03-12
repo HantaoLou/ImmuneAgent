@@ -166,7 +166,7 @@ def _execute_internal(state: IterativeExecutorState) -> IterativeExecutorState:
         # 需要从 GlobalState 获取配置信息，这里简化处理
         sandbox_domain = os.getenv("OPENSANDBOX_DOMAIN", "http://117.10.59.114:40001")
         config = OpenCodeConfig(
-            model_provider="glm-4-flash",
+            model_provider=os.getenv("OPENCODE_MODEL_PROVIDER", "glm-4.7"),
             sandbox_domain=sandbox_domain,
             api_key="",
         )

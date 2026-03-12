@@ -41,6 +41,9 @@ class ProgressEventType(str, Enum):
 class ProgressEvent(BaseModel):
     """进度事件"""
 
+    session_id: Optional[str] = Field(
+        default=None, description="会话ID，用于多会话隔离"
+    )
     event_type: ProgressEventType = Field(description="事件类型")
     node_name: Optional[str] = Field(default=None, description="节点名称")
     task_id: Optional[str] = Field(default=None, description="任务ID")
@@ -54,23 +57,57 @@ class ProgressEvent(BaseModel):
     )
 
 
+_global_trackers: Dict[str, "ProgressTracker"] = {}
+
+
 class ProgressTracker:
     """进度跟踪器"""
 
-    def __init__(self):
+    def __init__(self, session_id: Optional[str] = None):
         self.queue: asyncio.Queue = asyncio.Queue()
-        self.session_id: Optional[str] = None
+        self.session_id: Optional[str] = session_id
         self._active = True
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+        if session_id:
+            _global_trackers[session_id] = self
 
     def set_session_id(self, session_id: str):
         """设置会话ID"""
         self.session_id = session_id
+        _global_trackers[session_id] = self
+
+    async def push_event(self, event: ProgressEvent):
+        """
+        推送进度事件（强制验证 session_id）
+
+        Args:
+            event: 进度事件
+        """
+        if not self._active:
+            return
+
+        if event.session_id and event.session_id != self.session_id:
+            print(
+                f"[ProgressTracker] WARNING: Session mismatch: {event.session_id} != {self.session_id}"
+            )
+            return
+
+        if not event.session_id:
+            event.session_id = self.session_id
+
+        await self.queue.put(event)
+
+        if self.session_id:
+            try:
+                storage = get_session_storage()
+                storage.save_message(self.session_id, event.model_dump())
+            except Exception as e:
+                print(f"[ProgressTracker] Failed to save message to storage: {e}")
 
     async def emit(self, event: ProgressEvent):
         """发送进度事件"""
-        if self._active:
-            await self.queue.put(event)
+        await self.push_event(event)
 
     def emit_sync(self, event: ProgressEvent):
         """同步发送进度事件（用于同步代码中）"""
@@ -170,25 +207,30 @@ class ProgressTracker:
         return progress_callback
 
 
-# 全局进度跟踪器管理
-_progress_trackers: Dict[str, ProgressTracker] = {}
-
-
 def create_progress_tracker(session_id: str) -> ProgressTracker:
-    """创建进度跟踪器"""
-    tracker = ProgressTracker()
-    tracker.set_session_id(session_id)
-    _progress_trackers[session_id] = tracker
+    """
+    创建进度跟踪器（强制绑定 session_id）
+
+    Args:
+        session_id: 会话ID
+
+    Returns:
+        绑定了 session_id 的 ProgressTracker 实例
+    """
+    if session_id in _global_trackers:
+        return _global_trackers[session_id]
+
+    tracker = ProgressTracker(session_id=session_id)
     return tracker
 
 
 def get_progress_tracker(session_id: str) -> Optional[ProgressTracker]:
     """获取进度跟踪器"""
-    return _progress_trackers.get(session_id)
+    return _global_trackers.get(session_id)
 
 
 def remove_progress_tracker(session_id: str):
     """移除进度跟踪器"""
-    if session_id in _progress_trackers:
-        tracker = _progress_trackers.pop(session_id)
+    if session_id in _global_trackers:
+        tracker = _global_trackers.pop(session_id)
         tracker.stop()

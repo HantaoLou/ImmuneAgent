@@ -310,7 +310,7 @@ class ToolQuestionMatcher:
         for tool_name, score in ranked_tools:
             tool = self.tool_definitions.get(tool_name)
             category = tool.category.value if tool else "unknown"
-            selected = "✓" if score >= 0.1 else ""
+            selected = "[OK]" if score >= 0.1 else ""
             lines.append(f"| {tool_name} | {category} | {score:.3f} | {selected} |")
         
         return "\n".join(lines)

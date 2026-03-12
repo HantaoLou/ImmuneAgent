@@ -199,7 +199,7 @@ print(f"__EXISTS__:{{exists}}")
                 return "__EXISTS__:True" in str(output)
             return False
         except Exception as e:
-            print(f"⚠️ Failed to check remote file existence: {e}")
+            print(f"[WARN]️ Failed to check remote file existence: {e}")
             return False
     
     def read_todo_list(self) -> TodoList:
@@ -243,7 +243,7 @@ print(f"__EXISTS__:{{exists}}")
                 raise RuntimeError("CodeAct not available for remote file reading")
             
             # Convert server path to container path for reading
-            # Files are written to /tmp/sessions/... (writable in container)
+            # Files are written to /data/sessions/... (writable in container)
             container_file_path = get_container_path(self.todo_list_path_str)
             
             # Use container path for remote sandbox
@@ -612,12 +612,12 @@ else:
             from utils.sandbox_paths import get_container_path
             
             if not is_codeact_available():
-                print("⚠️ CodeAct not available for remote file writing")
+                print("[WARN]️ CodeAct not available for remote file writing")
                 return False
             
             # Convert server path to container path for writing
             # Server path: /data/sessions/{session_id}/...  (read-only in container)
-            # Container path: /tmp/sessions/{session_id}/...  (writable in container)
+            # Container path: /data/sessions/{session_id}/...  (writable in container)
             container_dir = get_container_path(self.sandbox_dir_str)
             container_file_path = get_container_path(self.todo_list_path_str)
             
@@ -656,11 +656,11 @@ print(f"__WRITTEN__:{{file_path}}")
                     return True
             
             error = result.error if result else "No result"
-            print(f"⚠️ Failed to write remote file: {error}")
+            print(f"[WARN]️ Failed to write remote file: {error}")
             return False
             
         except Exception as e:
-            print(f"⚠️ Error writing to remote sandbox: {e}")
+            print(f"[WARN]️ Error writing to remote sandbox: {e}")
             return False
     
     def _render_markdown(self, todo_list: TodoList) -> str:
@@ -840,7 +840,7 @@ print(f"__WRITTEN__:{{file_path}}")
                 print(f"  📁 Loaded file parameter table with {len(self._cached_file_params.files)} files")
         
         except Exception as e:
-            print(f"  ⚠️ Failed to load file params: {e}")
+            print(f"  [WARN]️ Failed to load file params: {e}")
     
     def _read_remote_file_params(self) -> Optional[str]:
         """Read file params from remote sandbox via CodeAct"""
@@ -881,7 +881,7 @@ else:
             return None
         
         except Exception as e:
-            print(f"  ⚠️ Failed to read remote file params: {e}")
+            print(f"  [WARN]️ Failed to read remote file params: {e}")
             return None
     
     def add_file_parameter(self, file_param: FileParameter) -> bool:
@@ -959,7 +959,7 @@ else:
                 return True
         
         except Exception as e:
-            print(f"  ⚠️ Failed to save file params: {e}")
+            print(f"  [WARN]️ Failed to save file params: {e}")
             return False
     
     def _write_remote_file_params(self, content: str) -> bool:
@@ -1004,7 +1004,7 @@ print(f"__WRITTEN__:{{path}}")
             return False
         
         except Exception as e:
-            print(f"  ⚠️ Failed to write remote file params: {e}")
+            print(f"  [WARN]️ Failed to write remote file params: {e}")
             return False
     
     # ===================== Markdown Rendering with File Params =====================
@@ -1081,10 +1081,10 @@ def _get_container_path(server_path: str) -> str:
     Convert server path to container path for sandbox execution
     
     Server path: /data/sessions/{session_id}/...  (read-only in container)
-    Container path: /tmp/sessions/{session_id}/...  (writable in container)
+    Container path: /data/sessions/{session_id}/...  (writable in container)
     """
     if server_path.startswith("/data/sessions/"):
-        return server_path.replace("/data/sessions/", "/tmp/sessions/", 1)
+        return server_path.replace("/data/sessions/", "/data/sessions/", 1)
     return server_path
 
 
@@ -1093,7 +1093,7 @@ def generate_code_to_read_todo_list(sandbox_dir: str) -> str:
     Generate Python code to read todo-list.md from sandbox
     
     This code will be executed in the sandbox environment.
-    Note: Uses container path (/tmp/sessions/) for write operations.
+    Note: Uses container path (/data/sessions/) for write operations.
     """
     # Convert server path to container path for sandbox execution
     container_dir = _get_container_path(sandbox_dir)

@@ -51,7 +51,7 @@ class SSECallbackHandler(BaseCallbackHandler):
 
                 self.progress_callback(
                     event_type="llm_thinking",
-                    message=f"🤔 开始思考...",
+                    message=f"[THINK] 开始思考...",
                     details={
                         "phase": "thinking_start",
                         "model": kwargs.get("invocation_params", {}).get(
@@ -127,7 +127,7 @@ class SSECallbackHandler(BaseCallbackHandler):
 
                 self.progress_callback(
                     event_type="llm_thinking",
-                    message=f"✅ 思考完成",
+                    message=f"[SUCCESS] 思考完成",
                     details={
                         "phase": "thinking_complete",
                         "total_tokens": len(self.accumulated_tokens),

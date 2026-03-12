@@ -108,12 +108,12 @@ class ConsoleOutputFilter:
     def _extract_event(self, line: str) -> Optional[str]:
         """提取事件信息"""
         # 成功事件
-        if re.search(r"✅|✓|完成|completed|成功|success", line, flags=re.IGNORECASE):
+        if re.search(r"[SUCCESS]|[OK]|完成|completed|成功|success", line, flags=re.IGNORECASE):
             return f"success {self._clean_line(line)}"
 
         # 错误事件
         if re.search(
-            r"❌|✗|错误|失败|error|failed|exception", line, flags=re.IGNORECASE
+            r"[ERROR]|[FAIL]|错误|失败|error|failed|exception", line, flags=re.IGNORECASE
         ):
             return f"error {self._clean_line(line)}"
 

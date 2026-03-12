@@ -36,7 +36,7 @@ def print_separator(title: str):
 
 def print_result(success: bool, message: str):
     """Print test result with status."""
-    status = "✅ PASS" if success else "❌ FAIL"
+    status = "[SUCCESS] PASS" if success else "[ERROR] FAIL"
     print(f"{status}: {message}")
 
 
@@ -515,7 +515,7 @@ def main():
     total = len(results)
     
     for test_name, result in results.items():
-        status = "✅" if result else "❌"
+        status = "[SUCCESS]" if result else "[ERROR]"
         print(f"  {status} {test_name}")
     
     print(f"\n  Total: {passed}/{total} tests passed")
@@ -523,7 +523,7 @@ def main():
     if passed == total:
         print("\n  🎉 ALL TESTS PASSED!")
     else:
-        print(f"\n  ⚠️ {total - passed} test(s) failed")
+        print(f"\n  [WARN]️ {total - passed} test(s) failed")
     
     return passed == total
 

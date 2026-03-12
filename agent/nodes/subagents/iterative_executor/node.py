@@ -360,22 +360,13 @@ def _create_opencode_config(state: "GlobalState") -> "OpenCodeConfig":
     Returns:
         OpenCodeConfig: 配置对象
     """
-    # 获取配置参数
     sandbox_domain = os.getenv("OPENSANDBOX_DOMAIN", "http://117.10.59.114:40001")
     api_key = os.getenv("ZHIPU_API_KEY", "")
 
-    # MCP 配置路径
-    mcp_config_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-        "config",
-        "mcp_servers.json",
-    )
-
     config = OpenCodeConfig(
-        model_provider="glm-4-flash",
+        model_provider=os.getenv("OPENCODE_MODEL_PROVIDER", "glm-4.7"),
         sandbox_domain=sandbox_domain,
         api_key=api_key,
-        mcp_config_path=mcp_config_path if os.path.exists(mcp_config_path) else None,
     )
 
     return config

@@ -393,7 +393,8 @@ async def download_file(session_id: str, file_path: str):
 
         image = os.getenv("OPENSANDBOX_IMAGE", "python:3.11-slim")
         volume_bindings_env = os.getenv(
-            "OPENSANDBOX_VOLUME_BINDINGS", "/data/sessions:/tmp/sessions,/data:/data:ro"
+            "OPENSANDBOX_VOLUME_BINDINGS",
+            "/data/sessions:/data/sessions,/data:/data:ro",
         )
         volume_bindings = []
         for binding in volume_bindings_env.split(","):
@@ -439,7 +440,7 @@ async def download_file(session_id: str, file_path: str):
 
         # 尝试两个路径
         possible_paths = [
-            f"/tmp/sessions/{session_id}/output/{file_path}",
+            f"/data/sessions/{session_id}/output/{file_path}",
             f"/data/sessions/{session_id}/output/{file_path}",
         ]
 

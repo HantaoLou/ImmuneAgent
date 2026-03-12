@@ -32,7 +32,7 @@ def print_separator(title: str, char: str = "="):
 
 
 def print_result(success: bool, message: str):
-    status = "✅" if success else "❌"
+    status = "[SUCCESS]" if success else "[ERROR]"
     print(f"{status} {message}")
 
 
@@ -262,12 +262,12 @@ def summarize_results(similarity_results: dict, retriever_results: dict):
         ret_count = retriever_results.get(col, {}).get("count", 0)
         
         if sim_count > 0 and ret_count > 0:
-            status = "✅ OK"
+            status = "[SUCCESS] OK"
         elif sim_count > 0 and ret_count == 0:
-            status = "⚠️ Retriever Issue"
+            status = "[WARN]️ Retriever Issue"
             all_ok = False
         elif sim_count == 0 and ret_count == 0:
-            status = "❌ No Data"
+            status = "[ERROR] No Data"
             all_ok = False
         else:
             status = "❓ Unknown"

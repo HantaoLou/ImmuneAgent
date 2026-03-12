@@ -23,6 +23,7 @@ Usage:
 from typing import Optional, Any, Dict, List, Tuple, Callable
 from enum import Enum
 import os
+from datetime import datetime
 
 from langchain_core.tools import BaseTool
 
@@ -57,12 +58,70 @@ if not LLM_AVAILABLE:
 
 # 🔥 Import progress context
 try:
-    from utils.progress_context import get_progress_callback
+    from utils.progress_context import (
+        get_progress_callback,
+        set_progress_callback,
+        ProgressCallbackContext,
+    )
 
     PROGRESS_CONTEXT_AVAILABLE = True
 except ImportError:
     PROGRESS_CONTEXT_AVAILABLE = False
+    set_progress_callback = None
+    get_progress_callback = None
+    ProgressCallbackContext = None
     print("Warning: progress_context not available, SSE streaming will be disabled")
+
+
+# 🔥 Auto-detect progress callback from context
+def _get_auto_progress_callback() -> Optional[Callable]:
+    """
+    Automatically get progress callback from context (ContextVar)
+
+    This allows all LLM creation functions to automatically use SSE
+    when a callback is set in the context, without requiring explicit passing.
+
+    Returns:
+        Progress callback function if available in context, None otherwise
+    """
+    if PROGRESS_CONTEXT_AVAILABLE and get_progress_callback is not None:
+        return get_progress_callback()
+    return None
+
+
+def _bind_session_to_callback(
+    callback: Callable, session_id: str, node_name: Optional[str] = None
+) -> Callable:
+    """
+    Bind session_id and node_name to callback function
+
+    This wraps a callback to automatically inject session_id and node_name
+    into all callback invocations.
+
+    Args:
+        callback: Original callback function
+        session_id: Session ID to bind
+        node_name: Node name to bind
+
+    Returns:
+        Wrapped callback with session_id and node_name bound
+    """
+    _node = node_name or "unknown"
+
+    def wrapped(
+        event_type: str,
+        message: str,
+        details: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ):
+        if details is None:
+            details = {}
+        details["session_id"] = session_id
+        details["node_name"] = _node
+        details["timestamp"] = datetime.now().isoformat()
+        return callback(event_type, message, details, **kwargs)
+
+    return wrapped
 
 
 # ===================== Model Purpose Enum =====================
@@ -119,8 +178,9 @@ def _create_openai_llm(
     temperature: float = 0.1,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    progress_callback: Optional[Callable] = None,
 ) -> Optional[Any]:
-    """Internal function: Create OpenAI GPT LLM instance"""
+    """Internal function: Create OpenAI GPT LLM instance with optional SSE callback"""
     if not LLM_AVAILABLE or ChatOpenAI is None:
         return None
 
@@ -134,21 +194,52 @@ def _create_openai_llm(
     timeout = int(os.getenv("LLM_TIMEOUT", "120"))
     max_retries = 2
     masked_key = _mask_api_key(api_key)
+
+    # Auto-detect callback if not provided
+    if progress_callback is None:
+        progress_callback = _get_auto_progress_callback()
+
+    streaming_enabled = bool(progress_callback)
+
     print(
         "Creating OpenAI-compatible LLM instance: "
         f"model={model}, temperature={temperature}, base_url={base_url}, "
-        f"timeout={timeout}, max_retries={max_retries}, api_key={masked_key}"
+        f"timeout={timeout}, max_retries={max_retries}, api_key={masked_key}, "
+        f"streaming={streaming_enabled}"
     )
 
     try:
-        return ChatOpenAI(
+        # Prepare callbacks if progress_callback is available
+        callbacks = None
+        if progress_callback:
+            try:
+                from agent.utils.sse_callback_handler import SSECallbackHandler
+
+                callbacks = [SSECallbackHandler(progress_callback=progress_callback)]
+            except ImportError:
+                try:
+                    from utils.sse_callback_handler import SSECallbackHandler
+
+                    callbacks = [
+                        SSECallbackHandler(progress_callback=progress_callback)
+                    ]
+                except ImportError:
+                    print(
+                        "Warning: SSECallbackHandler not available, streaming disabled"
+                    )
+                    streaming_enabled = False
+
+        llm = ChatOpenAI(
             model=model,
             temperature=temperature,
             api_key=api_key,
             base_url=base_url,
-            timeout=timeout,  # Add timeout setting
-            max_retries=max_retries,  # Maximum retry count
+            timeout=timeout,
+            max_retries=max_retries,
+            streaming=streaming_enabled,
+            callbacks=callbacks,
         )
+        return llm
     except Exception as e:
         print(f"Error: Failed to create OpenAI LLM ({model}): {e}")
         return None
@@ -160,27 +251,27 @@ def _create_zhipu_llm(
     api_key: Optional[str] = None,
     progress_callback: Optional[Callable] = None,
 ) -> Optional[Any]:
-    """Internal function: Create Zhipu AI LLM instance"""
+    """Internal function: Create Zhipu AI LLM instance with optional SSE callback"""
     if not LLM_AVAILABLE or ZhipuAiClient is None:
         return None
 
     if api_key is None:
-        # 支持两种环境变量名
         api_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
 
     if not api_key:
         print("Warning: ZHIPU_API_KEY or ZHIPUAI_API_KEY not found")
         return None
 
-    # 确保环境变量设置正确（ChatZhipuAI 需要 ZHIPUAI_API_KEY）
     if not os.getenv("ZHIPUAI_API_KEY"):
         os.environ["ZHIPUAI_API_KEY"] = api_key
 
-    # 🔥 如果没有提供progress_callback，尝试从context获取
-    if not progress_callback and PROGRESS_CONTEXT_AVAILABLE:
-        progress_callback = get_progress_callback()
+    # Auto-detect callback from context if not provided
+    if progress_callback is None:
+        progress_callback = _get_auto_progress_callback()
         if progress_callback:
-            print(f"[LLM Factory] Auto-detected progress_callback from context")
+            print(
+                f"[LLM Factory] Auto-detected progress_callback from context for Zhipu"
+            )
 
     try:
         from agent.utils.sse_callback_handler import (
@@ -192,10 +283,27 @@ def _create_zhipu_llm(
             model=model,
             temperature=temperature,
             progress_callback=progress_callback,
-            streaming=bool(progress_callback),  # 🔥 如果有callback，启用streaming
+            streaming=bool(progress_callback),
         )
 
         return llm
+    except ImportError:
+        try:
+            from utils.sse_callback_handler import (
+                create_llm_with_sse,
+                attach_sse_to_llm,
+            )
+
+            llm = create_llm_with_sse(
+                model=model,
+                temperature=temperature,
+                progress_callback=progress_callback,
+                streaming=bool(progress_callback),
+            )
+            return llm
+        except Exception as e:
+            print(f"Error: Failed to create Zhipu AI LLM ({model}): {e}")
+            return None
     except Exception as e:
         print(f"Error: Failed to create Zhipu AI LLM ({model}): {e}")
         return None
@@ -217,7 +325,9 @@ def _create_llm_with_tools(
 
 # ===================== Create LLM by Purpose =====================
 def create_reasoning_llm(
-    temperature: Optional[float] = None, custom_model: Optional[str] = None
+    temperature: Optional[float] = None,
+    custom_model: Optional[str] = None,
+    progress_callback: Optional[Callable] = None,
 ) -> Optional[Any]:
     """
     Create reasoning model instance
@@ -227,6 +337,7 @@ def create_reasoning_llm(
     Args:
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model, e.g., "anthropic:claude-3-opus-20240229")
+        progress_callback: Optional progress callback for SSE streaming (auto-detected from context if not provided)
 
     Returns:
         LLM instance, returns None if creation fails
@@ -237,12 +348,17 @@ def create_reasoning_llm(
         >>> llm = create_reasoning_llm(custom_model="anthropic:claude-3-opus-20240229")
     """
     return _create_llm_by_purpose(
-        ModelPurpose.REASONING, temperature=temperature, custom_model=custom_model
+        ModelPurpose.REASONING,
+        temperature=temperature,
+        custom_model=custom_model,
+        progress_callback=progress_callback,
     )
 
 
 def create_bioinformatics_llm(
-    temperature: Optional[float] = None, custom_model: Optional[str] = None
+    temperature: Optional[float] = None,
+    custom_model: Optional[str] = None,
+    progress_callback: Optional[Callable] = None,
 ) -> Optional[Any]:
     """
     Create bioinformatics model instance
@@ -252,6 +368,7 @@ def create_bioinformatics_llm(
     Args:
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model, e.g., "anthropic:claude-3-opus-20240229")
+        progress_callback: Optional progress callback for SSE streaming (auto-detected from context if not provided)
 
     Returns:
         LLM instance, returns None if creation fails
@@ -261,12 +378,17 @@ def create_bioinformatics_llm(
         >>> llm = create_bioinformatics_llm(temperature=0.3)
     """
     return _create_llm_by_purpose(
-        ModelPurpose.BIOINFORMATICS, temperature=temperature, custom_model=custom_model
+        ModelPurpose.BIOINFORMATICS,
+        temperature=temperature,
+        custom_model=custom_model,
+        progress_callback=progress_callback,
     )
 
 
 def create_reasoning_advanced_llm(
-    temperature: Optional[float] = None, custom_model: Optional[str] = None
+    temperature: Optional[float] = None,
+    custom_model: Optional[str] = None,
+    progress_callback: Optional[Callable] = None,
 ) -> Optional[Any]:
     """
     Create advanced reasoning model instance
@@ -276,6 +398,7 @@ def create_reasoning_advanced_llm(
     Args:
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model, e.g., "anthropic:claude-3-opus-20240229")
+        progress_callback: Optional progress callback for SSE streaming (auto-detected from context if not provided)
 
     Returns:
         LLM instance, returns None if creation fails
@@ -287,11 +410,14 @@ def create_reasoning_advanced_llm(
         ModelPurpose.REASONING_ADVANCED,
         temperature=temperature,
         custom_model=custom_model,
+        progress_callback=progress_callback,
     )
 
 
 def create_code_llm(
-    temperature: Optional[float] = None, custom_model: Optional[str] = None
+    temperature: Optional[float] = None,
+    custom_model: Optional[str] = None,
+    progress_callback: Optional[Callable] = None,
 ) -> Optional[Any]:
     """
     Create code model instance
@@ -301,6 +427,7 @@ def create_code_llm(
     Args:
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model, e.g., "openai:gpt-4o")
+        progress_callback: Optional progress callback for SSE streaming (auto-detected from context if not provided)
 
     Returns:
         LLM instance, returns None if creation fails
@@ -310,7 +437,10 @@ def create_code_llm(
         >>> llm = create_code_llm(temperature=0.2)
     """
     return _create_llm_by_purpose(
-        ModelPurpose.CODE, temperature=temperature, custom_model=custom_model
+        ModelPurpose.CODE,
+        temperature=temperature,
+        custom_model=custom_model,
+        progress_callback=progress_callback,
     )
 
 
@@ -319,6 +449,7 @@ def _create_llm_by_purpose(
     purpose: ModelPurpose,
     temperature: Optional[float] = None,
     custom_model: Optional[str] = None,
+    progress_callback: Optional[Callable] = None,
 ) -> Optional[Any]:
     """
     Create LLM instance by purpose (core function)
@@ -327,6 +458,7 @@ def _create_llm_by_purpose(
         purpose: Model purpose
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model)
+        progress_callback: Optional progress callback for SSE streaming
 
     Returns:
         LLM instance, returns None if creation fails
@@ -337,6 +469,10 @@ def _create_llm_by_purpose(
         )
         return None
 
+    # Auto-detect callback if not provided
+    if progress_callback is None:
+        progress_callback = _get_auto_progress_callback()
+
     # If custom model is specified, use it first
     if custom_model:
         try:
@@ -344,9 +480,13 @@ def _create_llm_by_purpose(
             temp = temperature if temperature is not None else 0.1
 
             if provider == "openai":
-                llm = _create_openai_llm(model, temp, base_url="https://xiaoai.plus/v1")
+                llm = _create_openai_llm(
+                    model,
+                    temp,
+                    base_url="https://xiaoai.plus/v1",
+                    progress_callback=progress_callback,
+                )
             elif provider == "dashscope":
-                # DashScope uses DASHSCOPE_API_KEY
                 dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv(
                     "QIANFAN_API_KEY"
                 )
@@ -356,13 +496,19 @@ def _create_llm_by_purpose(
                         temp,
                         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
                         api_key=dashscope_key,
+                        progress_callback=progress_callback,
                     )
                 else:
                     llm = None
             elif provider == "zhipu":
                 zhipu_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
                 if zhipu_key:
-                    llm = _create_zhipu_llm(model, temp, api_key=zhipu_key)
+                    llm = _create_zhipu_llm(
+                        model,
+                        temp,
+                        api_key=zhipu_key,
+                        progress_callback=progress_callback,
+                    )
                 else:
                     llm = None
             else:
@@ -388,13 +534,17 @@ def _create_llm_by_purpose(
         temp = temperature if temperature is not None else default_temp
 
         if provider == "openai":
-            llm = _create_openai_llm(model, temp, base_url="https://xiaoai.plus/v1")
+            llm = _create_openai_llm(
+                model,
+                temp,
+                base_url="https://xiaoai.plus/v1",
+                progress_callback=progress_callback,
+            )
             if llm is None:
                 failed_attempts.append(
                     f"{provider}:{model} (missing OPENAI_API_KEY or creation failed)"
                 )
         elif provider == "dashscope":
-            # DashScope uses DASHSCOPE_API_KEY
             dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv(
                 "QIANFAN_API_KEY"
             )
@@ -404,6 +554,7 @@ def _create_llm_by_purpose(
                     temp,
                     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
                     api_key=dashscope_key,
+                    progress_callback=progress_callback,
                 )
                 if llm is None:
                     failed_attempts.append(f"{provider}:{model} (creation failed)")
@@ -413,10 +564,11 @@ def _create_llm_by_purpose(
                     f"{provider}:{model}:{dashscope_key} (missing DASHSCOPE_API_KEY or QIANFAN_API_KEY)"
                 )
         elif provider == "zhipu":
-            # Zhipu uses ZHIPU_API_KEY (also supports ZHIPUAI_API_KEY for compatibility)
             zhipu_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
             if zhipu_key:
-                llm = _create_zhipu_llm(model, temp, api_key=zhipu_key)
+                llm = _create_zhipu_llm(
+                    model, temp, api_key=zhipu_key, progress_callback=progress_callback
+                )
                 if llm is None:
                     failed_attempts.append(
                         f"{provider}:{model} (creation failed or adapter unavailable)"
@@ -448,6 +600,7 @@ def create_llm(
     purpose: str = "reasoning",
     temperature: Optional[float] = None,
     custom_model: Optional[str] = None,
+    progress_callback: Optional[Callable] = None,
 ) -> Optional[Any]:
     """
     Generic LLM creation function (backward compatible)
@@ -456,6 +609,7 @@ def create_llm(
         purpose: Model purpose, options: "reasoning", "bioinformatics", "reasoning_advanced", "code"
         temperature: Temperature parameter
         custom_model: Custom model name
+        progress_callback: Optional progress callback for SSE streaming (auto-detected from context if not provided)
 
     Returns:
         LLM instance, returns None if creation fails
@@ -466,12 +620,16 @@ def create_llm(
     """
     try:
         purpose_enum = ModelPurpose(purpose)
-        return _create_llm_by_purpose(purpose_enum, temperature, custom_model)
+        return _create_llm_by_purpose(
+            purpose_enum, temperature, custom_model, progress_callback
+        )
     except ValueError:
         print(
             f"Warning: Unknown model purpose '{purpose}', using default reasoning model"
         )
-        return _create_llm_by_purpose(ModelPurpose.REASONING, temperature, custom_model)
+        return _create_llm_by_purpose(
+            ModelPurpose.REASONING, temperature, custom_model, progress_callback
+        )
 
 
 # ===================== Helper Functions =====================
@@ -641,3 +799,80 @@ def create_llm_with_callback(
         f"Warning: Could not create LLM with callback, falling back to standard creation"
     )
     return _create_llm_by_purpose(purpose_enum, temperature, custom_model)
+
+
+def create_llm_with_thinking(
+    purpose: str = "reasoning",
+    progress_callback: Optional[Callable] = None,
+    session_id: Optional[str] = None,
+    node_name: Optional[str] = None,
+    temperature: Optional[float] = None,
+    custom_model: Optional[str] = None,
+    **kwargs,
+) -> Optional[Any]:
+    """
+    Create LLM instance with thinking capture and automatic callback binding
+
+    This is the recommended way to create LLM instances. It automatically:
+    1. Detects progress callback from context if not provided
+    2. Binds session_id and node_name to the callback
+    3. Enables streaming for thinking capture
+    4. Reports LLM thinking to the frontend
+
+    Args:
+        purpose: Model purpose, options: "reasoning", "bioinformatics", "reasoning_advanced", "code"
+        progress_callback: Optional progress callback (auto-detected from context if not provided)
+        session_id: Optional session ID for multi-session isolation
+        node_name: Optional node name for tracking
+        temperature: Temperature parameter
+        custom_model: Custom model name (format: provider:model)
+        **kwargs: Additional arguments passed to LLM creation
+
+    Returns:
+        LLM instance with thinking capture, returns None if creation fails
+
+    Examples:
+        >>> # Simple usage with auto-detection
+        >>> llm = create_llm_with_thinking("reasoning")
+
+        >>> # With explicit session tracking
+        >>> llm = create_llm_with_thinking(
+        ...     purpose="reasoning",
+        ...     session_id="session_123",
+        ...     node_name="supervisor"
+        ... )
+
+        >>> # From GlobalState
+        >>> llm = state.get_llm(purpose="reasoning", node_name="general_qa")
+    """
+    # 1. Auto-detect callback if not provided
+    if progress_callback is None:
+        progress_callback = _get_auto_progress_callback()
+
+    # 2. Bind session_id to callback if both are available
+    if progress_callback and session_id:
+        progress_callback = _bind_session_to_callback(
+            progress_callback, session_id, node_name
+        )
+
+    # 3. Create LLM using standard factory
+    try:
+        purpose_enum = ModelPurpose(purpose)
+    except ValueError:
+        print(
+            f"Warning: Unknown model purpose '{purpose}', using default reasoning model"
+        )
+        purpose_enum = ModelPurpose.REASONING
+
+    llm = _create_llm_by_purpose(
+        purpose_enum,
+        temperature=temperature,
+        custom_model=custom_model,
+        progress_callback=progress_callback,
+    )
+
+    # 4. Ensure streaming is enabled
+    if llm and hasattr(llm, "streaming"):
+        llm.streaming = True
+
+    return llm

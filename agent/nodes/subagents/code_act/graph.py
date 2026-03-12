@@ -282,7 +282,7 @@ def _infer_param_mapping_with_llm(
     try:
         llm = create_llm("reasoning")
     except Exception as e:
-        print(f"  ⚠ Failed to get LLM for param mapping: {e}")
+        print(f"  [WARN] Failed to get LLM for param mapping: {e}")
         return {}
     
     if not llm or not tool_param_specs:
@@ -386,7 +386,7 @@ Return ONLY the JSON object, no additional text."""
                 if json_match:
                     mapped = json.loads(json_match.group())
                 else:
-                    print(f"  ⚠ Failed to parse LLM response as JSON")
+                    print(f"  [WARN] Failed to parse LLM response as JSON")
                     return {}
         
         # Validate mapped params
@@ -394,14 +394,14 @@ Return ONLY the JSON object, no additional text."""
         for tool_param_name, value in mapped.items():
             if tool_param_name in tool_param_specs:
                 result[tool_param_name] = value
-                print(f"    ✅ LLM mapped: {tool_param_name} = {repr(value)[:50]}")
+                print(f"    [SUCCESS] LLM mapped: {tool_param_name} = {repr(value)[:50]}")
             else:
-                print(f"    ⚠ LLM returned unknown param: {tool_param_name}")
+                print(f"    [WARN] LLM returned unknown param: {tool_param_name}")
         
         return result
         
     except Exception as e:
-        print(f"  ⚠ LLM param mapping failed: {e}")
+        print(f"  [WARN] LLM param mapping failed: {e}")
         return {}
 
 
@@ -433,12 +433,12 @@ def _map_param_values_to_tool_params(
             value = param_values[tool_param_name]
             if value is not None and value != "":
                 exact_matches[tool_param_name] = value
-                print(f"    ✅ Exact match: {tool_param_name} = {repr(value)[:50]}")
+                print(f"    [SUCCESS] Exact match: {tool_param_name} = {repr(value)[:50]}")
     
     # If all required params are satisfied by exact matches, skip LLM
     required_params = {name for name, info in tool_param_specs.items() if info.get("required")}
     if required_params.issubset(exact_matches.keys()):
-        print(f"  📋 All required params satisfied by exact matches")
+        print(f"  [INFO] All required params satisfied by exact matches")
         return exact_matches
     
     # Use LLM for semantic mapping
@@ -514,10 +514,10 @@ def _generate_mcp_tool_code_directly(
                 }
                 if param.get("required", False):
                     required_param_names.add(param_name)
-        print(f"  📋 Tool '{tool_name}' expects params: {set(tool_param_specs.keys())}")
-        print(f"  📋 Required params: {required_param_names}")
+        print(f"  [INFO] Tool '{tool_name}' expects params: {set(tool_param_specs.keys())}")
+        print(f"  [INFO] Required params: {required_param_names}")
     else:
-        print(f"  ⚠ No skill.yaml definition found for tool '{tool_name}'")
+        print(f"  [WARN] No skill.yaml definition found for tool '{tool_name}'")
     
     # ============================================================
     # STEP 2: Extract values from parameters dict and map to tool params
@@ -551,7 +551,7 @@ def _generate_mcp_tool_code_directly(
     # ============================================================
     missing_required = required_param_names - set(tool_call_params.keys())
     if missing_required:
-        print(f"  ⚠ Missing required params for '{tool_name}': {missing_required}")
+        print(f"  [WARN] Missing required params for '{tool_name}': {missing_required}")
     
     # ============================================================
     # STEP 4: Generate the Python code
@@ -616,7 +616,7 @@ def _generate_code_with_llm(
     llm = create_code_llm()
     
     if not llm:
-        print("  ⚠ LLM unavailable, using fallback code")
+        print("  [WARN] LLM unavailable, using fallback code")
         return fallback_code or "# LLM unavailable, cannot generate code"
     
     try:
@@ -642,14 +642,14 @@ def _generate_code_with_llm(
         code = code.strip()
         
         if not code:
-            print("  ⚠ LLM returned empty code, using fallback code")
+            print("  [WARN] LLM returned empty code, using fallback code")
             return fallback_code or "# LLM returned empty code"
         
-        print(f"  ✓ LLM code generation successful (length: {len(code)} characters)")
+        print(f"  [OK] LLM code generation successful (length: {len(code)} characters)")
         return code
     
     except Exception as e:
-        print(f"  ⚠ LLM code generation failed: {e}, using fallback code")
+        print(f"  [WARN] LLM code generation failed: {e}, using fallback code")
         return fallback_code or f"# LLM code generation failed: {e}"
 
 
@@ -785,7 +785,7 @@ def _parse_execution_output(stdout: str, stderr: str, returncode: Optional[int])
                 status = "failed"
                 error = stderr_error_msg or error
                 error_type = stderr_error_type or error_type
-                print(f"  ⚠ Detected error in stderr despite 'success' status: {error_type}: {error}")
+                print(f"  [WARN] Detected error in stderr despite 'success' status: {error_type}: {error}")
             elif not error:
                 # Result says failed but no error details - use stderr info
                 error = stderr_error_msg or "Execution failed"
@@ -1163,7 +1163,7 @@ def _generate_fix_code_for_state(state: "CodeActState", has_sandbox: bool, sandb
         return state
 
     if state.revision_plan:
-        print(f"  🔄 Using Revision plan for intelligent fix (strategy: {state.revision_plan.strategy.value})")
+        print(f"  [RUN] Using Revision plan for intelligent fix (strategy: {state.revision_plan.strategy.value})")
         print(f"     Root cause: {state.revision_plan.root_cause[:100]}...")
         print(f"     Orthogonal strategy: {'Yes' if state.revision_plan.orthogonal else 'No'}")
 
@@ -1235,7 +1235,7 @@ def _find_and_activate_venv(agent_dir: Path) -> Optional[Path]:
                 python_exe = venv_path / "bin" / "python"
             
             if python_exe.exists():
-                print(f"  ✓ Found virtual environment: {venv_path}")
+                print(f"  [OK] Found virtual environment: {venv_path}")
                 print(f"     Python interpreter: {python_exe}")
                 return python_exe
     
@@ -1264,7 +1264,7 @@ def _activate_venv_in_sys_path(venv_python: Path) -> None:
     # Add virtual environment's site-packages to the front of sys.path
     if site_packages.exists() and str(site_packages) not in sys.path:
         sys.path.insert(0, str(site_packages))
-        print(f"  ✓ Added virtual environment site-packages to sys.path: {site_packages}")
+        print(f"  [OK] Added virtual environment site-packages to sys.path: {site_packages}")
     
     # Also add virtual environment root directory (for importing project modules)
     if str(venv_dir) not in sys.path:
@@ -1274,14 +1274,14 @@ def _activate_venv_in_sys_path(venv_python: Path) -> None:
     try:
         site.addsitedir(str(site_packages))
     except Exception as e:
-        print(f"  ⚠ Cannot add virtual environment site-packages: {e}")
+        print(f"  [WARN] Cannot add virtual environment site-packages: {e}")
     
     # Verify if key packages can be imported
     try:
         import langchain_mcp_adapters
-        print(f"  ✓ Virtual environment activated successfully, can import langchain-mcp-adapters")
+        print(f"  [OK] Virtual environment activated successfully, can import langchain-mcp-adapters")
     except ImportError:
-        print(f"  ⚠ Warning: Virtual environment activated, but cannot import langchain-mcp-adapters")
+        print(f"  [WARN] Warning: Virtual environment activated, but cannot import langchain-mcp-adapters")
 
 
 # ===================== Data Exploration Node =====================
@@ -1404,7 +1404,7 @@ def codeact_explore_data_node(state: CodeActState) -> CodeActState:
     has_sandbox, sandbox_dir = _check_sandbox_available(state, provider=sandbox_provider)
     
     if not has_sandbox:
-        print(f"  ⚠ Data exploration: No sandbox available, skipping")
+        print(f"  [WARN] Data exploration: No sandbox available, skipping")
         return state
     
     # Generate exploration code
@@ -1463,18 +1463,18 @@ def codeact_explore_data_node(state: CodeActState) -> CodeActState:
                 if parsed_result.get("status") == "success":
                     state.data_exploration_result = parsed_result.get("output", {})
                     state.explored_columns = state.data_exploration_result.get("columns", [])
-                    print(f"  ✅ Data exploration successful!")
+                    print(f"  [SUCCESS] Data exploration successful!")
                     print(f"     Columns found: {state.explored_columns}")
                     print(f"     Shape: {state.data_exploration_result.get('shape')}")
                 else:
-                    print(f"  ⚠ Data exploration failed: {parsed_result.get('error')}")
+                    print(f"  [WARN] Data exploration failed: {parsed_result.get('error')}")
             except json.JSONDecodeError as e:
-                print(f"  ⚠ Failed to parse exploration result: {e}")
+                print(f"  [WARN] Failed to parse exploration result: {e}")
         else:
-            print(f"  ⚠ No exploration result found in output")
+            print(f"  [WARN] No exploration result found in output")
             
     except Exception as e:
-        print(f"  ⚠ Data exploration error: {e}")
+        print(f"  [WARN] Data exploration error: {e}")
     
     return state
 
@@ -1570,9 +1570,9 @@ def codeact_validate_output_node(state: CodeActState) -> CodeActState:
     state.validation_warnings = warnings
     
     if all_passed:
-        print(f"  ✅ Output validation passed")
+        print(f"  [SUCCESS] Output validation passed")
     else:
-        print(f"  ⚠ Output validation warnings:")
+        print(f"  [WARN] Output validation warnings:")
         for warning in warnings:
             print(f"     - {warning}")
         
@@ -1656,7 +1656,7 @@ def codeact_generate_code_node(state: CodeActState) -> CodeActState:
     sandbox_provider = _get_sandbox_provider()
     has_sandbox, sandbox_dir = _check_sandbox_available(state, provider=sandbox_provider)
     if not has_sandbox:
-        print(f"  ⚠ Sandbox environment unavailable, will generate code executable in fallback mode (directory: {sandbox_dir})")
+        print(f"  [WARN] Sandbox environment unavailable, will generate code executable in fallback mode (directory: {sandbox_dir})")
     
     enforce_tool_call = mode == CodeActExecutionMode.MCP_TOOL
 
@@ -1672,7 +1672,7 @@ def codeact_generate_code_node(state: CodeActState) -> CodeActState:
             # Check if there's a revision plan with data transformation strategy
             # This happens after a failure when Revision mechanism suggests a data transformation
             if state.revision_plan and state.revision_plan.strategy == RevisionStrategy.DATA_TRANSFORM:
-                print(f"  🔄 Using Revision plan for MCP tool with data transformation")
+                print(f"  [RUN] Using Revision plan for MCP tool with data transformation")
                 print(f"     Strategy: {state.revision_plan.strategy.value}")
                 print(f"     Suggested tool: {state.revision_plan.suggested_tool.get('tool_name', 'N/A') if state.revision_plan.suggested_tool else 'N/A'}")
                 
@@ -1689,7 +1689,7 @@ def codeact_generate_code_node(state: CodeActState) -> CodeActState:
                 # CRITICAL: MCP_TOOL mode uses DIRECT TEMPLATE, not LLM!
                 # This ensures correct imports and prevents simulation code.
                 # ============================================================
-                print(f"  🔧 MCP_TOOL mode: Using direct template (no LLM) for tool: {tool_name}")
+                print(f"  [TOOL] MCP_TOOL mode: Using direct template (no LLM) for tool: {tool_name}")
                 
                 generated_code = _generate_mcp_tool_code_directly(
                     tool_name=tool_name,
@@ -1697,7 +1697,7 @@ def codeact_generate_code_node(state: CodeActState) -> CodeActState:
                     task_description=state.task_description
                 )
                 
-                print(f"  ✓ Generated code using direct template ({len(generated_code)} chars)")
+                print(f"  [OK] Generated code using direct template ({len(generated_code)} chars)")
             
             # Ensure code is executable (especially when no sandbox environment)
             state.generated_code = _ensure_code_executable(
@@ -1809,7 +1809,7 @@ result = {{"status": "success", "output": "Task execution result (placeholder)"}
         enforce_tool_call=enforce_tool_call
     )
     if not validation.get("valid", False):
-        print(f"  ⚠ Code validation failed: {validation.get('error')}")
+        print(f"  [WARN] Code validation failed: {validation.get('error')}")
         state.previous_code = state.generated_code
         state.previous_error = validation.get("error")
         state.error_category = validation.get("error_category")
@@ -1868,7 +1868,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             "error": "No code generated",
             "error_type": "NoCodeError"
         }
-        print(f"  ✗ Execution failed: No code generated")
+        print(f"  [FAIL] Execution failed: No code generated")
         
         # Record failed trajectory
         if state.current_trajectory:
@@ -1909,7 +1909,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
     
     try:
         if sandbox_provider == "opensandbox":
-            print("  🚀 Using OpenSandbox for code execution")
+            print("  [START] Using OpenSandbox for code execution")
             from utils.opensandbox_executor import run_code_in_opensandbox_sync, is_opensandbox_enabled
 
             if not is_opensandbox_enabled():
@@ -1955,14 +1955,14 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
                 "sandbox_provider": "opensandbox",
                 "sandbox_image": sandbox_result.get("image"),
             }
-            print(f"  ✓ OpenSandbox execution completed, status={parsed.get('status')}, returncode={returncode}")
+            print(f"  [OK] OpenSandbox execution completed, status={parsed.get('status')}, returncode={returncode}")
         elif has_sandbox:
             # Execute code in sandbox via subprocess for isolation
             import os
             from pathlib import Path
             
             timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "180"))  # Default: 3 minutes
-            print(f"  🔄 Starting code execution (local sandbox subprocess mode, timeout={timeout_seconds}s)...")
+            print(f"  [RUN] Starting code execution (local sandbox subprocess mode, timeout={timeout_seconds}s)...")
             print(f"  ℹ Code length: {len(code)} characters")
             
             sandbox_path = Path(sandbox_dir)
@@ -1997,8 +1997,8 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
                 )
             except subprocess.TimeoutExpired as e:
                 error_msg = f"Execution timed out after {timeout_seconds}s"
-                print(f"  ✗ {error_msg}")
-                print(f"  ⚠ This may indicate:")
+                print(f"  [FAIL] {error_msg}")
+                print(f"  [WARN] This may indicate:")
                 print(f"     - Code is waiting for network/IO operations")
                 print(f"     - Infinite loop or deadlock in code")
                 print(f"     - MCP tool call is hanging")
@@ -2027,11 +2027,11 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
                 "returncode": completed.returncode,
                 "sandbox_dir": sandbox_dir
             }
-            print(f"  ✓ Execution completed, status={parsed.get('status')}, returncode={completed.returncode}")
+            print(f"  [OK] Execution completed, status={parsed.get('status')}, returncode={completed.returncode}")
         else:
             # No sandbox environment: fallback, execute directly
-            print(f"  ⚠ Using fallback execution (no sandbox environment)")
-            print(f"  🔄 Starting code execution (fallback mode)...")
+            print(f"  [WARN] Using fallback execution (no sandbox environment)")
+            print(f"  [RUN] Starting code execution (fallback mode)...")
             
             # Important: Activate specified virtual environment before executing code
             import sys
@@ -2042,7 +2042,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             if venv_python:
                 _activate_venv_in_sys_path(venv_python)
             else:
-                print(f"  ⚠ Virtual environment not found, will use current Python environment")
+                print(f"  [WARN] Virtual environment not found, will use current Python environment")
             
             # 2. Add agent directory to path (if not already)
             agent_dir_str = str(agent_dir)
@@ -2080,14 +2080,14 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
                     if sp not in sys.path:
                         sys.path.append(sp)  # Add to end, prioritize virtual environment packages
             except Exception as e:
-                print(f"  ⚠ Error configuring site-packages: {e}")
+                print(f"  [WARN] Error configuring site-packages: {e}")
             
             # 4. Verify virtual environment is properly activated
             try:
                 import langchain_mcp_adapters
-                print(f"  ✓ Virtual environment activated, can import langchain-mcp-adapters")
+                print(f"  [OK] Virtual environment activated, can import langchain-mcp-adapters")
             except ImportError:
-                print(f"  ⚠ Warning: Cannot import langchain-mcp-adapters, virtual environment may not be properly activated")
+                print(f"  [WARN] Warning: Cannot import langchain-mcp-adapters, virtual environment may not be properly activated")
             
             # Pre-import tool interfaces so generated code can use them
             try:
@@ -2100,7 +2100,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
                 }
             except ImportError as e:
                 import traceback
-                print(f"  ⚠ Cannot import mcp_helper: {e}")
+                print(f"  [WARN] Cannot import mcp_helper: {e}")
                 print(f"     Error details: {traceback.format_exc()}")
                 print(f"     Python path: {sys.path[:5]}...")
                 local_namespace = {
@@ -2108,7 +2108,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
                 }
             
             exec(code, {"__builtins__": __builtins__}, local_namespace)
-            print(f"  ✓ Code execution completed")
+            print(f"  [OK] Code execution completed")
             
             # Extract execution result
             result = local_namespace.get("result", "Execution successful, no return result")
@@ -2120,7 +2120,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
                 "result": result,
                 "sandbox_used": False
             }
-            print(f"  ✓ Execution successful, result: {output[:100]}...")
+            print(f"  [OK] Execution successful, result: {output[:100]}...")
     
     except SyntaxError as e:
         # Syntax error
@@ -2135,7 +2135,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             "code_preview": code[:500] if code else None
         }
         state.execution_result = error_details
-        print(f"  ✗ Execution failed (syntax error): {error_msg}")
+        print(f"  [FAIL] Execution failed (syntax error): {error_msg}")
         print(f"     Error line number: {error_details.get('error_line')}")
         print(f"     Error code: {error_details.get('error_text')}")
         print(f"     Code preview: {code[:200]}...")
@@ -2151,7 +2151,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             "code_preview": code[:500] if code else None
         }
         state.execution_result = error_details
-        print(f"  ✗ Execution failed (name error): {error_msg}")
+        print(f"  [FAIL] Execution failed (name error): {error_msg}")
         print(f"     Code preview: {code[:200]}...")
     
     except ImportError as e:
@@ -2165,7 +2165,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             "code_preview": code[:500] if code else None
         }
         state.execution_result = error_details
-        print(f"  ✗ Execution failed (import error): {error_msg}")
+        print(f"  [FAIL] Execution failed (import error): {error_msg}")
         print(f"     Code preview: {code[:200]}...")
     
     except Exception as e:
@@ -2182,7 +2182,7 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
             "code_preview": code[:500] if code else None
         }
         state.execution_result = error_details
-        print(f"  ✗ Execution failed ({type(e).__name__}): {error_msg}")
+        print(f"  [FAIL] Execution failed ({type(e).__name__}): {error_msg}")
         print(f"     Error stack:")
         print(f"     {error_traceback}")
         print(f"     Code preview: {code[:200]}...")
@@ -2211,8 +2211,8 @@ def codeact_revision_node(state: CodeActState) -> CodeActState:
     
     # Check if there are failed trajectories
     if not state.trajectory_history:
-        print("  ⚠ No trajectory history, cannot perform Revision analysis")
-        print("  ⚠ Will use basic fix mode instead")
+        print("  [WARN] No trajectory history, cannot perform Revision analysis")
+        print("  [WARN] Will use basic fix mode instead")
         # Set basic fix information from execution_result if available
         if state.execution_result:
             state.previous_code = state.generated_code
@@ -2249,7 +2249,7 @@ def codeact_revision_node(state: CodeActState) -> CodeActState:
     if revision_plan.suggested_tool:
         state.suggested_transform_tool = revision_plan.suggested_tool
     
-    print(f"  ✓ Revision plan generated successfully")
+    print(f"  [OK] Revision plan generated successfully")
     print(f"     Strategy: {revision_plan.strategy.value}")
     print(f"     Root cause: {revision_plan.root_cause[:150]}...")
     print(f"     Confidence: {revision_plan.confidence:.2f}")
@@ -2321,13 +2321,13 @@ def read_todo_node(state: CodeActState) -> CodeActState:
     if state.todo_manager.todo_list_exists():
         try:
             state.todo_list = state.todo_manager.read_todo_list()
-            print(f"  ✓ Todo list loaded: {len(state.todo_list.tasks)} tasks")
+            print(f"  [OK] Todo list loaded: {len(state.todo_list.tasks)} tasks")
             
             # Show progress summary
             summary = state.todo_manager.get_progress_summary(state.todo_list)
-            print(f"  📊 Progress: {summary}")
+            print(f"  [STAT] Progress: {summary}")
         except Exception as e:
-            print(f"  ⚠ Failed to parse todo list: {e}")
+            print(f"  [WARN] Failed to parse todo list: {e}")
             state.todo_list = None
     else:
         print(f"  ℹ No todo-list.md found, will check for task from state")
@@ -2349,7 +2349,7 @@ def select_next_task_node(state: CodeActState) -> CodeActState:
     3. Update state.current_todo_task
     """
     print("=" * 60)
-    print("🎯 [Todo] Selecting next task...")
+    print("[X-Masters] [Todo] Selecting next task...")
     print("=" * 60)
     
     # Case 1: Todo list exists
@@ -2358,7 +2358,7 @@ def select_next_task_node(state: CodeActState) -> CodeActState:
         
         if next_task:
             state.current_todo_task = next_task
-            print(f"  ✓ Selected task: {next_task.id}")
+            print(f"  [OK] Selected task: {next_task.id}")
             print(f"     Type: {next_task.type}")
             print(f"     Priority: {next_task.priority}")
             print(f"     Description: {next_task.description[:100]}...")
@@ -2410,7 +2410,7 @@ def select_next_task_node(state: CodeActState) -> CodeActState:
                     state.tools = [{"tool_name": tool_name, "name": tool_name}]
                     print(f"     Tool: {tool_name}")
                 else:
-                    print(f"  ⚠ MCP_TOOL task has no tool_name in parameters!")
+                    print(f"  [WARN] MCP_TOOL task has no tool_name in parameters!")
                     state.tools = []
             elif next_task.type == TodoTaskType.FILE_CONVERT:
                 state.execution_mode = CodeActExecutionMode.CODEACT
@@ -2440,7 +2440,7 @@ def select_next_task_node(state: CodeActState) -> CodeActState:
         return state
     
     # Case 3: No task at all
-    print("  ⚠ No task found - nothing to execute")
+    print("  [WARN] No task found - nothing to execute")
     state.current_todo_task = None
     
     return state
@@ -2547,7 +2547,7 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
     
     # Skip if no current task
     if not state.current_todo_task:
-        print("  ⚠ No current task, skipping parameter inference")
+        print("  [WARN] No current task, skipping parameter inference")
         return state
     
     # PRIORITY 1: Build file parameter table from parent_state.extracted_parameters
@@ -2578,7 +2578,7 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
     
     # If no tool specified, skip inference
     if not tool_name:
-        print("  ⚠ No tool_name specified, using task parameters directly")
+        print("  [WARN] No tool_name specified, using task parameters directly")
         state.parameters = {**state.parameters, **state.current_todo_task.parameters}
         return state
     
@@ -2586,7 +2586,7 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
     tool_params = _get_tool_parameter_definitions(tool_name, state.all_available_tools)
     
     if not tool_params:
-        print(f"  ⚠ No parameter definitions found for tool: {tool_name}")
+        print(f"  [WARN] No parameter definitions found for tool: {tool_name}")
         print(f"  ℹ Will try to use extracted parameters from parameter table")
         # Don't fallback to schema descriptions! 
         # Instead, try to get actual values from extracted_params
@@ -2595,8 +2595,8 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
         tool_params = []  # Empty list, but continue to extract params from parameter table
     
     if tool_params:
-        print(f"  🔧 Tool: {tool_name}")
-        print(f"  📋 Parameters to infer: {[p.get('name') for p in tool_params]}")
+        print(f"  [TOOL] Tool: {tool_name}")
+        print(f"  [INFO] Parameters to infer: {[p.get('name') for p in tool_params]}")
     
     # PRIORITY 3: Try to get actual parameter values from parent_state.extracted_parameters
     # These are the actual values extracted by supervisor, not schema definitions
@@ -2674,7 +2674,7 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
     if not tool_params:
         print("  ℹ No tool parameter definitions, using extracted parameters directly")
         if extracted_params:
-            print(f"  ✓ Using extracted parameters from parameter table:")
+            print(f"  [OK] Using extracted parameters from parameter table:")
             for key, value in extracted_params.items():
                 print(f"    - {key}: {value}")
             # Merge with existing parameters, extracted_params take precedence
@@ -2684,7 +2684,7 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
                 if not isinstance(value, dict):
                     state.parameters[key] = value
         else:
-            print("  ⚠ No extracted parameters available, keeping existing parameters")
+            print("  [WARN] No extracted parameters available, keeping existing parameters")
         return state
     
     # Use LLM to infer parameters
@@ -2692,15 +2692,15 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
         llm = create_code_llm()
         
         if not llm:
-            print("  ⚠ LLM not available")
+            print("  [WARN] LLM not available")
             # Fallback: use extracted_params first, then semantic hints
             if extracted_params:
-                print(f"  ✓ Using extracted parameters from parameter table:")
+                print(f"  [OK] Using extracted parameters from parameter table:")
                 for key, value in extracted_params.items():
                     print(f"    - {key}: {value}")
                 state.parameters = {**state.parameters, **extracted_params}
             else:
-                print("  ⚠ No extracted parameters available")
+                print("  [WARN] No extracted parameters available")
             return state
         
         # Build prompt with semantic hints
@@ -2724,7 +2724,7 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
         inferred = _parse_parameter_inference_response(response_text)
         
         if inferred:
-            print(f"  ✓ Inferred parameters:")
+            print(f"  [OK] Inferred parameters:")
             for key, value in inferred.items():
                 print(f"    - {key}: {value}")
             
@@ -2734,20 +2734,20 @@ def infer_parameters_node(state: CodeActState) -> CodeActState:
             state.inferred_parameters = {**inferred, **extracted_params}  # extracted_params override inferred
             state.parameters = {**state.parameters, **state.inferred_parameters}
         else:
-            print("  ⚠ Failed to parse inference response")
+            print("  [WARN] Failed to parse inference response")
             # Still use extracted_params if available
             if extracted_params:
-                print(f"  ✓ Using extracted parameters from parameter table:")
+                print(f"  [OK] Using extracted parameters from parameter table:")
                 for key, value in extracted_params.items():
                     print(f"    - {key}: {value}")
                 state.parameters = {**state.parameters, **extracted_params}
             # else: keep existing parameters, don't pollute with schema descriptions
     
     except Exception as e:
-        print(f"  ⚠ Parameter inference failed: {e}")
+        print(f"  [WARN] Parameter inference failed: {e}")
         # Still use extracted_params if available
         if extracted_params:
-            print(f"  ✓ Using extracted parameters from parameter table:")
+            print(f"  [OK] Using extracted parameters from parameter table:")
             for key, value in extracted_params.items():
                 print(f"    - {key}: {value}")
             state.parameters = {**state.parameters, **extracted_params}
@@ -2849,7 +2849,7 @@ def extract_file_params_node(state: CodeActState) -> CodeActState:
     if state.file_parameter_table:
         for fp in file_params:
             state.file_parameter_table.add_file(fp)
-        print(f"  ✓ Updated file parameter table")
+        print(f"  [OK] Updated file parameter table")
     else:
         # Create new table if needed
         session_id = "unknown"
@@ -2905,17 +2905,17 @@ def update_todo_node(state: CodeActState) -> CodeActState:
                 # Wrap string output in a dict
                 result = {"output": raw_output}
             error = None
-            print(f"  ✓ Task {task_id} completed successfully")
+            print(f"  [OK] Task {task_id} completed successfully")
         else:
             new_status = TodoTaskStatus.FAILED
             result = None
             error = state.execution_result.get("error", "Unknown error")
-            print(f"  ✗ Task {task_id} failed: {error[:100]}...")
+            print(f"  [FAIL] Task {task_id} failed: {error[:100]}...")
     else:
         new_status = TodoTaskStatus.FAILED
         result = None
         error = "No execution result"
-        print(f"  ✗ Task {task_id} failed: No execution result")
+        print(f"  [FAIL] Task {task_id} failed: No execution result")
     
     # Update todo list if manager exists
     if state.todo_manager:
@@ -2926,14 +2926,14 @@ def update_todo_node(state: CodeActState) -> CodeActState:
             error=error
         )
         if success:
-            print(f"  ✓ Todo list updated")
+            print(f"  [OK] Todo list updated")
         else:
-            print(f"  ⚠ Failed to update todo list")
+            print(f"  [WARN] Failed to update todo list")
         
         # Show progress summary
         if state.todo_manager._cached_todo_list:
             summary = state.todo_manager.get_progress_summary()
-            print(f"  📊 Progress: {summary}")
+            print(f"  [STAT] Progress: {summary}")
     
     # Update current task status
     state.current_todo_task.status = new_status
@@ -3038,7 +3038,7 @@ def build_codeact_subgraph(use_todo_mode: bool = True):
             
             # Don't retry on timeout errors
             if error_type == "TimeoutError" or "timed out" in error.lower():
-                print(f"  ⚠ Execution timed out, skipping Revision")
+                print(f"  [WARN] Execution timed out, skipping Revision")
                 if use_todo_mode:
                     return "update_todo"
                 return "end"
@@ -3049,10 +3049,10 @@ def build_codeact_subgraph(use_todo_mode: bool = True):
             
             if current_iteration < max_iterations:
                 next_iteration = current_iteration + 1
-                print(f"  🔄 Entering Revision (iteration {next_iteration}/{max_iterations})")
+                print(f"  [RUN] Entering Revision (iteration {next_iteration}/{max_iterations})")
                 return "revision"
             else:
-                print(f"  ⚠ Maximum Revision iterations ({max_iterations}) reached")
+                print(f"  [WARN] Maximum Revision iterations ({max_iterations}) reached")
                 if use_todo_mode:
                     return "update_todo"
                 return "end"

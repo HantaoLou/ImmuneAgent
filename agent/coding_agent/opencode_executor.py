@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -46,6 +47,7 @@ from coding_agent.config import (
     DEFAULT_MCP_CONFIG,
     DEFAULT_OPENCODE_CONFIG,
 )
+from coding_agent.prompts import get_opencode_prompt
 
 
 class OpenCodeExecutor:
@@ -144,7 +146,7 @@ class OpenCodeExecutor:
         if env_image:
             # 环境变量存在，忽略传入参数和配置中的值
             image = env_image
-            self._log(f"✓ 使用环境变量 OPENSANDBOX_IMAGE 中的镜像: {image}")
+            self._log(f"[OK] 使用环境变量 OPENSANDBOX_IMAGE 中的镜像: {image}")
         elif image:
             self._log(f"使用传入的镜像参数: {image}")
         else:
@@ -152,9 +154,9 @@ class OpenCodeExecutor:
             # 检查配置中的镜像是否与环境变量一致
             if env_image and image != env_image:
                 self._log(
-                    f"⚠ 警告: 配置中的镜像 ({image}) 与环境变量 OPENSANDBOX_IMAGE ({env_image}) 不一致"
+                    f"[WARN] 警告: 配置中的镜像 ({image}) 与环境变量 OPENSANDBOX_IMAGE ({env_image}) 不一致"
                 )
-                self._log(f"⚠ 将使用环境变量中的镜像: {env_image}")
+                self._log(f"[WARN] 将使用环境变量中的镜像: {env_image}")
                 image = env_image
             self._log(f"使用配置中的镜像: {image}")
 
@@ -345,121 +347,32 @@ class OpenCodeExecutor:
 
     def _build_mcp_servers_config(self) -> Dict[str, Any]:
         """
-        构建 MCP 服务器配置（使用正确的 OpenCode 格式）
+        构建 MCP 服务器配置（使用 OpenCode 原生格式）
 
-        OpenCode 官方格式（参考 anomalyco/opencode packages/opencode/src/config/config.ts）:
+        直接读取 mcp_servers_opencode.json，无需格式转换。
+
+        OpenCode 官方格式:
         {
             "server_name": {
-                "type": "remote",        # 必需：远程服务器使用 "remote"，本地使用 "local"
-                "url": "http://...",     # remote 模式必需
-                "enabled": true,         # 可选：是否启用
-                "timeout": 5000,         # 可选：超时时间（毫秒）
-                "headers": {},           # 可选：HTTP 头
-                "command": ["..."],      # local 模式必需
-                "environment": {}        # local 模式可选
+                "type": "remote",
+                "url": "http://...",     # 不带 /sse 后缀，OpenCode 会自动添加
+                "enabled": true,
+                "timeout": 5000
             }
         }
-
-        注意：
-        - OpenCode 使用 "mcp" 作为顶级配置键（不是 "mcpServers"）
-        - OpenCode 使用 "remote" 而不是 "sse" 作为远程服务器的类型
-        - OpenCode 使用 "local" 而不是 "stdio" 作为本地服务器的类型
-        - 需要 "enabled: true" 才能启用 MCP 服务器
-
-        支持读取 Bio-Agent 的 mcp_servers.json 格式并自动转换。
         """
-        # 从配置文件读取（如果存在）
-        if self.config.mcp_config_path and Path(self.config.mcp_config_path).exists():
-            with open(self.config.mcp_config_path, "r", encoding="utf-8") as f:
-                raw_config = json.load(f)
-                return self._convert_mcp_config_to_opencode_format(raw_config)
+        opencode_config_path = (
+            Path(__file__).parent.parent / "config" / "mcp_servers_opencode.json"
+        )
 
-        # 使用默认 MCP 配置
-        return DEFAULT_MCP_CONFIG.get("servers", {})
+        if opencode_config_path.exists():
+            with open(opencode_config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                self._log(f"已加载 OpenCode MCP 配置: {opencode_config_path}")
+                return config
 
-    def _convert_mcp_config_to_opencode_format(
-        self, raw_config: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        将 Bio-Agent 的 MCP 配置转换为 OpenCode 格式
-
-        Bio-Agent 格式（mcp_servers.json）:
-        {
-            "nettcr": {
-                "transport": "sse",
-                "url": "http://...",
-                "timeout": 36000,
-                "sse_read_timeout": 36000
-            }
-        }
-
-        OpenCode 正确格式（参考：anomalyco/opencode config.ts）:
-        {
-            "nettcr": {
-                "type": "remote",        // 必需：远程服务器使用 "remote"，本地使用 "local"
-                "url": "http://...",     // 必需：服务器 URL
-                "enabled": true,         // 可选：是否启用
-                "timeout": 30000         // 可选：超时时间（毫秒）
-            }
-        }
-
-        注意：
-        - OpenCode 使用 "mcp" 而不是 "mcpServers" 作为顶级键
-        - OpenCode 使用 "remote" 而不是 "sse" 作为远程服务器的类型
-        - OpenCode 需要 "enabled: true" 才能启用 MCP 服务器
-        """
-        opencode_config = {}
-
-        for server_name, server_config in raw_config.items():
-            # 构建 OpenCode 格式的配置
-            opencode_server = {}
-
-            # 转换 transport -> type
-            # OpenCode 官方格式：远程服务器使用 "remote"，本地使用 "local"
-            # 参考：https://opencode.ai/docs/mcp-servers/
-            transport = server_config.get("transport", server_config.get("type", "sse"))
-
-            # OpenCode 只支持 "local" 和 "remote" 两种类型
-            if transport in ("sse", "http", "websocket"):
-                opencode_server["type"] = "remote"
-            else:
-                opencode_server["type"] = "local"
-
-            # 启用 MCP 服务器（必需！）
-            opencode_server["enabled"] = True
-
-            # 禁用 OAuth（我们的 MCP 服务器通过 nginx 代理，不需要认证）
-            opencode_server["oauth"] = False
-
-            # URL（远程服务器必需）
-            if "url" in server_config:
-                # OpenCode 远程 MCP 会自动处理 SSE 连接
-                # URL 指向 MCP 服务的基础路径，不需要手动指定 /sse
-                url = server_config["url"]
-                # 如果 URL 以 /sse 结尾，保留它（nginx 代理需要完整路径）
-                opencode_server["url"] = url
-
-            # 超时配置（可选）
-            if "timeout" in server_config:
-                # Bio-Agent 使用秒，OpenCode 使用毫秒
-                timeout_seconds = server_config["timeout"]
-                opencode_server["timeout"] = timeout_seconds * 1000
-
-            # Headers（可选）
-            if "headers" in server_config:
-                opencode_server["headers"] = server_config["headers"]
-
-            # stdio 本地模式的字段
-            if "command" in server_config:
-                opencode_server["command"] = server_config["command"]
-            if "args" in server_config:
-                opencode_server["args"] = server_config["args"]
-            if "env" in server_config:
-                opencode_server["env"] = server_config["env"]
-
-            opencode_config[server_name] = opencode_server
-
-        return opencode_config
+        self._log(f"警告: 未找到 OpenCode MCP 配置文件: {opencode_config_path}")
+        return {}
 
     def _build_sandbox_env(self) -> Dict[str, str]:
         """构建沙盒环境变量"""
@@ -518,6 +431,7 @@ class OpenCodeExecutor:
         tasks_md_path: str,
         workspace_dir: str = "/workspace",
         mode: Optional[OpenCodeMode] = None,
+        iteration: int = 0,
     ) -> ExecutionResult:
         """
         执行 tasks.md 中的任务
@@ -526,6 +440,7 @@ class OpenCodeExecutor:
             tasks_md_path: tasks.md 文件路径（沙盒内）
             workspace_dir: 工作目录
             mode: 执行模式（build 或 plan）
+            iteration: 迭代编号（用于生成独立的日志文件）
 
         Returns:
             ExecutionResult: 执行结果（包含 task_records 任务执行记录）
@@ -555,21 +470,24 @@ class OpenCodeExecutor:
                 "sandbox_exec", "📝 生成执行脚本...", {"phase": "script_generation"}
             )
             runner_script = await self._generate_runner_script(
-                workspace_dir, tasks_md_path, mode
+                workspace_dir, tasks_md_path, mode, iteration
             )
 
-            # 4. 使用 nohup 后台执行脚本
-            output_file = f"{workspace_dir}/.opencode_output.log"
+            # 4. 使用 stdbuf 后台执行脚本（无缓冲，实时输出）
+            output_file = f"{workspace_dir}/.opencode_output_iter{iteration}.log"
             status_file = f"{workspace_dir}/.opencode_status.json"
 
-            # 后台执行命令
-            background_cmd = f"""cd {workspace_dir} && nohup bash {runner_script} > {output_file} 2>&1 &"""
+            # 后台执行命令（使用 script 模拟终端，实现实时输出）
+            # script 命令创建伪终端，强制 OpenCode 以交互模式运行
+            # -q: 静默模式（不打印开始/结束消息）
+            # -f: 每次写入后立即刷新（确保实时输出）
+            background_cmd = f"""cd {workspace_dir} && script -q -f -c "bash {runner_script}" {output_file} &"""
             self._log(f"执行后台命令: {background_cmd[:100]}...")
             await self.sandbox.commands.run(background_cmd)
 
             self._report_progress(
                 "sandbox_exec",
-                f"🚀 OpenCode 任务已启动 (模式: {mode.value})",
+                f"[START] OpenCode 任务已启动 (模式: {mode.value})",
                 {"phase": "execution_started", "mode": mode.value},
             )
             self._log(f"OpenCode 任务已启动 (模式: {mode.value})")
@@ -578,6 +496,9 @@ class OpenCodeExecutor:
             max_wait_seconds = self.config.sandbox_timeout_seconds
             poll_interval = 5  # 每5秒检查一次
             elapsed = 0
+            consecutive_connection_errors = 0  # 连续连接错误计数
+            max_connection_errors = 5  # 最大允许连续错误次数
+            last_reported_len = 0  # 记录上次已解析的日志长度（避免重复报告）
 
             while elapsed < max_wait_seconds:
                 await asyncio.sleep(poll_interval)
@@ -586,13 +507,37 @@ class OpenCodeExecutor:
                 # 检查是否完成
                 try:
                     output = await self.sandbox.files.read_file(output_file)
-                    if "===OPENCODE_DONE===" in output:
+                    consecutive_connection_errors = 0  # 成功读取，重置计数器
+
+                    # 【新增】实时解析并报告进度
+                    last_reported_len = self._parse_and_report_progress(
+                        output, iteration=iteration, last_reported_len=last_reported_len
+                    )
+
+                    if "===OPENCODE_DONE===" in output or "Script done" in output:
                         self._log("OpenCode 任务完成")
                         break
-                except Exception:
-                    pass  # 文件还未创建或正在写入
+                except Exception as e:
+                    error_str = str(e).lower()
+                    # 检测沙盒连接断开
+                    if "connect" in error_str or "connection" in error_str:
+                        consecutive_connection_errors += 1
+                        if consecutive_connection_errors >= max_connection_errors:
+                            self._log(
+                                f"❌ 沙盒连接已断开，连续 {consecutive_connection_errors} 次连接失败"
+                            )
+                            self._report_progress(
+                                "sandbox_exec",
+                                "❌ 沙盒连接断开",
+                                {
+                                    "phase": "connection_lost",
+                                    "consecutive_errors": consecutive_connection_errors,
+                                    "elapsed": elapsed,
+                                },
+                            )
+                            break
 
-                if elapsed % 30 == 0:  # 每30秒打印进度
+                if elapsed % 30 == 0:
                     self._log(f"等待 OpenCode 执行... ({elapsed}s/{max_wait_seconds}s)")
                     self._report_progress(
                         "sandbox_exec",
@@ -623,7 +568,7 @@ class OpenCodeExecutor:
             )
 
             # 确定状态
-            if "===OPENCODE_DONE===" in stdout:
+            if "===OPENCODE_DONE===" in stdout or "Script done" in stdout:
                 status = ExecutionStatus.SUCCESS
             elif "error" in stdout.lower() or "failed" in stdout.lower():
                 status = ExecutionStatus.FAILED
@@ -657,126 +602,350 @@ class OpenCodeExecutor:
                 execution_time_ms=execution_time,
             )
 
+    def _parse_and_report_progress(
+        self, log_content: str, iteration: int = 0, last_reported_len: int = 0
+    ) -> int:
+        """
+        解析 OpenCode 日志，识别关键事件并通过 progress_callback 报告
+
+        Args:
+            log_content: 当前日志内容
+            iteration: 迭代编号
+            last_reported_len: 上次已解析的日志长度（避免重复报告）
+
+        Returns:
+            新的日志长度（下次调用时传入）
+        """
+        if len(log_content) <= last_reported_len:
+            return len(log_content)
+
+        new_content = log_content[last_reported_len:]
+        if not new_content:
+            return len(log_content)
+
+        lines = new_content.split("\n")
+
+        # ========== 1. 增强的 MCP 工具调用解析 ==========
+        # OpenCode 格式: → mcp server.tool_name 或 mcp server.tool_name
+        mcp_call_pattern = r"(?:→\s*)?mcp\s+([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)"
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            # 检测 MCP 调用开始
+            mcp_match = re.search(mcp_call_pattern, line, re.IGNORECASE)
+            if mcp_match:
+                server = mcp_match.group(1)
+                tool_name = mcp_match.group(2)
+                full_tool_name = f"{server}.{tool_name}"
+
+                # 报告 MCP 调用开始
+                self._report_progress(
+                    "sandbox_exec",
+                    f"🔧 开始调用 MCP: {full_tool_name}",
+                    {
+                        "phase": "mcp_call_start",
+                        "tool_name": full_tool_name,
+                        "server": server,
+                        "iteration": iteration,
+                    },
+                )
+
+                # 查找参数（可能在同一行或下一行）
+                params_summary = ""
+                json_pattern = r"\{[^{}]*\}"
+
+                # 在同一行查找 JSON
+                json_match = re.search(json_pattern, line[mcp_match.end() :])
+                if not json_match:
+                    # 在后面的行查找 JSON（最多检查 3 行）
+                    for j in range(i + 1, min(i + 4, len(lines))):
+                        next_line = lines[j].strip()
+                        if next_line.startswith("{"):
+                            try:
+                                params = json.loads(next_line)
+                                # 提取关键参数
+                                params_summary = self._extract_key_params(params)
+                                break
+                            except:
+                                pass
+
+                # 报告参数摘要
+                if params_summary:
+                    self._report_progress(
+                        "sandbox_exec",
+                        f"   参数: {params_summary}",
+                        {
+                            "phase": "mcp_params",
+                            "tool_name": full_tool_name,
+                            "params_summary": params_summary,
+                            "iteration": iteration,
+                        },
+                    )
+
+            # 检测 MCP 响应（JSON 格式）
+            elif (
+                line.strip().startswith("{")
+                and '"success"' in line
+                or '"status"' in line
+                or '"result"' in line
+            ):
+                try:
+                    response = json.loads(line.strip())
+                    is_success = (
+                        response.get("success", True)
+                        or response.get("status") == "success"
+                    )
+
+                    # 提取响应摘要
+                    result_summary = self._extract_result_summary(response)
+
+                    status_icon = "✅" if is_success else "❌"
+                    self._report_progress(
+                        "sandbox_exec",
+                        f"   {status_icon} 响应: {result_summary}",
+                        {
+                            "phase": "mcp_response",
+                            "success": is_success,
+                            "result_summary": result_summary,
+                            "iteration": iteration,
+                        },
+                    )
+                except json.JSONDecodeError:
+                    pass
+
+            i += 1
+
+        # ========== 2. 解析任务完成 ==========
+        task_patterns = [
+            r"Task\s+(\w+)\s+completed",
+            r"Task\s+(\w+)\s+finished",
+            r"Completed\s+task[:\s]+(\w+)",
+            r"任务\s+(\S+)\s+完成",
+        ]
+
+        for pattern in task_patterns:
+            matches = re.findall(pattern, new_content, re.IGNORECASE)
+            for task_id in matches:
+                self._report_progress(
+                    "sandbox_exec",
+                    f"✅ 任务完成: {task_id}",
+                    {
+                        "phase": "task_complete",
+                        "task_id": task_id,
+                        "iteration": iteration,
+                    },
+                )
+
+        # ========== 3. 解析文件生成 ==========
+        file_patterns = [
+            r"Generated\s+file[:\s]+(\S+)",
+            r"Created\s+file[:\s]+(\S+)",
+            r"Saved\s+file[:\s]+(\S+)",
+            r"Output\s+file[:\s]+(\S+)",
+            r"生成文件[:\s]+(\S+)",
+            r"Wrote\s+file[:\s]+(\S+)",
+        ]
+
+        for pattern in file_patterns:
+            matches = re.findall(pattern, new_content, re.IGNORECASE)
+            for filepath in matches:
+                filename = filepath.split("/")[-1]
+                self._report_progress(
+                    "sandbox_exec",
+                    f"📄 生成文件: {filename}",
+                    {
+                        "phase": "file_generated",
+                        "file_path": filepath,
+                        "iteration": iteration,
+                    },
+                )
+
+        # ========== 4. 解析代码执行 ==========
+        code_patterns = [
+            r"Executing\s+code[:\s]+(.+)",
+            r"Running\s+code[:\s]+(.+)",
+            r"执行代码[:\s]+(.+)",
+        ]
+
+        for pattern in code_patterns:
+            matches = re.findall(pattern, new_content, re.IGNORECASE)
+            for code_snippet in matches:
+                preview = (
+                    code_snippet[:100] + "..."
+                    if len(code_snippet) > 100
+                    else code_snippet
+                )
+                self._report_progress(
+                    "sandbox_exec",
+                    f"💻 执行代码: {preview}",
+                    {
+                        "phase": "code_execution",
+                        "code_preview": preview,
+                        "iteration": iteration,
+                    },
+                )
+
+        # ========== 5. 解析错误信息 ==========
+        error_patterns = [
+            r"ERROR[:\s]+(.+)",
+            r"Error[:\s]+(.+)",
+            r"Exception[:\s]+(.+)",
+            r"Failed[:\s]+(.+)",
+            r"timeout[:\s]+(.+)",
+        ]
+
+        for pattern in error_patterns:
+            matches = re.findall(pattern, new_content, re.IGNORECASE)
+            for error_msg in matches:
+                preview = error_msg[:150] + "..." if len(error_msg) > 150 else error_msg
+                self._report_progress(
+                    "error",
+                    f"❌ 错误: {preview}",
+                    {
+                        "phase": "error",
+                        "error_message": error_msg,
+                        "iteration": iteration,
+                    },
+                )
+
+        # ========== 6. 解析进度信息 ==========
+        progress_patterns = [
+            (r"Read\s+(\S+)", "📖 读取"),
+            (r"Analyzing\s+(.+)", "📊 分析"),
+            (r"Processing\s+(.+)", "⚙️ 处理"),
+            (r"Calculating\s+(.+)", "🔢 计算"),
+            (r"Loading\s+(.+)", "⏳ 加载"),
+        ]
+
+        for pattern, icon in progress_patterns:
+            matches = re.findall(pattern, new_content, re.IGNORECASE)
+            for item in matches:
+                preview = item[:80] + "..." if len(item) > 80 else item
+                self._report_progress(
+                    "sandbox_exec",
+                    f"{icon} {preview}",
+                    {
+                        "phase": "progress",
+                        "item": item,
+                        "iteration": iteration,
+                    },
+                )
+
+        return len(log_content)
+
+    def _extract_key_params(self, params: dict, max_len: int = 80) -> str:
+        """提取参数的关键信息"""
+        if not params or not isinstance(params, dict):
+            return ""
+
+        # 优先显示的关键参数
+        key_params = []
+        priority_keys = [
+            "file",
+            "path",
+            "input",
+            "output",
+            "sequence",
+            "query",
+            "data",
+            "name",
+            "type",
+        ]
+
+        for key in priority_keys:
+            if key in params:
+                value = params[key]
+                if isinstance(value, str):
+                    # 截断长字符串
+                    if len(value) > 30:
+                        value = value[:30] + "..."
+                    key_params.append(f"{key}={value}")
+                elif isinstance(value, (int, float, bool)):
+                    key_params.append(f"{key}={value}")
+
+        # 如果没有优先参数，显示前 3 个
+        if not key_params:
+            for key, value in list(params.items())[:3]:
+                if isinstance(value, str) and len(value) > 30:
+                    value = value[:30] + "..."
+                elif isinstance(value, (int, float, bool)):
+                    pass
+                else:
+                    value = str(type(value).__name__)
+                key_params.append(f"{key}={value}")
+
+        result = ", ".join(key_params[:4])  # 最多显示 4 个参数
+        return result[:max_len] + "..." if len(result) > max_len else result
+
+    def _extract_result_summary(self, response: dict, max_len: int = 100) -> str:
+        """提取响应的关键信息"""
+        if not response or not isinstance(response, dict):
+            return "无响应内容"
+
+        # 检查是否有错误
+        if "error" in response and response["error"]:
+            error = response["error"]
+            if isinstance(error, str):
+                return f"错误: {error[:max_len]}"
+            elif isinstance(error, dict):
+                return f"错误: {error.get('message', str(error)[:max_len])}"
+
+        # 检查是否有结果
+        if "result" in response:
+            result = response["result"]
+            if isinstance(result, str):
+                return result[:max_len] + "..." if len(result) > max_len else result
+            elif isinstance(result, dict):
+                # 提取关键信息
+                keys = list(result.keys())[:5]
+                return f"包含 {len(result)} 个字段: {', '.join(keys)}"
+            elif isinstance(result, list):
+                return f"包含 {len(result)} 条数据"
+            else:
+                return str(type(result).__name__)
+
+        # 检查状态
+        if "status" in response:
+            return f"状态: {response['status']}"
+
+        # 检查 success
+        if "success" in response:
+            return "成功" if response["success"] else "失败"
+
+        # 默认返回键列表
+        keys = list(response.keys())[:5]
+        return f"包含字段: {', '.join(keys)}"
+
     async def _generate_runner_script(
         self,
         workspace_dir: str,
         tasks_md_path: str,
         mode: OpenCodeMode,
+        iteration: int = 0,
     ) -> str:
         """
         生成 OpenCode 执行脚本
 
         使用脚本文件而非命令行传参，避免参数长度限制和转义问题。
+
+        Args:
+            workspace_dir: 工作目录
+            tasks_md_path: tasks.md 文件路径
+            mode: 执行模式
+            iteration: 迭代编号（用于生成独立的完成标记）
         """
         output_dir = f"{workspace_dir}/output"
 
-        # 构建 prompt（读取自 tasks.md）
-        if mode == OpenCodeMode.PLAN:
-            prompt = f"""请阅读 {tasks_md_path} 中的任务列表，分析任务并生成执行计划。
-注意：这是 plan 模式，只进行分析，不执行实际操作。"""
-        else:
-            prompt = f"""请阅读 {tasks_md_path} 中的任务列表，按顺序执行所有任务。
-
-【核心原则】MCP 是 OpenCode 的工具接口，只能通过对话调用，Python 脚本无法调用！
-
-【MCP 调用方式 - 必须这样调用】
-在对话中直接说：
-  "调用 nettcr 的 check_peptide_support，参数 peptide=ELAGIGILTV"
-
-OpenCode 会显示：
-  → mcp nettcr.check_peptide_support
-  {{"supported": true, "score": 0.85, ...}}
-
-【绝对禁止】
-❌ 不要写 Python 脚本检测 MCP
-❌ 不要写 json.dumps 模拟返回
-❌ 不要写 "call_method": "simulated"
-
-【任务执行日志要求 - 重要！】
-每完成一个任务，你必须将任务执行记录追加写入到 {workspace_dir}/output/task_execution_log.json 文件中。
-
-格式如下（JSON 数组，每个任务一个对象）：
-```json
-[
-  {{
-    "task_id": "task_1",
-    "task_name": "检查肽段支持",
-    "task_type": "MCP_TOOL",
-    "status": "success",
-    "start_time": "2026-03-07T10:30:00Z",
-    "end_time": "2026-03-07T10:30:05Z",
-    "execution_time_ms": 5000,
-    "parameters": {{"peptide": "ELAGIGILTV"}},
-    "input_files": [],
-    "mcp_tool_name": "nettcr.check_peptide_support",
-    "mcp_server": "nettcr",
-    "output_files": [],
-    "output_data": {{"supported": true, "score": 0.85}},
-    "action_description": "调用 nettcr 的 check_peptide_support 工具检查肽段 ELAGIGILTV 是否支持",
-    "error_message": null
-  }},
-  {{
-    "task_id": "task_2",
-    "task_name": "预测 TCR 结合",
-    "task_type": "MCP_TOOL",
-    "status": "success",
-    "start_time": "2026-03-07T10:30:10Z",
-    "end_time": "2026-03-07T10:31:00Z",
-    "execution_time_ms": 50000,
-    "parameters": {{"peptide": "ELAGIGILTV", "tcr_sequence": "CASS..."}},
-    "input_files": ["/data/input/tcr.fasta"],
-    "mcp_tool_name": "nettcr.predict_tcr_binding",
-    "mcp_server": "nettcr",
-    "output_files": ["/workspace/output/prediction_result.csv"],
-    "output_data": {{"predictions": [...], "score": 0.92}},
-    "action_description": "调用 nettcr 的 predict_tcr_binding 工具预测 TCR 与肽段结合",
-    "error_message": null
-  }}
-]
-```
-
-【日志写入方式 - 必须按此方式操作】
-1. 首次创建空日志文件：echo '[]' > {workspace_dir}/output/task_execution_log.json
-2. 每完成一个任务后，使用以下完整脚本追加记录：
-   ```bash
-   python3 << 'WRITE_LOG_EOF'
-import json
-log_path = '{workspace_dir}/output/task_execution_log.json'
-with open(log_path, 'r') as f:
-    records = json.load(f)
-records.append({{
-    "task_id": "task_1",
-    "task_name": "任务描述",
-    "task_type": "MCP_TOOL",
-    "status": "success",
-    "mcp_tool_name": "工具名称",
-    "output_files": ["输出文件路径"],
-    "error_message": None
-}})
-with open(log_path, 'w') as f:
-    json.dump(records, f, indent=2)
-WRITE_LOG_EOF
-   ```
-
-【禁止事项】
-❌ 不要引用未定义的变量（如 task_log、record 等）
-❌ 不要使用 with open(path, 'r+') 模式（可能导致问题）
-❌ 不要在 heredoc 外部定义变量然后在内部引用
-
-【记录字段说明】
-- task_id: 任务编号（task_1, task_2, ...）
-- task_name: 任务名称/描述
-- task_type: MCP_TOOL / CODE_GENERATION / FILE_OPERATION / ANALYSIS / REPORT
-- status: success / failed / pending
-- parameters: 使用的参数（JSON 对象）
-- mcp_tool_name: MCP 工具全名（如 nettcr.predict_tcr_binding）
-- mcp_server: MCP 服务名称（如 nettcr）
-- output_files: 输出文件路径列表
-- output_data: 工具返回的关键数据
-- action_description: 一句话描述做了什么
-- error_message: 如果失败，记录错误信息
-
-输出要求：所有输出保存到 {output_dir}/ 目录"""
+        # 构建 prompt（使用独立的提示词模块）
+        mode_str = "plan" if mode == OpenCodeMode.PLAN else "execute"
+        prompt = get_opencode_prompt(
+            mode=mode_str,
+            tasks_md_path=tasks_md_path,
+            output_dir=output_dir,
+            iteration=iteration,
+        )
 
         script_content = f'''#!/bin/bash
 # OpenCode 任务执行脚本
@@ -833,6 +1002,24 @@ echo "模式: {mode.value}"
 echo "工作目录: $(pwd)"
 echo "XDG_DATA_HOME: $XDG_DATA_HOME"
 echo "任务日志文件: {output_dir}/task_execution_log.json"
+echo ""
+
+# 【新增】 打印 OpenCode 配置
+echo ""
+echo "=== OpenCode 配置信息 ==="
+if [ -f "/tmp/opencode/config/opencode/opencode.json" ]; then
+    echo "全局配置文件: /tmp/opencode/config/opencode/opencode.json"
+    cat /tmp/opencode/config/opencode/opencode.json
+elif [ -f "{workspace_dir}/opencode.json" ]; then
+    echo "工作目录配置: {workspace_dir}/opencode.json"
+    cat {workspace_dir}/opencode.json
+elif [ -f "{workspace_dir}/.opencode.json" ]; then
+    echo "工作目录配置(隐藏): {workspace_dir}/.opencode.json"
+    cat {workspace_dir}/.opencode.json
+else
+    echo "警告: 未找到 OpenCode 配置文件"
+fi
+echo "=== 配置信息结束 ==="
 echo ""
 
 # 执行 OpenCode
@@ -908,7 +1095,7 @@ except Exception as e:
 if records:
     print(f'总任务数: {{len(records)}}')
     for r in records:
-        status_icon = '✅' if r.get('status') == 'success' else '❌'
+        status_icon = '[SUCCESS]' if r.get('status') == 'success' else '[ERROR]'
         print(f"  {{status_icon}} {{r.get('task_id', 'N/A')}}: {{r.get('task_name', 'N/A')}}")
         if r.get('mcp_tool_name'):
             print(f"      MCP: {{r.get('mcp_tool_name')}}")
@@ -928,7 +1115,7 @@ echo "=== 输出文件列表 ==="
 ls -la {output_dir}/ 2>/dev/null || echo "无输出文件"
 
 # 标记完成
-echo "===OPENCODE_DONE===" >> {workspace_dir}/.opencode_output.log
+echo "===OPENCODE_DONE===" >> {workspace_dir}/.opencode_output_iter{iteration}.log
 
 exit $OPENCODE_EXIT_CODE
 '''
@@ -1603,11 +1790,11 @@ exit $OPENCODE_EXIT_CODE
         # 消息映射表：将技术性消息转换为用户友好消息
         message_mappings = {
             "安装": "📥 安装 OpenCode...",
-            "OpenCode 安装成功": "✅ OpenCode 安装完成",
-            "设置 GLM 代理": "🔧 设置 GLM 代理...",
-            "GLM 代理启动成功": "✅ GLM 代理已启动",
+            "OpenCode 安装成功": "[SUCCESS] OpenCode 安装完成",
+            "设置 GLM 代理": "[TOOL] 设置 GLM 代理...",
+            "GLM 代理启动成功": "[SUCCESS] GLM 代理已启动",
             "创建沙盒": "🐳 创建沙盒环境...",
-            "沙盒创建成功": "✅ 沙盒环境已就绪",
+            "沙盒创建成功": "[SUCCESS] 沙盒环境已就绪",
             "配置 OpenCode": "⚙️ 配置 OpenCode...",
         }
 

@@ -397,10 +397,10 @@ class CheckpointManager:
             if node_name in self.current_session.node_checkpoints:
                 checkpoint = self.current_session.node_checkpoints[node_name]
                 icon = {
-                    CheckpointStatus.COMPLETED: "✅",
-                    CheckpointStatus.FAILED: "❌",
+                    CheckpointStatus.COMPLETED: "[SUCCESS]",
+                    CheckpointStatus.FAILED: "[ERROR]",
                     CheckpointStatus.ACTIVE: "⏳",
-                    CheckpointStatus.RECOVERED: "🔄"
+                    CheckpointStatus.RECOVERED: "[RUN]"
                 }.get(checkpoint.status, "❓")
                 
                 lines.append(f"- {icon} {node_name}: {checkpoint.status.value} ({checkpoint.duration:.2f}s)")

@@ -9,7 +9,7 @@ Execution Tracker - 执行过程追踪器
 4. 生成详细的执行报告
 
 使用示例：
-    tracker = ExecutionTracker(session_id="test_001", workspace_dir="/tmp/sessions/test_001")
+    tracker = ExecutionTracker(session_id="test_001", workspace_dir="/data/sessions/test_001")
     
     # 开始迭代
     tracker.start_iteration(0)
@@ -25,8 +25,8 @@ Execution Tracker - 执行过程追踪器
     
     # 结束迭代
     iter_result = tracker.end_iteration(
-        tasks_path="/tmp/sessions/test_001/tasks/tasks_v0.md",
-        output_dir="/tmp/sessions/test_001/iterations/iter_0/output",
+        tasks_path="/data/sessions/test_001/tasks/tasks_v0.md",
+        output_dir="/data/sessions/test_001/iterations/iter_0/output",
         evaluation={"quality_score": 0.85}
     )
 """

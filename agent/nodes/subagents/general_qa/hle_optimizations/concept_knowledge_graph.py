@@ -94,7 +94,7 @@ class ConceptContrast:
             text += f"\n**Memory Aid:** {self.mnemonic}\n"
         
         if self.trick_indicator:
-            text += f"\n**⚠️ Watch for:** {self.trick_indicator}\n"
+            text += f"\n**[WARN]️ Watch for:** {self.trick_indicator}\n"
         
         return text
 
@@ -693,7 +693,7 @@ class ConceptKnowledgeGraph:
             explanation += "\n"
         
         if concept.common_errors:
-            explanation += "**⚠️ Common Errors:**\n"
+            explanation += "**[WARN]️ Common Errors:**\n"
             for error in concept.common_errors:
                 explanation += f"- {error}\n"
             explanation += "\n"

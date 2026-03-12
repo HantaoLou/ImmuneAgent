@@ -136,30 +136,30 @@ def test_file_operations():
 
 def main():
     """Run all tests."""
-    print("🚀 CodeAct Agent Test Suite")
+    print("[START] CodeAct Agent Test Suite")
     print("=" * 60)
     
     # Run tests
     try:
         test_simple_calculation()
-        print("\n✅ Test 1 Passed!")
+        print("\n[SUCCESS] Test 1 Passed!")
     except Exception as e:
-        print(f"\n❌ Test 1 Failed: {e}")
+        print(f"\n[ERROR] Test 1 Failed: {e}")
         import traceback
         traceback.print_exc()
     
     # Uncomment to run additional tests
     # try:
     #     test_data_analysis()
-    #     print("\n✅ Test 2 Passed!")
+    #     print("\n[SUCCESS] Test 2 Passed!")
     # except Exception as e:
-    #     print(f"\n❌ Test 2 Failed: {e}")
+    #     print(f"\n[ERROR] Test 2 Failed: {e}")
     
     # try:
     #     test_file_operations()
-    #     print("\n✅ Test 3 Passed!")
+    #     print("\n[SUCCESS] Test 3 Passed!")
     # except Exception as e:
-    #     print(f"\n❌ Test 3 Failed: {e}")
+    #     print(f"\n[ERROR] Test 3 Failed: {e}")
     
     print("\n" + "=" * 60)
     print("🏁 Test Suite Complete!")

@@ -538,11 +538,11 @@ def analyze_sgrna(
                 
                 # Basic quality checks
                 if len(guide_seq) == 20:
-                    eval_result["notes"].append("✓ Standard 20bp guide length")
+                    eval_result["notes"].append("[OK] Standard 20bp guide length")
                 elif len(guide_seq) < 18:
-                    eval_result["notes"].append("⚠ WARNING: Guide too short")
+                    eval_result["notes"].append("[WARN] WARNING: Guide too short")
                 elif len(guide_seq) > 24:
-                    eval_result["notes"].append("⚠ WARNING: Guide too long")
+                    eval_result["notes"].append("[WARN] WARNING: Guide too long")
                 
                 # GC content
                 gc_count = guide_seq.upper().count("G") + guide_seq.upper().count("C")
@@ -550,18 +550,18 @@ def analyze_sgrna(
                 eval_result["gc_percent"] = round(gc_percent, 1)
                 
                 if 40 <= gc_percent <= 60:
-                    eval_result["notes"].append(f"✓ Good GC content ({gc_percent:.0f}%)")
+                    eval_result["notes"].append(f"[OK] Good GC content ({gc_percent:.0f}%)")
                 elif gc_percent < 30:
-                    eval_result["notes"].append(f"⚠ Low GC content ({gc_percent:.0f}%) - may reduce efficacy")
+                    eval_result["notes"].append(f"[WARN] Low GC content ({gc_percent:.0f}%) - may reduce efficacy")
                 elif gc_percent > 80:
-                    eval_result["notes"].append(f"⚠ High GC content ({gc_percent:.0f}%) - may increase off-target")
+                    eval_result["notes"].append(f"[WARN] High GC content ({gc_percent:.0f}%) - may increase off-target")
                 
                 # Check for problematic patterns
                 if "TTTT" in guide_seq.upper():
-                    eval_result["notes"].append("⚠ Contains TTTT - Pol III termination signal")
+                    eval_result["notes"].append("[WARN] Contains TTTT - Pol III termination signal")
                 
                 if guide_seq.upper().startswith("G"):
-                    eval_result["notes"].append("✓ Starts with G - good for U6 promoter")
+                    eval_result["notes"].append("[OK] Starts with G - good for U6 promoter")
             
             evaluations.append(eval_result)
         

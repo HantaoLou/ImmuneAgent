@@ -575,7 +575,7 @@ def _save_to_remote_sandbox(
         
         # Convert server path to container path for writing
         # Server path: /data/sessions/{session_id}/...  (read-only in container)
-        # Container path: /tmp/sessions/{session_id}/...  (writable in container)
+        # Container path: /data/sessions/{session_id}/...  (writable in container)
         container_dir = get_container_path(sandbox_dir)
         
         # Escape content for Python string
@@ -631,7 +631,7 @@ print(f"__TODO_SAVED__:{{file_path}}")
             raise IOError(f"Failed to save to remote sandbox: {error_detail}")
             
     except Exception as e:
-        print(f"⚠️ Failed to save todo-list to remote sandbox: {e}")
+        print(f"[WARN]️ Failed to save todo-list to remote sandbox: {e}")
         raise
 
 
@@ -661,7 +661,7 @@ def update_task_status_in_todolist(
         manager = TodoListManager(sandbox_dir, filename)
         
         if not manager.todo_list_exists():
-            print(f"⚠️ Todo list not found: {sandbox_dir}/{filename}")
+            print(f"[WARN]️ Todo list not found: {sandbox_dir}/{filename}")
             return False
         
         # Read current todo list
@@ -686,7 +686,7 @@ def update_task_status_in_todolist(
                 
                 break
         else:
-            print(f"⚠️ Task not found in todo list: {task_id}")
+            print(f"[WARN]️ Task not found in todo list: {task_id}")
             return False
         
         # Save updated todo list
@@ -694,7 +694,7 @@ def update_task_status_in_todolist(
         return True
         
     except Exception as e:
-        print(f"⚠️ Failed to update task status: {e}")
+        print(f"[WARN]️ Failed to update task status: {e}")
         return False
 
 
@@ -727,7 +727,7 @@ def generate_and_save_todolist_from_state(
     # Determine sandbox directory
     sandbox = sandbox_dir or global_state.sandbox_dir or global_state.sandbox_data_dir
     if not sandbox:
-        print("⚠️ No sandbox directory specified")
+        print("[WARN]️ No sandbox directory specified")
         return None
     
     # Get opensandbox_id from state if not provided
@@ -740,10 +740,10 @@ def generate_and_save_todolist_from_state(
             total_tasks += len(group.subtasks)
     
     if total_tasks == 0:
-        print("⚠️ No tasks to convert to TodoList")
+        print("[WARN]️ No tasks to convert to TodoList")
         return None
     
-    print(f"📋 Converting {total_tasks} tasks to TodoList...")
+    print(f"[INFO] Converting {total_tasks} tasks to TodoList...")
     
     # Extract actual parameter values from global_state
     # This is the key fix: use extracted_parameters for actual values
@@ -757,7 +757,7 @@ def generate_and_save_todolist_from_state(
         if merged_params:
             extracted_params = {**extracted_params, **merged_params}
     
-    print(f"📋 Using extracted parameters: {list(extracted_params.keys())}")
+    print(f"[INFO] Using extracted parameters: {list(extracted_params.keys())}")
     
     # Convert to TodoList with actual parameter values
     todo_list = convert_subtasks_to_todolist(
@@ -865,7 +865,7 @@ if __name__ == "__main__":
     
     # Print summary
     summary = get_task_summary(todo_list)
-    print(f"\n📊 TodoList Summary:")
+    print(f"\n[STAT] TodoList Summary:")
     print(f"  Total tasks: {summary['total_tasks']}")
     print(f"  Status: {summary['status_counts']}")
     print(f"  Types: {summary['type_counts']}")
@@ -876,24 +876,24 @@ if __name__ == "__main__":
         print(f"  {task.id}: type={task.type.value}, tool={task.parameters.get('tool_name', 'N/A')}")
     
     # P1 Test: Verify priority order
-    print(f"\n📈 P1 Test: Priority Order (lower = higher priority):")
+    print(f"\n[PROGRESS] P1 Test: Priority Order (lower = higher priority):")
     sorted_tasks = sorted(todo_list.tasks, key=lambda t: t.priority)
     for task in sorted_tasks:
         deps = task.dependencies or []
         print(f"  {task.id}: priority={task.priority}, dependencies={deps}")
     
     # Verify P1: No task has lower priority than its dependencies
-    print(f"\n✅ P1 Verification: Checking dependency-priority consistency...")
+    print(f"\n[SUCCESS] P1 Verification: Checking dependency-priority consistency...")
     priority_map = {t.id: t.priority for t in todo_list.tasks}
     all_valid = True
     for task in todo_list.tasks:
         for dep_id in task.dependencies:
             if dep_id in priority_map:
                 if task.priority <= priority_map[dep_id]:
-                    print(f"  ❌ ERROR: {task.id} (p={task.priority}) should have higher priority than {dep_id} (p={priority_map[dep_id]})")
+                    print(f"  [ERROR] ERROR: {task.id} (p={task.priority}) should have higher priority than {dep_id} (p={priority_map[dep_id]})")
                     all_valid = False
     if all_valid:
-        print(f"  ✅ All tasks have correct priority order!")
+        print(f"  [SUCCESS] All tasks have correct priority order!")
     
     # Generate markdown
     print("\n📄 Generated Markdown:")

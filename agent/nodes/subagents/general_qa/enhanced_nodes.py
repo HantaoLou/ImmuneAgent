@@ -82,7 +82,7 @@ def enhance_n0_with_tool_intent(state: GeneralQAState) -> GeneralQAState:
     
     # 打印信息
     if requirements["required"]:
-        print(f"  🔧 Required tools identified: {requirements['required']}")
+        print(f"  [TOOL] Required tools identified: {requirements['required']}")
     if requirements["recommended"]:
         print(f"  💡 Recommended tools: {requirements['recommended']}")
     
@@ -132,7 +132,7 @@ def enhance_n3_with_iterative_retrieval(
         state.follow_up_questions = follow_ups
         
         if gaps:
-            print(f"  🔄 Iteration {current_iteration}: Knowledge gaps identified: {gaps[:3]}")
+            print(f"  [RUN] Iteration {current_iteration}: Knowledge gaps identified: {gaps[:3]}")
         if follow_ups:
             print(f"  ❓ Follow-up questions generated: {follow_ups}")
         
@@ -175,10 +175,10 @@ def enhance_n4_with_verification(
     state.calculation_verification = result.to_dict()
     
     if result.all_match:
-        print(f"  ✅ Calculation verification passed")
+        print(f"  [SUCCESS] Calculation verification passed")
         state.needs_calculation_retry = False
     elif result.discrepancy:
-        print(f"  ⚠️ Calculation verification discrepancy detected:")
+        print(f"  [WARN]️ Calculation verification discrepancy detected:")
         print(f"    - Symbolic result: {result.symbolic_result}")
         print(f"    - Numerical result: {result.numerical_result}")
         print(f"    - Difference: {result.discrepancy.get('difference')}")
@@ -214,7 +214,7 @@ def enhance_n7_with_self_consistency(
     paths = []
     original_temp = getattr(llm, 'temperature', 0.3)
     
-    print(f"  🔄 Running Self-Consistency with {SC_NUM_PATHS} paths...")
+    print(f"  [RUN] Running Self-Consistency with {SC_NUM_PATHS} paths...")
     
     for i, temp in enumerate(SC_TEMPERATURES):
         print(f"    - Path {i+1}/{SC_NUM_PATHS} (temperature={temp})")
@@ -265,14 +265,14 @@ def enhance_n7_with_self_consistency(
     state.self_consistency_result = sc_result.to_dict()
     
     # 打印结果
-    print(f"  📊 Self-Consistency Result:")
+    print(f"  [STAT] Self-Consistency Result:")
     print(f"    - Consensus answer: {sc_result.consensus_answer[:50]}...")
     print(f"    - Consensus ratio: {sc_result.consensus_ratio:.2%}")
     print(f"    - Confidence level: {sc_result.confidence_level}")
     
     # 如果一致性低，标记需要额外验证
     if sc_result.confidence_level == "low":
-        print(f"  ⚠️ Low consensus detected, marking for additional verification")
+        print(f"  [WARN]️ Low consensus detected, marking for additional verification")
         # 不覆盖核心结论，但记录自一致性结果供后续节点使用
     
     return state
@@ -308,11 +308,11 @@ def enhance_n7_with_cot(
     state.inference_chain_coherent = is_coherent
     
     if not is_coherent:
-        print(f"  ⚠️ Inference chain coherence issues detected:")
+        print(f"  [WARN]️ Inference chain coherence issues detected:")
         for issue in issues[:3]:
             print(f"    - {issue}")
     else:
-        print(f"  ✅ Inference chain is coherent ({len(steps)} steps, depth={state.reasoning_depth})")
+        print(f"  [SUCCESS] Inference chain is coherent ({len(steps)} steps, depth={state.reasoning_depth})")
     
     return state
 
@@ -341,16 +341,16 @@ def enhance_with_metacognitive_monitoring(
     
     # 打印评估结果
     print(f"  🧠 Meta-Cognitive Assessment:")
-    print(f"    - Goal alignment: {'✅' if assessment.goal_alignment else '❌'}")
-    print(f"    - Constraint coverage: {'✅' if assessment.constraint_coverage else '❌'}")
-    print(f"    - Reasoning coherence: {'✅' if assessment.reasoning_coherence else '❌'}")
+    print(f"    - Goal alignment: {'[SUCCESS]' if assessment.goal_alignment else '[ERROR]'}")
+    print(f"    - Constraint coverage: {'[SUCCESS]' if assessment.constraint_coverage else '[ERROR]'}")
+    print(f"    - Reasoning coherence: {'[SUCCESS]' if assessment.reasoning_coherence else '[ERROR]'}")
     print(f"    - Confidence calibration: {assessment.confidence_calibration:.2f}")
     
     if assessment.knowledge_gaps:
         print(f"    - Knowledge gaps: {assessment.knowledge_gaps[:2]}")
     
     if assessment.needs_backtracking:
-        print(f"    ⚠️ Backtracking needed: {assessment.backtracking_reason}")
+        print(f"    [WARN]️ Backtracking needed: {assessment.backtracking_reason}")
     
     return state
 

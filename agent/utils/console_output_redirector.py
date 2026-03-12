@@ -1,6 +1,8 @@
 """
-控制台输出重定向器 - 简化版本
-只捕获print输出，避免复杂逻辑
+控制台输出重定向器 - 线程安全版本
+
+使用 threading.local() 为每个线程维护独立的 redirector，
+避免多会话并发时输出混乱。
 """
 
 import sys
@@ -15,8 +17,95 @@ except ImportError:
     ConsoleOutputFilter = None
 
 
+# 线程本地存储，用于隔离不同会话的输出
+_thread_local = threading.local()
+
+# 全局的 stdout 捕获器（只设置一次）
+_global_stream_capture = None
+_original_stdout = None
+_install_lock = threading.Lock()
+_installed = False
+
+
+class _ThreadAwareStreamCapture(io.StringIO):
+    """
+    线程感知的流捕获器
+
+    所有线程共享同一个 sys.stdout，但写入时会查找当前线程的 redirector
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def write(self, text: str) -> int:
+        """写入时，根据当前线程路由到对应的 redirector"""
+        if not text:
+            return 0
+
+        # 获取当前线程的 redirector
+        redirector = getattr(_thread_local, "redirector", None)
+
+        if redirector and redirector._is_capturing:
+            # 路由到当前线程的 redirector
+            redirector._on_write(text)
+
+        # 同时写入原始 stdout（用于调试）
+        if _original_stdout:
+            try:
+                _original_stdout.write(text)
+                _original_stdout.flush()
+            except Exception:
+                pass
+
+        return len(text) if text else 0
+
+    def flush(self):
+        """刷新"""
+        if _original_stdout:
+            try:
+                _original_stdout.flush()
+            except Exception:
+                pass
+
+
+def _ensure_global_capture_installed():
+    """
+    确保全局的 stdout 捕获器已安装（只执行一次）
+
+    这个函数会在第一次创建 ConsoleOutputRedirector 时调用，
+    替换 sys.stdout 为线程感知的捕获器。
+    """
+    global _global_stream_capture, _original_stdout, _installed
+
+    with _install_lock:
+        if _installed:
+            return
+
+        # 保存原始 stdout
+        _original_stdout = sys.stdout
+
+        # 创建并安装全局捕获器
+        _global_stream_capture = _ThreadAwareStreamCapture()
+        sys.stdout = _global_stream_capture
+
+        _installed = True
+        print("[ConsoleOutputRedirector] Global capture installed (thread-safe mode)")
+
+
 class ConsoleOutputRedirector:
-    """控制台输出重定向器（简化版）"""
+    """
+    控制台输出重定向器（线程安全版本）
+
+    每个会话创建一个实例，通过 threading.local 隔离不同会话的输出。
+
+    使用方式:
+        redirector = ConsoleOutputRedirector(progress_callback=callback)
+        redirector.start_capture()
+        try:
+            # 执行代码...
+        finally:
+            redirector.stop_capture()
+    """
 
     def __init__(
         self,
@@ -28,7 +117,6 @@ class ConsoleOutputRedirector:
         self.capture_print = capture_print
         self.min_interval_ms = min_interval_ms
 
-        self._original_stdout = None
         self._is_capturing = False
         self._lock = threading.Lock()
         self._last_flush_time = datetime.now()
@@ -38,8 +126,11 @@ class ConsoleOutputRedirector:
         # 初始化过滤器
         self._filter = ConsoleOutputFilter() if ConsoleOutputFilter else None
 
+        # 确保全局捕获器已安装
+        _ensure_global_capture_installed()
+
     def start_capture(self):
-        """开始捕获"""
+        """开始捕获（设置当前线程的 redirector）"""
         if self._is_capturing:
             return
 
@@ -47,19 +138,21 @@ class ConsoleOutputRedirector:
             self._is_capturing = True
             self._buffer = ""
             self._last_sent = ""
-            self._original_stdout = sys.stdout
-            sys.stdout = _SimpleStreamCapture(self._on_write)
+
+            # 将当前 redirector 绑定到线程本地存储
+            _thread_local.redirector = self
 
     def stop_capture(self):
-        """停止捕获"""
+        """停止捕获（清除当前线程的 redirector）"""
         if not self._is_capturing:
             return
 
         with self._lock:
             self._is_capturing = False
-            if self._original_stdout:
-                sys.stdout = self._original_stdout
             self._flush(final=True)
+
+            # 清除线程本地的 redirector
+            _thread_local.redirector = None
 
     def __enter__(self):
         self.start_capture()
@@ -70,7 +163,7 @@ class ConsoleOutputRedirector:
         return False
 
     def _on_write(self, text: str):
-        """处理写入"""
+        """处理写入（由 _ThreadAwareStreamCapture 调用）"""
         if not text:
             return
 
@@ -102,13 +195,6 @@ class ConsoleOutputRedirector:
         except Exception as e:
             pass
 
-        if self._original_stdout:
-            try:
-                self._original_stdout.write(text)
-                self._original_stdout.flush()
-            except Exception:
-                pass
-
     def _flush(self, final: bool = False):
         """刷新缓冲区，推送到前端"""
         if not self._buffer:
@@ -134,41 +220,38 @@ class ConsoleOutputRedirector:
             except Exception as e:
                 pass
 
-        if self._original_stdout:
-            try:
-                self._original_stdout.write(text)
-                self._original_stdout.flush()
-            except Exception:
-                pass
 
-
-class _SimpleStreamCapture(io.StringIO):
-    """自定义流捕获器"""
-
-    def __init__(self, callback: Callable[[str], None]):
-        super().__init__()
-        self._callback = callback
-
-    def write(self, text: str) -> int:
-        """写入时触发回调"""
-        if text:
-            self._callback(text)
-        return len(text) if text else 0
-
-    def flush(self):
-        """刷新"""
-        pass
-
+# ============================================================================
+# 兼容旧的全局 API（已废弃，但保留以兼容旧代码）
+# ============================================================================
 
 _global_redirector: Optional[ConsoleOutputRedirector] = None
 
 
 def get_global_redirector() -> Optional[ConsoleOutputRedirector]:
-    """获取全局重定向器"""
+    """获取全局重定向器（已废弃）"""
     return _global_redirector
 
 
 def set_global_redirector(redirector: Optional[ConsoleOutputRedirector]):
-    """设置全局重定向器"""
+    """设置全局重定向器（已废弃）"""
     global _global_redirector
     _global_redirector = redirector
+
+
+def get_thread_redirector() -> Optional[ConsoleOutputRedirector]:
+    """获取当前线程的重定向器（推荐使用）"""
+    return getattr(_thread_local, "redirector", None)
+
+
+def set_thread_redirector(redirector: Optional[ConsoleOutputRedirector]):
+    """
+    设置当前线程的重定向器（用于ThreadPoolExecutor场景）
+
+    当在新线程中执行代码时，需要显式设置当前线程的redirector，
+    以确保控制台输出能够被正确捕获。
+
+    Args:
+        redirector: ConsoleOutputRedirector 实例或 None
+    """
+    _thread_local.redirector = redirector
