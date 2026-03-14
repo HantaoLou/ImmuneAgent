@@ -119,7 +119,13 @@ def _bind_session_to_callback(
         details["session_id"] = session_id
         details["node_name"] = _node
         details["timestamp"] = datetime.now().isoformat()
-        return callback(event_type, message, details, **kwargs)
+        return callback(
+            event_type=event_type,
+            message=message,
+            node_name=_node,
+            details=details,
+            **kwargs,
+        )
 
     return wrapped
 
@@ -250,6 +256,8 @@ def _create_zhipu_llm(
     temperature: float = 0.1,
     api_key: Optional[str] = None,
     progress_callback: Optional[Callable] = None,
+    enable_thinking_prompt: bool = True,
+    compact_thinking_mode: bool = True,
 ) -> Optional[Any]:
     """Internal function: Create Zhipu AI LLM instance with optional SSE callback"""
     if not LLM_AVAILABLE or ZhipuAiClient is None:
@@ -284,6 +292,8 @@ def _create_zhipu_llm(
             temperature=temperature,
             progress_callback=progress_callback,
             streaming=bool(progress_callback),
+            enable_thinking_prompt=enable_thinking_prompt,
+            compact_thinking_mode=compact_thinking_mode,
         )
 
         return llm
@@ -450,6 +460,9 @@ def _create_llm_by_purpose(
     temperature: Optional[float] = None,
     custom_model: Optional[str] = None,
     progress_callback: Optional[Callable] = None,
+    enable_thinking_prompt: bool = True,
+    compact_thinking_mode: bool = True,
+    **kwargs,
 ) -> Optional[Any]:
     """
     Create LLM instance by purpose (core function)
@@ -459,6 +472,9 @@ def _create_llm_by_purpose(
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model)
         progress_callback: Optional progress callback for SSE streaming
+        enable_thinking_prompt: Whether to inject thinking guidance prompt
+        compact_thinking_mode: Whether to use compact thinking prompt
+        **kwargs: Additional arguments
 
     Returns:
         LLM instance, returns None if creation fails
@@ -508,6 +524,8 @@ def _create_llm_by_purpose(
                         temp,
                         api_key=zhipu_key,
                         progress_callback=progress_callback,
+                        enable_thinking_prompt=enable_thinking_prompt,
+                        compact_thinking_mode=compact_thinking_mode,
                     )
                 else:
                     llm = None
@@ -567,7 +585,12 @@ def _create_llm_by_purpose(
             zhipu_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
             if zhipu_key:
                 llm = _create_zhipu_llm(
-                    model, temp, api_key=zhipu_key, progress_callback=progress_callback
+                    model,
+                    temp,
+                    api_key=zhipu_key,
+                    progress_callback=progress_callback,
+                    enable_thinking_prompt=enable_thinking_prompt,
+                    compact_thinking_mode=compact_thinking_mode,
                 )
                 if llm is None:
                     failed_attempts.append(
@@ -808,6 +831,8 @@ def create_llm_with_thinking(
     node_name: Optional[str] = None,
     temperature: Optional[float] = None,
     custom_model: Optional[str] = None,
+    enable_thinking_prompt: bool = True,
+    compact_thinking_mode: bool = True,
     **kwargs,
 ) -> Optional[Any]:
     """
@@ -817,7 +842,8 @@ def create_llm_with_thinking(
     1. Detects progress callback from context if not provided
     2. Binds session_id and node_name to the callback
     3. Enables streaming for thinking capture
-    4. Reports LLM thinking to the frontend
+    4. Injects thinking prompt to guide LLM's reasoning process
+    5. Reports LLM thinking to the frontend
 
     Args:
         purpose: Model purpose, options: "reasoning", "bioinformatics", "reasoning_advanced", "code"
@@ -826,6 +852,8 @@ def create_llm_with_thinking(
         node_name: Optional node name for tracking
         temperature: Temperature parameter
         custom_model: Custom model name (format: provider:model)
+        enable_thinking_prompt: Whether to inject thinking guidance prompt (default: True)
+        compact_thinking_mode: Whether to use compact thinking prompt (default: True)
         **kwargs: Additional arguments passed to LLM creation
 
     Returns:
@@ -842,6 +870,13 @@ def create_llm_with_thinking(
         ...     node_name="supervisor"
         ... )
 
+        >>> # With detailed thinking mode
+        >>> llm = create_llm_with_thinking(
+        ...     purpose="reasoning",
+        ...     enable_thinking_prompt=True,
+        ...     compact_thinking_mode=False
+        ... )
+
         >>> # From GlobalState
         >>> llm = state.get_llm(purpose="reasoning", node_name="general_qa")
     """
@@ -855,7 +890,14 @@ def create_llm_with_thinking(
             progress_callback, session_id, node_name
         )
 
-    # 3. Create LLM using standard factory
+    # 3. Add thinking prompt parameters to kwargs
+    thinking_kwargs = {
+        "enable_thinking_prompt": enable_thinking_prompt,
+        "compact_thinking_mode": compact_thinking_mode,
+    }
+    thinking_kwargs.update(kwargs)
+
+    # 4. Create LLM using standard factory
     try:
         purpose_enum = ModelPurpose(purpose)
     except ValueError:
@@ -869,10 +911,147 @@ def create_llm_with_thinking(
         temperature=temperature,
         custom_model=custom_model,
         progress_callback=progress_callback,
+        **thinking_kwargs,
     )
 
-    # 4. Ensure streaming is enabled
-    if llm and hasattr(llm, "streaming"):
-        llm.streaming = True
-
     return llm
+
+
+# ===================== Simplified One-Layer Method =====================
+def get_llm(
+    purpose: str = "reasoning",
+    progress_callback: Optional[Callable] = None,
+    session_id: Optional[str] = None,
+    node_name: Optional[str] = None,
+    temperature: Optional[float] = None,
+    custom_model: Optional[str] = None,
+    enable_thinking: bool = True,
+    enable_native_thinking: bool = True,
+    clear_thinking: bool = False,
+    **kwargs,
+) -> Optional[Any]:
+    """
+    Simplified one-layer method to get LLM with thinking support.
+
+    This is the recommended entry point for creating LLM instances.
+    Supports GLM-5/GLM-4.7 native thinking mode with SSE streaming.
+
+    Args:
+        purpose: Model purpose, options: "reasoning", "bioinformatics", "reasoning_advanced", "code"
+        progress_callback: Optional progress callback for SSE streaming
+        session_id: Optional session ID for multi-session isolation
+        node_name: Optional node name for tracking
+        temperature: Temperature parameter
+        custom_model: Custom model name (format: provider:model)
+        enable_thinking: Whether to enable thinking prompt (default: True)
+        enable_native_thinking: Whether to enable GLM native thinking mode (default: True)
+                               When True, uses GLM-5/GLM-4.7's native reasoning_content
+        clear_thinking: Whether to clear thinking content (default: False)
+                       False = Preserved Thinking (recommended for Agent scenarios)
+                       True = Clear thinking after each turn
+        **kwargs: Additional arguments (e.g., compact_thinking_mode, timeout)
+
+    Returns:
+        LLM instance with thinking capture, returns None if creation fails
+
+    Examples:
+        >>> # Simple usage with native thinking
+        >>> llm = get_llm("reasoning")
+        >>> response = llm.invoke([HumanMessage(content="Hello")])
+
+        >>> # With callback for SSE streaming
+        >>> llm = get_llm(
+        ...     purpose="reasoning",
+        ...     progress_callback=my_callback,
+        ...     session_id="session_123",
+        ...     node_name="agent"
+        ... )
+
+        >>> # Disable native thinking (use prompt-based thinking)
+        >>> llm = get_llm("reasoning", enable_native_thinking=False)
+
+        >>> # Enable preserved thinking for multi-turn conversations
+        >>> llm = get_llm("reasoning", clear_thinking=False)
+    """
+    if progress_callback is None:
+        progress_callback = _get_auto_progress_callback()
+
+    if progress_callback and session_id:
+        progress_callback = _bind_session_to_callback(
+            progress_callback, session_id, node_name
+        )
+
+    try:
+        purpose_enum = ModelPurpose(purpose)
+    except ValueError:
+        print(f"Warning: Unknown purpose '{purpose}', using 'reasoning'")
+        purpose_enum = ModelPurpose.REASONING
+
+    configs = MODEL_CONFIGS.get(purpose_enum, [])
+    if not configs:
+        print(f"Warning: No model configuration for '{purpose_enum.value}'")
+        return None
+
+    temp = temperature if temperature is not None else 0.2
+
+    for provider, model, default_temp in configs:
+        use_temp = temperature if temperature is not None else default_temp
+
+        if provider == "zhipu":
+            zhipu_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
+            if zhipu_key:
+                try:
+                    from agent.utils.zhipu_adapter import ZhipuAIAdapter
+
+                    bound_callback = progress_callback
+                    if bound_callback and session_id:
+                        bound_callback = _bind_session_to_callback(
+                            bound_callback, session_id, node_name
+                        )
+
+                    llm = ZhipuAIAdapter(
+                        model=model,
+                        temperature=use_temp,
+                        api_key=zhipu_key,
+                        progress_callback=bound_callback,
+                        enable_thinking_prompt=enable_thinking,
+                        compact_thinking_mode=kwargs.get("compact_thinking_mode", True),
+                        timeout=kwargs.get("timeout", 120),
+                        enable_native_thinking=enable_native_thinking,
+                        clear_thinking=clear_thinking,
+                    )
+
+                    if llm:
+                        print(
+                            f"[get_llm] Created {provider}:{model} with native_thinking={enable_native_thinking}, clear_thinking={clear_thinking}"
+                        )
+                        return llm
+                except Exception as e:
+                    print(f"[get_llm] Failed to create {provider}:{model}: {e}")
+                    continue
+
+        elif provider == "dashscope":
+            dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv(
+                "QIANFAN_API_KEY"
+            )
+            if dashscope_key:
+                try:
+                    from langchain_openai import ChatOpenAI
+
+                    llm = ChatOpenAI(
+                        model=model,
+                        temperature=use_temp,
+                        api_key=dashscope_key,
+                        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        streaming=bool(progress_callback),
+                    )
+
+                    if llm:
+                        print(f"[get_llm] Created {provider}:{model}")
+                        return llm
+                except Exception as e:
+                    print(f"[get_llm] Failed to create {provider}:{model}: {e}")
+                    continue
+
+    print(f"[get_llm] Failed to create LLM for purpose '{purpose}'")
+    return None

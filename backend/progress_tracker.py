@@ -27,8 +27,11 @@ class ProgressEventType(str, Enum):
     INFO = "info"
 
     LLM_THINKING = "llm_thinking"
+    LLM_THINKING_START = "llm_thinking_start"
+    LLM_THINKING_END = "llm_thinking_end"
     LLM_REASONING = "llm_reasoning"
     LLM_STREAMING = "llm_streaming"
+    LLM_RESPONSE = "llm_response"
     TOOL_RESULT = "tool_result"
     SUBGRAPH_STEP = "subgraph_step"
     KNOWLEDGE_RETRIEVAL = "knowledge_retrieval"
@@ -36,6 +39,17 @@ class ProgressEventType(str, Enum):
     FILE_CONTENT = "file_content"
     CONSOLE_OUTPUT = "console_output"
     SANDBOX_EXEC = "sandbox_exec"
+    SANDBOX_STDOUT = "sandbox_stdout"
+    SANDBOX_STDERR = "sandbox_stderr"
+    SANDBOX_INIT = "sandbox_init"
+    SANDBOX_COMPLETE = "sandbox_complete"
+    SANDBOX_ERROR = "sandbox_error"
+    OPENCODE_INIT = "opencode_init"
+    OPENCODE_STDOUT = "opencode_stdout"
+    OPENCODE_STDERR = "opencode_stderr"
+    OPENCODE_RESULT = "opencode_result"
+    OPENCODE_ERROR = "opencode_error"
+    OPENCODE_COMPLETE = "opencode_complete"
 
 
 class ProgressEvent(BaseModel):
@@ -110,67 +124,52 @@ class ProgressTracker:
         await self.push_event(event)
 
     def emit_sync(self, event: ProgressEvent):
-        """同步发送进度事件（用于同步代码中）"""
+        """同步发送进度事件（用于同步代码中)"""
         if not self._active:
             return
 
         success = False
 
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.queue.put(event))
-            success = True
-        except RuntimeError:
+        llm_thinking_events = {
+            ProgressEventType.LLM_THINKING,
+            ProgressEventType.LLM_THINKING_START,
+            ProgressEventType.LLM_THINKING_END,
+            ProgressEventType.LLM_REASONING,
+            ProgressEventType.LLM_RESPONSE,
+            ProgressEventType.LLM_STREAMING,
+        }
+
+        is_llm_event = event.event_type in llm_thinking_events
+
+        if self._loop is not None:
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self.queue.put(event), self._loop
+                )
+                future.result(timeout=2.0)
+                success = True
+            except Exception:
+                try:
+                    self.queue.put_nowait(event)
+                    success = True
+                except Exception:
+                    pass
+        else:
             try:
                 self.queue.put_nowait(event)
                 success = True
             except asyncio.QueueFull:
                 pass
-            except RuntimeError:
-                # 没有运行中的循环，尝试获取主事件循环
-                try:
-                    loop = asyncio.get_event_loop()
-                    if not loop.is_closed() and loop.is_running():
-                        # 使用run_coroutine_threadsafe
-                        future = asyncio.run_coroutine_threadsafe(
-                            self.queue.put(event), loop
-                        )
-                        future.result(timeout=1.0)  # 等待完成
-                        success = True
-                        print(
-                            f"[ProgressTracker] Event emitted (threadsafe): {event.event_type}"
-                        )
-                    else:
-                        print(f"[ProgressTracker] Loop not running, direct put")
-                        # 直接放入队列
-                        self.queue.put_nowait(event)
-                        success = True
-                except Exception as e:
-                    print(f"[ProgressTracker] Failed to emit via event loop: {e}")
-                    # 最后的尝试：直接放入队列
-                    try:
-                        self.queue.put_nowait(event)
-                        success = True
-                        print(
-                            f"[ProgressTracker] Event emitted (direct): {event.event_type}"
-                        )
-                    except Exception as e2:
-                        print(f"[ProgressTracker] Direct put also failed: {e2}")
-        except Exception as e:
-            print(f"[ProgressTracker] Unexpected error in emit_sync: {e}")
+            except Exception:
+                pass
 
         if success:
-            # 保存到持久化存储
             if self.session_id:
                 try:
                     storage = get_session_storage()
                     storage.save_message(self.session_id, event.model_dump())
-                except Exception as e:
-                    print(f"[ProgressTracker] Failed to save message to storage: {e}")
-        else:
-            print(
-                f"[ProgressTracker] WARNING: Failed to emit event: {event.event_type} - {event.message[:50]}"
-            )
+                except Exception:
+                    pass
 
     async def get_event(self, timeout: float = 0.1) -> Optional[ProgressEvent]:
         """获取下一个进度事件"""
@@ -209,18 +208,26 @@ class ProgressTracker:
 
 def create_progress_tracker(session_id: str) -> ProgressTracker:
     """
-    创建进度跟踪器（强制绑定 session_id）
+    创建进度跟踪器（强制绑定 session_id 和主事件循环）
 
     Args:
         session_id: 会话ID
 
     Returns:
-        绑定了 session_id 的 ProgressTracker 实例
+        绑定了 session_id 和主事件循环的 ProgressTracker 实例
     """
     if session_id in _global_trackers:
         return _global_trackers[session_id]
 
     tracker = ProgressTracker(session_id=session_id)
+
+    try:
+        loop = asyncio.get_running_loop()
+        if loop is not None:
+            tracker._loop = loop
+    except RuntimeError:
+        pass
+
     return tracker
 
 

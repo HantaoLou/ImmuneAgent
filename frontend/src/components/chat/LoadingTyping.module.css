@@ -1,0 +1,62 @@
+.typingIndicator {
+  display: flex;
+  gap: 8px;
+  padding: 16px;
+  justify-content: flex-start;
+  margin-bottom: 1rem;
+  animation: fadeInUp 0.3s ease-out;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  background: var(--accent-cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--accent-cyan);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.dotPurple {
+  background: var(--accent-purple);
+  box-shadow: 0 0 10px var(--accent-purple);
+  animation-delay: 0.2s;
+}
+
+.dotLime {
+  background: var(--accent-lime);
+  box-shadow: 0 0 10px var(--accent-lime);
+  animation-delay: 0.4s;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .typingIndicator {
+    padding: 12px;
+  }
+  
+  .dot {
+    width: 8px;
+    height: 8px;
+  }
+}

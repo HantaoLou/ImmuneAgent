@@ -1,0 +1,21 @@
+.hiddenInput {
+  display: none;
+}
+
+.uploadBtn {
+  color: var(--accent-cyan) !important;
+  border: 1px solid var(--glass-border) !important;
+  transition: all 0.2s ease !important;
+}
+
+.uploadBtn:hover:not(:disabled) {
+  color: var(--accent-purple) !important;
+  border-color: var(--accent-purple) !important;
+  background: rgba(185, 103, 255, 0.1) !important;
+  box-shadow: 0 0 15px rgba(185, 103, 255, 0.2);
+}
+
+.uploadBtn:disabled {
+  opacity: 0.3 !important;
+  cursor: not-allowed !important;
+}

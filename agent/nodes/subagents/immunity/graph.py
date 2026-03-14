@@ -15,6 +15,7 @@ import os
 import time
 import asyncio
 import sys
+import concurrent.futures
 from datetime import datetime
 
 from langgraph.graph import StateGraph, START, END
@@ -194,6 +195,8 @@ def _get_llm_with_callback(state, purpose="bioinformatics"):
     """
     创建带progress_callback的LLM实例
 
+    优先使用 state.get_llm() 方法，确保 SSE 推送正常工作。
+
     Args:
         state: ImmunityState实例
         purpose: LLM用途（"bioinformatics", "reasoning", "code"等）
@@ -201,21 +204,48 @@ def _get_llm_with_callback(state, purpose="bioinformatics"):
     Returns:
         LLM实例（带或不带progress_callback）
     """
-    # [HOT] 获取progress_callback（优先从state，其次从parent_state）
+    # [DEBUG] 检查 progress_callback 是否可用
+    has_progress_callback = (
+        hasattr(state, "progress_callback") and state.progress_callback
+    )
+    has_session_id = hasattr(state, "session_id") and state.session_id
+    has_parent_state = hasattr(state, "parent_state") and state.parent_state
+    has_get_llm = hasattr(state, "get_llm") and callable(
+        getattr(state, "get_llm", None)
+    )
+
+    print(f"[Immunity] _get_llm_with_callback 状态检查:")
+    print(f"  - has_progress_callback: {has_progress_callback}")
+    print(f"  - has_session_id: {has_session_id}")
+    print(f"  - has_parent_state: {has_parent_state}")
+    print(f"  - has_get_llm: {has_get_llm}")
+
+    # [HOT] 优先使用 state.get_llm() 方法
+    if has_get_llm:
+        print(f"[Immunity] 使用 state.get_llm() 方法")
+        return state.get_llm(purpose=purpose, node_name="immunity")
+
+    # [FALLBACK] 如果没有 get_llm 方法，手动获取 callback 并创建 LLM
     progress_callback = None
     session_id = None
-    if hasattr(state, "progress_callback") and state.progress_callback:
+    if has_progress_callback:
         progress_callback = state.progress_callback
-    if hasattr(state, "session_id") and state.session_id:
+    if has_session_id:
         session_id = state.session_id
-    elif hasattr(state, "parent_state") and state.parent_state:
+    elif has_parent_state:
         progress_callback = getattr(state.parent_state, "progress_callback", None)
         session_id = getattr(state.parent_state, "session_id", None)
+        print(
+            f"[Immunity] 从 parent_state 获取: progress_callback={progress_callback is not None}, session_id={session_id}"
+        )
 
     # 创建带SSE推送的LLM实例
     if progress_callback or session_id:
         from utils.llm_factory import create_llm_with_thinking
 
+        print(
+            f"[Immunity] 创建带 thinking 的 LLM: progress_callback={progress_callback is not None}, session_id={session_id}"
+        )
         return create_llm_with_thinking(
             purpose=purpose,
             progress_callback=progress_callback,
@@ -224,6 +254,7 @@ def _get_llm_with_callback(state, purpose="bioinformatics"):
         )
     else:
         # 回退到普通创建
+        print(f"[Immunity] [WARN] 没有 progress_callback 或 session_id，使用普通 LLM")
         if purpose == "bioinformatics":
             return create_bioinformatics_llm()
         elif purpose == "reasoning":
@@ -705,22 +736,7 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
 
     _progress_logger.log_info(f"原始问题: {state.original_question[:150]}...")
 
-    # [HOT] 获取progress_callback（优先从parent_state，然后从state）
-    progress_callback = None
-    if hasattr(state, "progress_callback") and state.progress_callback:
-        progress_callback = state.progress_callback
-    elif hasattr(state, "parent_state") and state.parent_state:
-        progress_callback = getattr(state.parent_state, "progress_callback", None)
-
-    # 创建带SSE推送的LLM实例
-    if progress_callback:
-        from utils.llm_factory import create_llm_with_callback
-
-        llm = create_llm_with_callback(
-            purpose="bioinformatics", progress_callback=progress_callback
-        )
-    else:
-        llm = _get_llm_with_callback(state, "bioinformatics")
+    llm = _get_llm_with_callback(state, "bioinformatics")
     if not llm:
         _progress_logger.log_warning("LLM 不可用，使用原始问题")
         state.optimized_questions = [state.original_question]
@@ -1072,28 +1088,82 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
 
             return await graph.ainvoke(research_input, dr_config)
 
-        # Execute async function
+        # Execute async function with proper event loop handling
         start_time = time.perf_counter()
+        result = None
+
+        def run_with_proper_cleanup(coro):
+            """Run async coroutine with proper cleanup to avoid 'Event loop is closed' errors."""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                try:
+                    # Allow pending async generators to close
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                    # Shutdown default executor to avoid warnings
+                    loop.run_until_complete(loop.shutdown_default_executor())
+                except Exception:
+                    pass
+                finally:
+                    loop.close()
 
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If we're already in an async context, create a new event loop
-                import concurrent.futures
-
+            # Try to get existing event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're already in an async context, we need to run in a separate thread
                 _progress_logger.log_info("检测到运行中的事件循环，使用线程池执行...")
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, run_deep_research_async())
+
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="deep_research_"
+                ) as executor:
+                    future = executor.submit(
+                        run_with_proper_cleanup, run_deep_research_async()
+                    )
                     result = future.result(timeout=300)  # 5 minute timeout
-            else:
-                _progress_logger.log_info("使用现有事件循环执行...")
-                result = loop.run_until_complete(run_deep_research_async())
-        except RuntimeError:
-            # No event loop, create one
-            _progress_logger.log_info("创建新的事件循环...")
-            result = asyncio.run(run_deep_research_async())
+            except RuntimeError:
+                # No running loop, safe to use our cleanup function
+                _progress_logger.log_info("使用新事件循环执行...")
+                result = run_with_proper_cleanup(run_deep_research_async())
+
+        except concurrent.futures.TimeoutError:
+            elapsed = time.perf_counter() - start_time
+            _progress_logger.log_warning(
+                f"deep_research 子图执行超时 ({elapsed:.1f}秒)，使用降级方案"
+            )
+            result = None
+        except Exception as e:
+            elapsed = time.perf_counter() - start_time
+            _progress_logger.log_error(f"deep_research 子图执行失败: {e}", e)
+            result = None
 
         elapsed = time.perf_counter() - start_time
+
+        # Handle case where deep_research failed or timed out
+        if result is None:
+            _progress_logger.log_warning(
+                "deep_research 未返回结果，使用检索上下文作为研究摘要"
+            )
+            # Fallback: use retrieval context as research summary
+            if state.context:
+                state.research_summary = f"""
+<research_findings>
+    <research_finding>
+        {state.context[:3000]}
+    </research_finding>
+</research_findings>
+"""
+                state.research_confidence = 40.0
+            else:
+                state.research_summary = "深度研究未能完成，请基于原始问题进行分析。"
+                state.research_confidence = 20.0
+            _progress_logger.end_stage(
+                "deep_research", success=True, details="使用降级方案"
+            )
+            return state
+
         _progress_logger.log_info(f"deep_research 子图执行完成，耗时: {elapsed:.2f} 秒")
 
         # Extract results from deep_research subgraph
@@ -1288,6 +1358,46 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
             response.content if hasattr(response, "content") else str(response)
         )
 
+        import json
+
+        def _extract_json_from_llm_response(text: str):
+            """Extract JSON from LLM response with multiple fallback strategies."""
+            text = text.strip()
+
+            # 1. Try direct JSON parse
+            if text.startswith("{"):
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    pass
+
+            # 2. Try markdown code block extraction
+            json_block_match = re.search(
+                r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL
+            )
+            if json_block_match:
+                try:
+                    return json.loads(json_block_match.group(1).strip())
+                except json.JSONDecodeError:
+                    pass
+
+            # 3. Find JSON object with proper brace matching
+            brace_start = text.find("{")
+            if brace_start >= 0:
+                depth = 0
+                for i, char in enumerate(text[brace_start:], brace_start):
+                    if char == "{":
+                        depth += 1
+                    elif char == "}":
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                return json.loads(text[brace_start : i + 1])
+                            except json.JSONDecodeError:
+                                break
+
+            return None
+
         # Use JsonOutputParser to parse response
         try:
             hypothesis_data = output_parser.parse(response_content)
@@ -1295,18 +1405,10 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
                 hypothesis_data = {}
         except Exception as e:
             _progress_logger.log_warning(f"JSON 解析失败，尝试直接解析: {e}")
-            # Try extracting JSON from response
-            import json
-            import re
 
-            # Try extracting JSON code block or direct parsing
-            json_match = re.search(r"\{.*\}", response_content, re.DOTALL)
-            if json_match:
-                try:
-                    hypothesis_data = json.loads(json_match.group())
-                except:
-                    hypothesis_data = {}
-            else:
+            # Try robust JSON extraction
+            hypothesis_data = _extract_json_from_llm_response(response_content)
+            if hypothesis_data is None:
                 hypothesis_data = {}
 
         if hypothesis_data and hypothesis_data.get("statement"):
@@ -1773,6 +1875,16 @@ def immunity_input_mapper(global_state: GlobalState) -> ImmunityState:
     sandbox_data_dir = global_state.sandbox_data_dir or ""
     local_sandbox_dir = global_state.sandbox_dir or ""
 
+    # [DEBUG] 检查 global_state 中的 progress_callback
+    has_progress_callback = (
+        hasattr(global_state, "progress_callback") and global_state.progress_callback
+    )
+    has_session_id = hasattr(global_state, "session_id") and global_state.session_id
+    print(f"[Immunity] immunity_input_mapper 状态检查:")
+    print(f"  - global_state.progress_callback: {has_progress_callback}")
+    print(f"  - global_state.session_id: {has_session_id}")
+    print(f"  - global_state.get_llm 方法存在: {hasattr(global_state, 'get_llm')}")
+
     immunity_state = ImmunityState(
         original_question=global_state.user_input,
         subtasks=global_state.subtasks,
@@ -1788,6 +1900,14 @@ def immunity_input_mapper(global_state: GlobalState) -> ImmunityState:
         skip_immunity_stages=False,
         cache_input_hash="",
     )
+
+    # [DEBUG] 检查 immunity_state 创建后的状态
+    print(f"[Immunity] ImmunityState 创建后:")
+    print(
+        f"  - immunity_state.progress_callback: {immunity_state.progress_callback is not None}"
+    )
+    print(f"  - immunity_state.session_id: {immunity_state.session_id}")
+    print(f"  - immunity_state.parent_state: {immunity_state.parent_state is not None}")
 
     return immunity_state
 

@@ -1,318 +1,18 @@
 [
   {
+    "name": "metabcr",
+    "service": "metabcr",
+    "description": "MetaBCR: A Deep Learning Framework for Antibody-Antigen Interaction Prediction. Predicts binding affinity between antibodies and antigens (flu, SARS, RSV, HIV) using deep learning models. Supports streaming progress updates."
+  },
+  {
     "name": "analyze_vdj_batch",
     "service": "igblast",
-    "description": "V(D)J recombination analysis using IgBLAST + ChangeO. Returns AIRR format results with V/D/J gene assignments, CDR regions, and SHM identification."
+    "description": "V(D)J recombination analysis using IgBLAST + ChangeO. Returns AIRR format results with V/D/J gene assignments, CDR regions, and SHM identification. Automatically splits large files into batches for efficient processing."
   },
   {
     "name": "extract_cdr3_from_airr",
     "service": "igblast",
-    "description": "Extract CDR3 information from AIRR format results. Supports multiple species (human, mouse, rat, rabbit) and provides standardized CDR3 sequences for downstream analysis."
-  },
-  {
-    "name": "extract_seurat_umap_metadata",
-    "service": "flu",
-    "description": "Extract UMAP coordinates and cellular metadata from Seurat RDS files. Returns CSV files with UMAP embeddings, cluster assignments, and cell type annotations."
-  },
-  {
-    "name": "integrate_scbcr_bulk_bcr_data",
-    "service": "flu",
-    "description": "Integrate single-cell BCR and bulk BCR sequencing data. Combines scBCR UMAP annotations with bulk BCR sequences for comprehensive repertoire analysis."
-  },
-  {
-    "name": "integrate_binding_neutralization_experiments",
-    "service": "flu",
-    "description": "Integrate antibody binding and neutralization experimental measurements. Standardizes experimental data and merges with sequence information for ML training."
-  },
-  {
-    "name": "integrate_predictions_with_experimental_data",
-    "service": "flu",
-    "description": "Integrate machine learning prediction results with laboratory measurements. Creates comprehensive feature datasets for model validation and improvement."
-  },
-  {
-    "name": "metabcr",
-    "service": "metabcr",
-    "description": "MetaBCR: A Deep Learning Framework for Antibody-Antigen Interaction Prediction. Predicts binding affinity for flu, SARS, RSV, HIV antigens with streaming progress."
-  },
-  {
-    "name": "bcell_celltype_visualization",
-    "service": "bcell",
-    "description": "Visualize B cell subtypes on UMAP with marker-based annotation. Annotates naive, memory, plasma, and GC B cells using canonical markers.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_marker_dotplot",
-    "service": "bcell",
-    "description": "Generate DotPlot of B cell marker gene expression across subtypes. Supports custom marker gene lists and outputs publication-quality figures.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_binding_visualization",
-    "service": "bcell",
-    "description": "Visualize BCR binding/antigen reactivity predictions on UMAP. Auto-detects binding score columns and generates spatial visualization.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_trajectory_analysis",
-    "service": "bcell",
-    "description": "Perform B cell pseudotime trajectory analysis using Monocle3. Learns differentiation trajectories from naive to plasma cells.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_shm_analysis",
-    "service": "bcell",
-    "description": "Analyze somatic hypermutation (SHM) rates from AIRR data. Calculates SHM rates in V, D, J regions and identifies mutation hotspots.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_isotype_analysis",
-    "service": "bcell",
-    "description": "Analyze BCR isotype (immunoglobulin class) distribution. Extracts c_call column and computes isotype proportions across conditions.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_clonotype_analysis",
-    "service": "bcell",
-    "description": "Analyze BCR clonotype expansion and clonal diversity. Calculates clonotype frequencies and identifies expanded clones.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_vdj_analysis",
-    "service": "bcell",
-    "description": "Analyze V(D)J gene family usage from AIRR data. Extracts V/D/J gene calls and computes usage frequencies and heatmaps.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_diversity_analysis",
-    "service": "bcell",
-    "description": "Calculate BCR repertoire diversity metrics grouped by a specified column. Computes Shannon entropy, Simpson index, and Hill diversity numbers.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_deg_analysis",
-    "service": "bcell",
-    "description": "Perform differential gene expression analysis between two B cell groups. Identifies DEGs with statistical significance and fold-change thresholds.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_gc_analysis",
-    "service": "bcell",
-    "description": "Analyze germinal center (GC) dynamics: Dark Zone vs Light Zone. Computes zone-specific gene expression and pathway enrichment.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_plasma_prediction",
-    "service": "bcell",
-    "description": "Predict plasma cell differentiation potential using gene signatures. Computes differentiation scores and identifies plasma-biased cells.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_maturation_analysis",
-    "service": "bcell",
-    "description": "Analyze affinity maturation by correlating SHM rates with pseudotime. Fits regression models to identify maturation-driven mutations.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "bcell_cytotrace_analysis",
-    "service": "bcell",
-    "description": "Predict B cell differentiation state using CytoTRACE algorithm. CytoTRACE predicts differentiation potential from scRNA-seq data.",
-    "depends_on": ["integrate_bcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "tcell_celltype_visualization",
-    "service": "tcell",
-    "description": "T cell subtype UMAP visualization and distribution analysis. Performs cell type annotation and visualization for CD4, CD8, Treg, and other T cell subsets.",
-    "depends_on": ["integrate_tcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "tcell_marker_dotplot_analysis",
-    "service": "tcell",
-    "description": "T cell marker gene expression dotplot analysis. Creates a dotplot visualization of T cell subtype marker genes.",
-    "depends_on": ["integrate_tcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "tcell_trajectory_analysis",
-    "service": "tcell",
-    "description": "T cell pseudotime trajectory analysis using monocle3. Performs pseudotime trajectory inference for T cell differentiation studies.",
-    "depends_on": ["integrate_tcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "tcr_binding_visualization",
-    "service": "tcell",
-    "description": "TCR binding/reactivity prediction visualization. Visualizes TCR binding predictions on UMAP space for antigen-specific T cell analysis.",
-    "depends_on": ["integrate_tcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "tcr_clonotype_analysis",
-    "service": "tcell",
-    "description": "TCR clonotype expansion analysis. Analyzes TCR clonotype diversity and expansion patterns across samples or conditions.",
-    "depends_on": ["integrate_tcr_data_complete"],
-    "execution_order": "last"
-  },
-  {
-    "name": "integrate_tcr_data_complete",
-    "service": "tcell",
-    "description": "Merge/integrate TCR prediction results (CSV) with RDS data. Combines NetTCR binding predictions, IgBLAST results, or any CSV output with Seurat RDS metadata by barcode matching. Use after any TCR analysis that produces CSV files."
-  },
-  {
-    "name": "immune_celltype_visualization",
-    "service": "immune",
-    "description": "Unified immune cell type UMAP visualization and distribution analysis. Visualizes all immune cell types including T, B, NK, monocytes, and dendritic cells.",
-    "execution_order": "last"
-  },
-  {
-    "name": "immune_marker_dotplot_analysis",
-    "service": "immune",
-    "description": "Immune cell marker gene expression dotplot analysis. Creates a dotplot visualization of immune cell type marker genes.",
-    "execution_order": "last"
-  },
-  {
-    "name": "immune_trajectory_analysis",
-    "service": "immune",
-    "description": "Immune cell pseudotime trajectory analysis using monocle3. Performs pseudotime trajectory inference across immune cell lineages.",
-    "execution_order": "last"
-  },
-  {
-    "name": "immune_deg_analysis",
-    "service": "immune",
-    "description": "Differential expression gene analysis between immune cell types. Performs DEG analysis with statistical testing and volcano plot visualization.",
-    "execution_order": "last"
-  },
-  {
-    "name": "immune_cellchat_analysis",
-    "service": "immune",
-    "description": "Cell-cell communication analysis using CellChat. Analyzes cell-cell communication networks between immune cell types.",
-    "execution_order": "last"
-  },
-  {
-    "name": "immune_isolate_cells",
-    "service": "immune",
-    "description": "Isolate specific cell lineage from mixed population. Subsets a Seurat object to specific cell lineages (T cells, B cells, myeloid) for focused analysis.",
-    "execution_order": "last"
-  },
-  {
-    "name": "immune_comprehensive_analysis",
-    "service": "immune",
-    "description": "Quick comprehensive immune cell analysis pipeline. Runs CellType + DotPlot + DEG analysis in one step for rapid immune profiling.",
-    "execution_order": "last"
-  },
-  {
-    "name": "integrate_bcr_data_complete",
-    "service": "data",
-    "description": "Complete BCR data integration pipeline with UMAP, clustering, and cell type annotation. Integrates AIRR format V(D)J data with Seurat single-cell objects."
-  },
-  {
-    "name": "run_figure2_analysis",
-    "service": "mixtcrpred",
-    "description": "Single-cell RNA-seq differential gene expression analysis and visualization. Generates figure 2 style DEG analysis for immune cell characterization."
-  },
-  {
-    "name": "run_figure3_analysis",
-    "service": "mixtcrpred",
-    "description": "Single-cell antigen binding prediction visualization and UMAP density analysis. Performs binding prediction visualization for paper figure 3."
-  },
-  {
-    "name": "run_figure4_analysis",
-    "service": "mixtcrpred",
-    "description": "Single-cell trajectory analysis and gene module scoring with pseudotime inference. Generates trajectory analysis for paper figure 4."
-  },
-  {
-    "name": "run_figure5_analysis",
-    "service": "mixtcrpred",
-    "description": "B-cell receptor isotype distribution and somatic hypermutation (SHM) rate analysis. Generates isotype/SHM analysis for paper figure 5."
-  },
-  {
-    "name": "predict_and_fix_ribonn_te",
-    "service": "ribonn",
-    "description": "自动修复 mRNA 序列文件中的 CDS 终止密码子缺失问题，并调用 RiboNN 模型预测翻译效率 (TE)。支持 Tab 或空格分隔的输入文件。"
-  },
-  {
-    "name": "sort_ribonn_prediction_results",
-    "service": "ribonn",
-    "description": "对 RiboNN 生成的预测结果文件进行排序。自动识别 mRNA 变体分组（基于 tx_id），并根据指定的翻译效率 (TE) 指标进行降序排列。"
-  },
-  {
-    "name": "generate_cds",
-    "service": "gemorna",
-    "description": "生成单条蛋白质对应的 CDS (编码序列)。使用 GeMoRNA AI 模型进行密码子优化。"
-  },
-  {
-    "name": "generate_5utr",
-    "service": "gemorna",
-    "description": "生成 5'UTR 序列。使用 GeMoRNA de novo 生成高翻译效率的 5' 非翻译区。"
-  },
-  {
-    "name": "generate_3utr",
-    "service": "gemorna",
-    "description": "生成 3'UTR 序列。使用 GeMoRNA 生成高稳定性的 3' 非翻译区。"
-  },
-  {
-    "name": "generate_cds_from_file",
-    "service": "gemorna",
-    "description": "批量生成 CDS 并保存到文件。支持 FASTA/CSV 格式的蛋白质序列输入。"
-  },
-  {
-    "name": "generate_full_mrna",
-    "service": "gemorna",
-    "description": "核心工具：生成完整 mRNA 序列 (5'UTR + CDS + 3'UTR)。一站式生成优化的治疗性 mRNA。"
-  },
-  {
-    "name": "run_spired_fitness",
-    "service": "spired_fitness",
-    "description": "使用 SPIRED-Fitness 进行蛋白质结构适应度评分和稳定性预测。预测突变对蛋白质稳定性的影响。"
-  },
-  {
-    "name": "foldx_saturation_scan",
-    "service": "foldx_saturation_scan",
-    "description": "[FoldX] 饱和突变扫描 / 单点突变。支持 CIF/PDB 输入，自动 RepairPDB，生成 individual_list.txt 并运行 BuildModel。"
-  },
-  {
-    "name": "combine_and_filter",
-    "service": "combine_filter",
-    "description": "整合 FoldX 和 SPIRED-Fitness 结果并筛选最佳突变。智能查找结果文件，支持多指标排序和筛选。"
-  },
-  {
-    "name": "infer_cdr1_cdr2_from_vgene",
-    "service": "reference",
-    "description": "Infer CDR1 and CDR2 sequences from TCR V gene names (TRAV/TRBV) using IMGT germline reference data. Use when you have V gene names but need full CDR1-3 for NetTCR."
-  },
-  {
-    "name": "convert_tcr_to_nettcr_format",
-    "service": "reference",
-    "description": "Batch convert TCR CSV with V gene columns to NetTCR format. Auto-detects column names, infers CDR1/CDR2 from V genes, outputs ready-to-use CSV for predict_tcr_binding_*."
-  },
-  {
-    "name": "optimize_codon_sequences",
-    "service": "codontransformer",
-    "description": "Batch optimize codons for protein sequences, support multiple input formats (CSV, TXT, FASTA), output DNA sequences"
-  },
-  {
-    "name": "optimize_single_sequence",
-    "service": "codontransformer",
-    "description": "Optimize codons for a single protein sequence, support specified species, output DNA sequences"
-  },
-  {
-    "name": "rinalmo_mcp_server",
-    "service": "rinalmo",
-    "description": "RiNALMo RNA language model for ribosome loading rate prediction. Pre-trained on millions of RNA sequences."
+    "description": "Extract CDR3 information from AIRR format results. Supports multiple input formats (array, CSV/TSV/JSON files, URLs) and provides standardized CDR3 sequences for downstream analysis with streaming progress."
   },
   {
     "name": "predict_tcr_binding_fast",
@@ -332,7 +32,7 @@
   {
     "name": "validate_tcr_input",
     "service": "nettcr",
-    "description": "Validate TCR input data format for NetTCR-2.2. Checks native format (peptide/A1-A3/B1-B3) or legacy format (CDR3a/CDR3b + V genes). Validates sequence lengths, amino acid composition, and V gene resolution."
+    "description": "Validate TCR input data format for NetTCR-2.2. Checks native format (peptide/A1-A3/B1-B3) or legacy format (CDR3a/CDR3b + V genes). Validates sequence lengths, amino acid composition, and V gene resolution capability."
   },
   {
     "name": "check_peptide_support",
@@ -342,6 +42,211 @@
   {
     "name": "list_available_peptides",
     "service": "nettcr",
-    "description": "List all 26 peptides with pre-trained NetTCR-2.2 models. Returns peptide sequences, model counts, and negative control statistics. Pre-trained peptides support percentile rank rescaling."
+    "description": "List all 26 peptides with pre-trained NetTCR-2.2 models. Returns peptide sequences with model availability status. Pre-trained peptides support percentile rank rescaling."
+  },
+  {
+    "name": "tcell_celltype_visualization",
+    "service": "tcell",
+    "description": "T cell subtype UMAP visualization and distribution analysis. Performs marker-based T cell subtype classification (CD8+/CD4+ subtypes, MAIT, gdT) and generates UMAP plots with pie/bar charts.",
+    "depends_on": ["integrate_tcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "tcell_marker_dotplot_analysis",
+    "service": "tcell",
+    "description": "T cell marker gene expression dotplot analysis. Creates dotplot visualization of marker genes across T cell subtypes (CD8: Naive/Effector/Memory/Exhausted; CD4: Naive/Th1/Th2/Th17/Treg/Tfh).",
+    "depends_on": ["integrate_tcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "tcell_trajectory_analysis",
+    "service": "tcell",
+    "description": "T cell pseudotime trajectory analysis using monocle3. Performs trajectory inference for T cell differentiation (CD8: Naive->Effector->Memory/Exhausted; CD4: Naive->Th1/Th2/Th17/Treg/Tfh).",
+    "depends_on": ["integrate_tcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "tcr_binding_visualization",
+    "service": "tcell",
+    "description": "TCR binding/reactivity prediction visualization. Visualizes TCR binding predictions on UMAP using Nebulosa density plots. Auto-detects binding columns and provides threshold classification.",
+    "depends_on": ["integrate_tcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "tcr_clonotype_analysis",
+    "service": "tcell",
+    "description": "TCR clonotype expansion analysis. Analyzes TCR clonotype diversity and expansion patterns with top-N frequency charts, expansion categories on UMAP, and Shannon/Simpson diversity metrics.",
+    "depends_on": ["integrate_tcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "integrate_tcr_data_complete",
+    "service": "tcell",
+    "description": "Complete TCR data integration pipeline. Integrates CSV prediction results (NetTCR, IgBLAST) with Seurat RDS objects by barcode matching. Includes UMAP computation and multi-lineage cell type annotation."
+  },
+  {
+    "name": "immune_celltype_visualization",
+    "service": "immune",
+    "description": "Unified immune cell type UMAP visualization and distribution analysis. 2-pass hierarchical annotation: lineage first (T/B/Mono/NK/DC), then subtype within each lineage. Supports ~50 cell subtypes.",
+    "execution_order": "last"
+  },
+  {
+    "name": "immune_marker_dotplot_analysis",
+    "service": "immune",
+    "description": "Immune cell marker gene expression dotplot analysis. Creates dotplot of marker genes across all immune cell types (T, B, myeloid, NK, granulocyte, stromal).",
+    "execution_order": "last"
+  },
+  {
+    "name": "immune_trajectory_analysis",
+    "service": "immune",
+    "description": "Immune cell pseudotime trajectory analysis using monocle3. Auto-subsets to specified lineage (T/B/Mono/NK), recomputes UMAP, and performs trajectory inference with auto-selected root cell type.",
+    "execution_order": "last"
+  },
+  {
+    "name": "immune_deg_analysis",
+    "service": "immune",
+    "description": "Differential expression gene analysis between immune cell types. Uses Seurat FindMarkers/FindAllMarkers with volcano plot generation and FDR-adjusted p-values.",
+    "execution_order": "last"
+  },
+  {
+    "name": "immune_cellchat_analysis",
+    "service": "immune",
+    "description": "Cell-cell communication analysis using CellChat. Analyzes signaling networks between immune cell types. Supports Secreted Signaling, ECM-Receptor, and Cell-Cell Contact databases.",
+    "execution_order": "last"
+  },
+  {
+    "name": "immune_isolate_cells",
+    "service": "immune",
+    "description": "Isolate specific cell lineage from mixed population. Subsets Seurat object to extract specific lineages (T_cell, B_cell, Monocyte, Macrophage, NK, DC, etc.). Auto-annotates if needed.",
+    "execution_order": "last"
+  },
+  {
+    "name": "immune_comprehensive_analysis",
+    "service": "immune",
+    "description": "Quick comprehensive immune cell analysis pipeline. Runs CellType + DotPlot analysis in sequence for complete immune landscape overview.",
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_celltype_visualization",
+    "service": "bcell",
+    "description": "Visualize B cell subtypes on UMAP with marker-based annotation. Annotates B cell subsets (Naive, Activated, PreGC, DZ_GC, LZ_GC, Cycling_GC, Memory, AtypicalMemory, Plasmablast, Plasma) using canonical markers.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_marker_dotplot",
+    "service": "bcell",
+    "description": "Generate DotPlot of B cell marker gene expression across subtypes. Supports marker subsets: all, gc (germinal center), memory, plasma. Shows scaled expression and percent expressed.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_binding_visualization",
+    "service": "bcell",
+    "description": "Visualize BCR binding/antigen reactivity predictions on UMAP. Auto-detects binding columns, calculates average scores, highlights reactive cells. Supports Nebulosa density plots.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_trajectory_analysis",
+    "service": "bcell",
+    "description": "Perform B cell pseudotime trajectory analysis using Monocle3. Learns differentiation trajectory from Naive to Plasma cells with pseudotime ordering.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_shm_analysis",
+    "service": "bcell",
+    "description": "Analyze somatic hypermutation (SHM) rates from AIRR data. Calculates SHM rate from V-region identity, visualizes distribution by B cell subset and gene family.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_isotype_analysis",
+    "service": "bcell",
+    "description": "Analyze BCR isotype (immunoglobulin class) distribution. Extracts c_call from AIRR data, visualizes isotype frequency and distribution by B cell subset.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_clonotype_analysis",
+    "service": "bcell",
+    "description": "Analyze BCR clonotype expansion and clonal diversity. Calculates frequencies, assigns expansion categories (Singleton/Small/Medium/Large/Hyperexpanded), computes Shannon/Simpson diversity.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_vdj_analysis",
+    "service": "bcell",
+    "description": "Analyze V(D)J gene family usage from AIRR data. Extracts V/D/J gene calls, calculates usage frequencies, generates V-J pairing heatmap and V gene by cell type heatmap.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_diversity_analysis",
+    "service": "bcell",
+    "description": "Calculate BCR repertoire diversity metrics grouped by specified column. Computes Shannon entropy, Simpson diversity, Hill numbers (q0/q1/q2), clonality, and rank abundance curves.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_deg_analysis",
+    "service": "bcell",
+    "description": "Perform differential gene expression analysis between two B cell groups. Auto-selects biologically meaningful comparisons. Generates volcano plot with gene labels and top DEG heatmap.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_gc_analysis",
+    "service": "bcell",
+    "description": "Analyze germinal center (GC) dynamics: Dark Zone vs Light Zone. Computes DZ/LZ ratio, performs DZ vs LZ DEG analysis with volcano plot, visualizes GC marker expression.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_plasma_prediction",
+    "service": "bcell",
+    "description": "Predict plasma cell differentiation potential using gene signatures. Combines positive regulators (PRDM1, XBP1, IRF4) and negative regulators (PAX5, BCL6, BACH2) into composite score.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_maturation_analysis",
+    "service": "bcell",
+    "description": "Analyze affinity maturation by correlating SHM rates with pseudotime. Fits polynomial regression, tracks gene program signatures along differentiation trajectory.",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "bcell_cytotrace_analysis",
+    "service": "bcell",
+    "description": "Predict B cell differentiation state using CytoTRACE algorithm. Uses gene counts correlation to estimate stemness. High score = less differentiated (more stem-like).",
+    "depends_on": ["integrate_bcr_data_complete"],
+    "execution_order": "last"
+  },
+  {
+    "name": "metabcr",
+    "service": "metabcrtrain",
+    "description": "MetaBCR inference: Predict antibody-antigen binding affinity using pre-trained deep learning models. Supports flu, SARS, RSV, HIV antigens. Returns prediction scores and classifications."
+  },
+  {
+    "name": "metabcr_train_subprocess",
+    "service": "metabcrtrain",
+    "description": "MetaBCR training (non-blocking): Launch model training as a background process. Returns process ID and log file path. Training output can be monitored externally."
+  },
+  {
+    "name": "metabcr_train",
+    "service": "metabcrtrain",
+    "description": "MetaBCR training (blocking): Run model training with real-time streaming progress. Captures training loss, validation metrics, and fold completion updates."
+  },
+  {
+    "name": "metabcr_train_with_new_data",
+    "service": "metabcrtrain",
+    "description": "MetaBCR fine-tuning with new experimental data. Accepts labeled data, concatenates with base training data, performs k-fold split, and fine-tunes the model. Returns new config_date for immediate inference use."
+  },
+  {
+    "name": "metabcr_check_training_status",
+    "service": "metabcrtrain",
+    "description": "Check the status of a running or completed MetaBCR training task. Returns progress information and training status."
   }
 ]

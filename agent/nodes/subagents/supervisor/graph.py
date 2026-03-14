@@ -1,6 +1,6 @@
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Callable
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from langgraph.graph import StateGraph, START, END
 import shutil
 import sys
@@ -260,6 +260,16 @@ class InputPreprocessResult(BaseModel):
 class SupervisorState(BaseModel):
     """Supervisor Agent subgraph state"""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # SSE progress callback (from parent GlobalState)
+    progress_callback: Optional[Callable] = Field(
+        default=None, description="Progress callback for SSE streaming"
+    )
+    parent_state: Optional[Any] = Field(
+        default=None, description="Parent GlobalState reference"
+    )
+
     user_input: str = Field(description="User's original input")
     user_task_type: Optional[UserTaskType] = Field(
         default=None, description="User task type"
@@ -293,6 +303,29 @@ class SupervisorState(BaseModel):
     sandbox_data_dir: Optional[str] = Field(
         default=None, description="Data directory path in sandbox"
     )
+
+    def get_llm(
+        self, purpose: str = "reasoning", node_name: Optional[str] = None, **kwargs
+    ) -> Optional[Any]:
+        """
+        获取 LLM 实例（推荐方法）
+
+        复用父图的 get_llm 方法，如果父图不可用则使用本地 callback。
+        """
+        if self.parent_state and hasattr(self.parent_state, "get_llm"):
+            return self.parent_state.get_llm(
+                purpose=purpose, node_name=node_name or "supervisor", **kwargs
+            )
+
+        from utils.llm_factory import create_llm_with_thinking
+
+        return create_llm_with_thinking(
+            purpose=purpose,
+            progress_callback=self.progress_callback,
+            session_id=self.session_id,
+            node_name=node_name or "supervisor",
+            **kwargs,
+        )
 
 
 # ---------------------- Input Preprocessing Node ----------------------
@@ -511,7 +544,12 @@ def preprocess_user_input_node(state: SupervisorState) -> SupervisorState:
 
     # 5. Use LLM for file content summarization (if files exist and LLM available)
     if file_analyses and LLM_AVAILABLE:
-        file_analyses = _llm_summarize_files(file_analyses, user_input)
+        file_analyses = _llm_summarize_files(
+            file_analyses,
+            user_input,
+            progress_callback=getattr(state, "progress_callback", None),
+            session_id=getattr(state, "session_id", None),
+        )
 
     # 5.5. CSV → FASTA conversion for igblast (if needed)
     fasta_mappings = {}
@@ -1412,11 +1450,18 @@ def _parse_value(value: str) -> Any:
 
 
 def _llm_summarize_files(
-    file_analyses: List[FileAnalysis], user_input: str
+    file_analyses: List[FileAnalysis],
+    user_input: str,
+    progress_callback: Optional[Callable] = None,
+    session_id: Optional[str] = None,
 ) -> List[FileAnalysis]:
     """Use LLM to summarize file analysis results"""
     try:
-        llm = _get_llm()
+        llm = _get_llm(
+            progress_callback=progress_callback,
+            session_id=session_id,
+            node_name="supervisor_file_summary",
+        )
         if not llm:
             return file_analyses
 
@@ -2510,6 +2555,9 @@ def supervisor_input_mapper(global_state: GlobalState) -> SupervisorState:
                 existing_file_analyses.append(fa)
 
     return SupervisorState(
+        # [HOT] 传递 progress_callback 和 parent_state，确保 SSE 推送正常工作
+        progress_callback=getattr(global_state, "progress_callback", None),
+        parent_state=global_state,
         user_input=global_state.user_input,
         user_task_type=None,  # Will be determined in subgraph
         uploaded_files=uploaded_files,

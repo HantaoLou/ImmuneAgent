@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 from typing import Dict, List, Optional, Any, Callable, TYPE_CHECKING
 from pydantic import BaseModel, Field, ConfigDict
 
-if TYPE_CHECKING:
+# Always import GlobalState for runtime type resolution
+# This is needed because pydantic requires the type to be available for model_rebuild()
+try:
     from agent.state import GlobalState
+except ImportError:
+    GlobalState = None  # type: ignore
 
 
 class GeneralQAState(BaseModel):

@@ -51,7 +51,7 @@ class SSECallbackHandler(BaseCallbackHandler):
 
                 self.progress_callback(
                     event_type="llm_thinking",
-                    message=f"[THINK] 开始思考...",
+                    message=f"[THINK] Starting to think...",
                     details={
                         "phase": "thinking_start",
                         "model": kwargs.get("invocation_params", {}).get(
@@ -127,13 +127,13 @@ class SSECallbackHandler(BaseCallbackHandler):
 
                 self.progress_callback(
                     event_type="llm_thinking",
-                    message=f"[SUCCESS] 思考完成",
+                    message=f"[SUCCESS] Thinking complete",
                     details={
                         "phase": "thinking_complete",
                         "total_tokens": len(self.accumulated_tokens),
                         "elapsed_seconds": round(elapsed, 2),
                         "total_length": len(full_text),
-                        "full_content": full_text,  # 发送完整内容供前端展示
+                        "full_content": full_text,
                     },
                 )
 
@@ -216,6 +216,8 @@ def create_llm_with_sse(
     temperature: float = 0.7,
     progress_callback: Optional[callable] = None,
     streaming: bool = True,
+    enable_thinking_prompt: bool = True,
+    compact_thinking_mode: bool = True,
     **kwargs,
 ):
     """
@@ -226,6 +228,8 @@ def create_llm_with_sse(
         temperature: 温度参数
         progress_callback: SSE 进度回调函数
         streaming: 是否启用流式输出
+        enable_thinking_prompt: 是否启用思考引导 prompt
+        compact_thinking_mode: 是否使用紧凑模式的思考指令
         **kwargs: 其他参数
 
     Returns:
@@ -270,12 +274,14 @@ def create_llm_with_sse(
         os.environ["ZHIPUAI_API_KEY"] = zhipu_api_key
 
     if use_adapter:
-        # ZhipuAIAdapter 直接支持 progress_callback
+        # ZhipuAIAdapter 直接支持 progress_callback 和 thinking prompt
         llm = ChatZhipuAI(
             model=model,
             temperature=temperature,
             streaming=streaming,
             progress_callback=progress_callback,
+            enable_thinking_prompt=enable_thinking_prompt,
+            compact_thinking_mode=compact_thinking_mode,
             **kwargs,
         )
     else:

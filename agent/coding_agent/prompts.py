@@ -4,6 +4,7 @@ OpenCode 执行器提示词模板
 将提示词与业务代码分离，便于维护和调整。
 """
 
+import datetime
 from typing import Optional
 
 
@@ -139,11 +140,70 @@ EOF
 """
 
 
-def get_opencode_prompt(
-    mode: str, tasks_md_path: str, output_dir: str, iteration: Optional[int] = None
-) -> str:
+def get_opencode_runner_prompt(session_id: str, mode: str) -> str:
     """
     获取 OpenCode 执行提示词
+
+    Args:
+        session_id: 会话 ID
+        mode: 执行模式 ("plan" 或 "execute")
+
+    Returns:
+        格式化后的提示词字符串
+    """
+    tasks_md_path = f"/data/sessions/{session_id}/todo-list.md"
+    output_dir = f"/data/sessions/{session_id}/output"
+
+    if mode == "plan":
+        prompt = OPENCODE_PLAN_PROMPT.format(tasks_md_path=tasks_md_path)
+    else:
+        prompt = OPENCODE_EXECUTE_PROMPT.format(
+            tasks_md_path=tasks_md_path,
+            output_dir=output_dir,
+        )
+
+    return f"""#!/bin/bash
+# OpenCode 任务执行脚本
+# 生成时间: {datetime.now().isoformat()}
+
+set -e
+
+if [ -f "/opt/opensandbox/code-interpreter-env.sh" ]; then
+    echo "激活 OpenSandbox 虚拟环境..."
+    source /opt/opensandbox/code-interpreter-env.sh python 3.13 2>/dev/null || true
+fi
+
+cd /data/sessions/{session_id}
+
+# 创建 OpenCode XDG 目录
+mkdir -p /data/sessions/{session_id}/opencode/data
+mkdir -p /data/sessions/{session_id}/opencode/config
+mkdir -p /data/sessions/{session_id}/opencode/state
+mkdir -p /data/sessions/{session_id}/opencode/bin
+
+# 创建输出目录
+mkdir -p /data/sessions/{session_id}/output
+
+echo "=== 开始执行 OpenCode 任务 ==="
+opencode run << 'OPENCODE_PROMPT_EOF'
+{prompt}
+OPENCODE_PROMPT_EOF
+
+OPENCODE_EXIT_CODE=$?
+
+echo ""
+echo "=== OpenCode 任务执行完成 ==="
+"""
+
+
+def get_opencode_prompt(
+    mode: str,
+    tasks_md_path: str,
+    output_dir: str,
+    iteration: int = 0,
+) -> str:
+    """
+    获取 OpenCode 执行提示词（兼容旧接口）
 
     Args:
         mode: 执行模式 ("plan" 或 "execute")
@@ -155,8 +215,10 @@ def get_opencode_prompt(
         格式化后的提示词字符串
     """
     if mode == "plan":
-        return OPENCODE_PLAN_PROMPT.format(tasks_md_path=tasks_md_path)
+        prompt = OPENCODE_PLAN_PROMPT.format(tasks_md_path=tasks_md_path)
     else:
-        return OPENCODE_EXECUTE_PROMPT.format(
+        prompt = OPENCODE_EXECUTE_PROMPT.format(
             tasks_md_path=tasks_md_path, output_dir=output_dir
         )
+
+    return prompt

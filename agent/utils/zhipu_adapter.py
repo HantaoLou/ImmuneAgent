@@ -2,6 +2,11 @@
 ZhipuAI OpenAI 兼容适配器
 
 将 ZhipuAI SDK 的调用方式适配为 OpenAI 兼容的接口，使其可以与 LangChain 无缝集成。
+
+支持 GLM-5/GLM-4.7 原生思考模式（Thinking Mode）:
+- 交错式思考（Interleaved Thinking）：工具调用间继续思考
+- 保留式思考（Preserved Thinking）：多轮对话保留 reasoning_content
+- 流式推送 reasoning_content 到前端 SSE
 """
 
 from typing import (
@@ -30,10 +35,15 @@ from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import os
 import json
 import re
+
+
+class ThinkingMode(str):
+    DISABLED = "disabled"
+    ENABLED = "enabled"
 
 
 class ZhipuAIAdapter(BaseChatModel):
@@ -46,18 +56,21 @@ class ZhipuAIAdapter(BaseChatModel):
     支持超时后自动切换到备用模型（fallback models）。
     """
 
-    model: str = "chatglm3-6b-1001"
+    model: str = "glm-4.5"
     temperature: float = 0.7
     api_key: Optional[str] = None
     zhipu_client: Optional[Any] = None
-    timeout: int = 120  # Default timeout in seconds
-    max_retries: int = 3  # Maximum number of retries for timeout errors
-    retry_delay: float = 2.0  # Delay between retries in seconds
-    fallback_models: Optional[List[str]] = None  # 备用模型列表，超时后依次切换
-    auto_fallback: bool = True  # 是否启用自动备用模型切换
-    progress_callback: Optional[Callable] = None  # 进度回调函数，用于报告思考过程
-    enable_thinking_prompt: bool = True  # 是否自动注入思考引导指令
-    compact_thinking_mode: bool = True  # 是否使用紧凑模式的思考指令
+    openai_client: Optional[Any] = Field(default=None, exclude=True)
+    timeout: int = 120
+    max_retries: int = 3
+    retry_delay: float = 2.0
+    fallback_models: Optional[List[str]] = None
+    auto_fallback: bool = True
+    progress_callback: Optional[Callable] = None
+    enable_thinking_prompt: bool = True
+    compact_thinking_mode: bool = True
+    enable_native_thinking: bool = True
+    clear_thinking: bool = False
 
     # 默认的备用模型映射（主模型 -> 备用模型）
     DEFAULT_FALLBACK_MAP: ClassVar[Dict[str, List[str]]] = {
@@ -69,7 +82,7 @@ class ZhipuAIAdapter(BaseChatModel):
 
     def __init__(
         self,
-        model: str = "chatglm3-6b-1001",
+        model: str = "glm-4.5",
         temperature: float = 0.7,
         api_key: Optional[str] = None,
         timeout: int = 120,
@@ -78,22 +91,25 @@ class ZhipuAIAdapter(BaseChatModel):
         fallback_models: Optional[List[str]] = None,
         auto_fallback: bool = True,
         progress_callback: Optional[Callable] = None,
+        enable_native_thinking: bool = True,
+        clear_thinking: bool = False,
         **kwargs,
     ):
         """
         初始化 ZhipuAI 适配器
 
         Args:
-            model: 模型名称，默认为 "chatglm3-6b-1001"
+            model: 模型名称，默认为 "glm-4.5"
             temperature: 温度参数，默认为 0.7
             api_key: API 密钥，如果不提供则从环境变量 ZHIPU_API_KEY 读取
             timeout: 请求超时时间（秒），默认 120
             max_retries: 超时错误的最大重试次数，默认 3
             retry_delay: 重试之间的延迟时间（秒），默认 2.0
-            fallback_models: 备用模型列表，超时后依次切换。如果为 None 且 auto_fallback=True，
-                           则根据 DEFAULT_FALLBACK_MAP 自动选择备用模型
+            fallback_models: 备用模型列表
             auto_fallback: 是否启用自动备用模型切换，默认 True
-            progress_callback: 进度回调函数，用于报告LLM思考过程
+            progress_callback: 进度回调函数，用于 SSE 推送思考过程
+            enable_native_thinking: 是否启用 GLM 原生思考模式（推荐 True）
+            clear_thinking: 是否清除思考内容（False = 保留式思考，推荐 Agent 场景）
             **kwargs: 其他参数
         """
         super().__init__(**kwargs)
@@ -105,8 +121,9 @@ class ZhipuAIAdapter(BaseChatModel):
         self.retry_delay = retry_delay
         self.auto_fallback = auto_fallback
         self.progress_callback = progress_callback
+        self.enable_native_thinking = enable_native_thinking
+        self.clear_thinking = clear_thinking
 
-        # 设置备用模型列表
         if fallback_models is not None:
             self.fallback_models = fallback_models
         elif auto_fallback and model in self.DEFAULT_FALLBACK_MAP:
@@ -114,16 +131,14 @@ class ZhipuAIAdapter(BaseChatModel):
         else:
             self.fallback_models = []
 
-        # 获取 API Key
         if api_key is None:
-            api_key = os.getenv("ZHIPU_API_KEY")
+            api_key = os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY")
 
         if not api_key:
             raise ValueError("ZHIPU_API_KEY 未设置，请设置环境变量或传入 api_key 参数")
 
         self.api_key = api_key
 
-        # 初始化 ZhipuAI 客户端
         try:
             from zhipuai import ZhipuAI
 
@@ -132,6 +147,20 @@ class ZhipuAIAdapter(BaseChatModel):
             raise ImportError("请安装 zhipuai 库: pip install zhipuai")
         except Exception as e:
             raise RuntimeError(f"初始化 ZhipuAI 客户端失败: {e}")
+
+        try:
+            from openai import OpenAI
+
+            self.openai_client = OpenAI(
+                api_key=self.api_key,
+                base_url="https://open.bigmodel.cn/api/paas/v4/",
+            )
+        except ImportError:
+            print("Warning: openai 库未安装，原生思考模式将不可用: pip install openai")
+            self.openai_client = None
+        except Exception as e:
+            print(f"Warning: 初始化 OpenAI 兼容客户端失败: {e}")
+            self.openai_client = None
 
     @property
     def _llm_type(self) -> str:
@@ -240,6 +269,104 @@ class ZhipuAIAdapter(BaseChatModel):
 
         return False
 
+    def _inject_thinking_prompt(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+        """
+        注入思考引导 prompt，让 LLM 先思考再回答
+
+        Args:
+            messages: 原始消息列表
+
+        Returns:
+            注入了思考引导的消息列表
+        """
+        if not self.enable_thinking_prompt:
+            return messages
+
+        # Thinking guidance instruction
+        if self.compact_thinking_mode:
+            thinking_instruction = """Before answering, please show your thinking process in <thinking> tags.
+
+Format:
+<thinking>
+[Problem Analysis]: ...
+[Key Information]: ...
+[Reasoning Steps]: ...
+</thinking>
+
+[Final Answer]"""
+        else:
+            thinking_instruction = """Before answering, please use <thinking> tags to show your complete thinking process in detail.
+
+Requirements:
+1. Analyze the core points of the problem
+2. List known information and what needs to be inferred
+3. Step-by-step derivation of the solution
+4. Verify if your reasoning is reasonable
+
+Format:
+<thinking>
+Problem Analysis: ...
+Key Information: ...
+Reasoning Process: ...
+Verification Check: ...
+</thinking>
+
+Final Answer: ..."""
+
+        # 创建新的消息列表
+        modified_messages = []
+
+        # 如果第一条是 system message，在其后添加思考指令
+        has_system = False
+        for i, msg in enumerate(messages):
+            if isinstance(msg, SystemMessage):
+                # 修改 system message，添加思考指令
+                enhanced_content = f"{msg.content}\n\n{thinking_instruction}"
+                modified_messages.append(SystemMessage(content=enhanced_content))
+                has_system = True
+            else:
+                modified_messages.append(msg)
+
+        # 如果没有 system message，添加一个
+        if not has_system and messages:
+            modified_messages.insert(0, SystemMessage(content=thinking_instruction))
+
+        return modified_messages
+
+    def _parse_thinking_and_response(self, content: str) -> tuple[str, str]:
+        """
+        从 LLM 响应中分离 thinking 和最终答案
+
+        Args:
+            content: LLM 的完整响应
+
+        Returns:
+            (thinking_content, final_answer)
+        """
+        # 尝试提取 <thinking> 标签内容
+        thinking_match = re.search(
+            r"<thinking>(.*?)</thinking>", content, re.DOTALL | re.IGNORECASE
+        )
+
+        if thinking_match:
+            thinking = thinking_match.group(1).strip()
+            # 移除 thinking 标签后的内容作为最终答案
+            answer = re.sub(
+                r"<thinking>.*?</thinking>",
+                "",
+                content,
+                flags=re.DOTALL | re.IGNORECASE,
+            ).strip()
+            return thinking, answer
+        else:
+            # 如果没有 thinking 标签，尝试用其他方式分离
+            # 例如：第一段是思考，后面是答案
+            parts = content.split("\n\n", 1)
+            if len(parts) > 1 and len(parts[0]) > 50:
+                return parts[0], parts[1]
+            # 否则全部作为答案
+            return "", content
+
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -263,29 +390,43 @@ class ZhipuAIAdapter(BaseChatModel):
         import platform
         import signal
 
-        # [HOT] 报告LLM调用前的思考过程
+        # [HOT] 注入思考引导 prompt（仅在没有 tools 时注入）
+        if self.enable_thinking_prompt and "tools" not in kwargs:
+            messages = self._inject_thinking_prompt(messages)
+
+        # [DEBUG] 检查 progress_callback 状态
+        print(f"[ZhipuAIAdapter._generate] progress_callback 状态:")
+        print(f"  - self.progress_callback is None: {self.progress_callback is None}")
+        print(f"  - self.progress_callback type: {type(self.progress_callback)}")
+
+        # [HOT] 报告开始思考（无论是否有 tools 都要推送）
         if self.progress_callback:
             try:
-                # 提取用户消息
                 user_msg = ""
                 for msg in messages:
                     if isinstance(msg, HumanMessage):
                         user_msg = str(msg.content)[:200]
                         break
 
+                print(
+                    f"[ZhipuAIAdapter._generate] Preparing to call progress_callback..."
+                )
                 self.progress_callback(
                     event_type="llm_thinking",
-                    message=f"[THINK] 开始思考: {user_msg}",
+                    message=f"[THINK] Starting to think: {user_msg}",
                     details={
                         "model": self.model,
-                        "message_count": len(messages),
+                        "phase": "thinking_start",
+                        "user_message": user_msg,
                         "has_tools": "tools" in kwargs,
                     },
                 )
+                print(f"[ZhipuAIAdapter._generate] progress_callback call completed")
             except Exception as e:
-                print(f"[ZhipuAIAdapter] Error reporting pre-LLM thinking: {e}")
-            except Exception as e:
-                print(f"[ZhipuAIAdapter] Error reporting pre-LLM thinking: {e}")
+                print(f"[ZhipuAIAdapter] Error reporting thinking start: {e}")
+                import traceback
+
+                traceback.print_exc()
 
         # 转换消息格式
         try:
@@ -362,11 +503,19 @@ class ZhipuAIAdapter(BaseChatModel):
                         message = choice.message
                         content = message.content or ""
 
-                        # 处理工具调用
+                        reasoning_content = ""
+                        if (
+                            hasattr(message, "reasoning_content")
+                            and message.reasoning_content
+                        ):
+                            reasoning_content = message.reasoning_content
+
                         tool_calls = []
                         additional_kwargs = {}
 
-                        # 检查是否有工具调用
+                        if reasoning_content:
+                            additional_kwargs["reasoning_content"] = reasoning_content
+
                         if hasattr(message, "tool_calls") and message.tool_calls:
                             for tc in message.tool_calls:
                                 tool_calls.append(
@@ -403,7 +552,6 @@ class ZhipuAIAdapter(BaseChatModel):
                                 }
                                 for tc in message.tool_calls
                             ]
-                        # 检查 legacy function_call
                         elif (
                             hasattr(message, "function_call") and message.function_call
                         ):
@@ -416,42 +564,50 @@ class ZhipuAIAdapter(BaseChatModel):
                                 else message.function_call.get("arguments", "{}"),
                             }
 
-                        # 创建 AIMessage
                         ai_message = AIMessage(
                             content=content,
                             tool_calls=tool_calls,
                             additional_kwargs=additional_kwargs,
                         )
 
-                        # 报告LLM响应和工具调用
                         if self.progress_callback:
                             try:
-                                # 如果有工具调用，报告工具调用
-                                if tool_calls:
+                                if reasoning_content:
+                                    self.progress_callback(
+                                        event_type="llm_reasoning",
+                                        message=reasoning_content,
+                                        details={
+                                            "phase": "reasoning_complete",
+                                            "model": current_model,
+                                            "reasoning_length": len(reasoning_content),
+                                            "native_thinking": True,
+                                        },
+                                    )
+
+                                if content and not tool_calls:
+                                    self.progress_callback(
+                                        event_type="llm_response",
+                                        message=content,
+                                        details={
+                                            "phase": "final_answer",
+                                            "model": current_model,
+                                            "response_length": len(content),
+                                        },
+                                    )
+                                elif tool_calls:
                                     for tc in tool_calls:
                                         tool_name = tc.get("name", "unknown")
                                         self.progress_callback(
-                                            event_type="llm_thinking",
-                                            message=f"[Tool Call] Decided to call: {tool_name}",
+                                            event_type="tool_call",
+                                            message=f"Calling tool: {tool_name}",
                                             details={
                                                 "tool_name": tool_name,
                                                 "tool_args": tc.get("args", {}),
                                             },
                                         )
-                                # 否则报告响应内容
-                                elif content:
-                                    content_preview = content[:200]
-                                    self.progress_callback(
-                                        event_type="llm_thinking",
-                                        message=f"[LLM Response] {content_preview}",
-                                        details={
-                                            "response_length": len(content),
-                                            "model": current_model,
-                                        },
-                                    )
                             except Exception as e:
                                 print(
-                                    f"[ZhipuAIAdapter] Error reporting post-LLM thinking: {e}"
+                                    f"[ZhipuAIAdapter] Error in progress callback: {e}"
                                 )
 
                     elif hasattr(response, "data") and hasattr(
@@ -554,16 +710,14 @@ class ZhipuAIAdapter(BaseChatModel):
             return
 
         try:
-            # 只报告有意义的内容片段
-            if len(content.strip()) > 20:
-                self.progress_callback(
-                    event_type="llm_streaming",
-                    message=f"[THOUGHT] {content[:150]}",
-                    details={
-                        "phase": phase,
-                        "accumulated_length": accumulated_length,
-                    },
-                )
+            self.progress_callback(
+                event_type="llm_thinking",
+                message=f"[THOUGHT] {content[:150]}",
+                details={
+                    "phase": phase,
+                    "accumulated_length": accumulated_length,
+                },
+            )
         except Exception as e:
             print(f"[ZhipuAIAdapter] Error reporting thinking chunk: {e}")
 
@@ -572,88 +726,6 @@ class ZhipuAIAdapter(BaseChatModel):
         messages: List[BaseMessage],
         **kwargs: Any,
     ) -> AIMessage:
-        """
-        带有流式思维链报告的 invoke 方法
-
-        这个方法在调用 LLM 时会实时报告思维过程，即使是底层使用非流式 API。
-        它会将完整的响应分成多个思维片段进行报告，让前端能够展示思维链。
-
-        Args:
-            messages: 消息列表
-            **kwargs: 其他参数
-
-        Returns:
-            AIMessage 对象
-        """
-        import time
-
-        # 报告准备开始思考
-        if self.progress_callback:
-            try:
-                user_msg = ""
-                for msg in messages:
-                    if isinstance(msg, HumanMessage):
-                        user_msg = str(msg.content)[:200]
-                        break
-
-                self.progress_callback(
-                    event_type="llm_thinking",
-                    message=f"[THINK] 开始思考: {user_msg[:100]}",
-                    details={
-                        "model": self.model,
-                        "phase": "thinking_start",
-                        "message_count": len(messages),
-                    },
-                )
-            except Exception as e:
-                print(f"[ZhipuAIAdapter] Error reporting thinking start: {e}")
-
-        # 调用底层的 generate 方法
-        start_time = time.time()
-        result = self._generate(messages, **kwargs)
-
-        # 提取响应内容
-        if result.generations:
-            ai_message = result.generations[0].message
-            content = ai_message.content if hasattr(ai_message, "content") else ""
-
-            # 如果有内容，模拟流式报告思维过程
-            if content and self.progress_callback:
-                try:
-                    # 将内容分成思维片段（按句子或段落）
-                    thinking_chunks = self._split_into_thinking_chunks(content)
-
-                    for i, chunk in enumerate(thinking_chunks):
-                        elapsed = time.time() - start_time
-                        self.progress_callback(
-                            event_type="llm_streaming",
-                            message=f"[THOUGHT] {chunk}",
-                            details={
-                                "phase": "thinking_progress",
-                                "chunk_number": i + 1,
-                                "total_chunks": len(thinking_chunks),
-                                "elapsed_seconds": round(elapsed, 2),
-                            },
-                        )
-                        time.sleep(0.05)  # 模拟流式输出的延迟
-
-                    # 报告思考完成
-                    self.progress_callback(
-                        event_type="llm_thinking",
-                        message=f"[SUCCESS] 思考完成 (共 {len(thinking_chunks)} 个思维片段)",
-                        details={
-                            "phase": "thinking_complete",
-                            "total_length": len(content),
-                            "total_chunks": len(thinking_chunks),
-                            "total_time": round(time.time() - start_time, 2),
-                        },
-                    )
-                except Exception as e:
-                    print(f"[ZhipuAIAdapter] Error reporting thinking process: {e}")
-
-            return ai_message
-
-        # 如果没有生成结果，返回空消息
         return AIMessage(content="")
 
     def _split_into_thinking_chunks(self, content: str) -> List[str]:
@@ -700,20 +772,239 @@ class ZhipuAIAdapter(BaseChatModel):
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
         """
-        流式生成回复（支持实时思考链报告）
+        流式生成回复（支持 GLM 原生思考模式的 SSE 推送）
+
+        使用 OpenAI 兼容 API 调用 GLM-5/GLM-4.7，通过 extra_body 启用思考模式，
+        流式推送 reasoning_content 和 content 到前端。
 
         Args:
             messages: 消息列表
             stop: 停止词列表
             run_manager: 回调管理器
-            **kwargs: 其他参数
+            **kwargs: 其他参数（包括 tools, tool_choice 等）
 
         Yields:
             ChatGenerationChunk 对象
         """
-        import time
+        if self.openai_client and self.enable_native_thinking:
+            yield from self._stream_with_native_thinking(
+                messages, stop, run_manager, **kwargs
+            )
+        else:
+            yield from self._stream_legacy(messages, stop, run_manager, **kwargs)
 
-        # 报告准备调用 LLM
+    def _stream_with_native_thinking(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        """
+        使用 GLM 原生思考模式的流式生成
+
+        通过 OpenAI 兼容 API 调用，启用 thinking 模式，
+        流式推送 reasoning_content 到前端 SSE。
+        """
+        openai_messages = self._convert_messages_to_openai_format(messages)
+
+        if self.progress_callback:
+            try:
+                user_msg = ""
+                for msg in messages:
+                    if isinstance(msg, HumanMessage):
+                        user_msg = str(msg.content)[:200]
+                        break
+
+                self.progress_callback(
+                    event_type="llm_thinking_start",
+                    message="Starting deep thinking...",
+                    details={
+                        "model": self.model,
+                        "phase": "thinking_start",
+                        "native_thinking": True,
+                        "user_message": user_msg[:100],
+                    },
+                )
+            except Exception as e:
+                print(f"[ZhipuAIAdapter] Error reporting thinking start: {e}")
+
+        extra_body = {
+            "thinking": {
+                "type": "enabled" if self.enable_native_thinking else "disabled",
+                "clear_thinking": self.clear_thinking,
+            }
+        }
+
+        request_params = {
+            "model": self.model,
+            "messages": openai_messages,
+            "temperature": self.temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+
+        if stop:
+            request_params["stop"] = stop
+
+        if "tools" in kwargs:
+            request_params["tools"] = kwargs["tools"]
+        if "tool_choice" in kwargs:
+            request_params["tool_choice"] = kwargs["tool_choice"]
+
+        accumulated_reasoning = ""
+        accumulated_content = ""
+        tool_calls_chunks: Dict[int, Dict] = {}
+        chunk_count = 0
+        reasoning_chunk_count = 0
+
+        try:
+            response = self.openai_client.chat.completions.create(
+                **request_params,
+                extra_body=extra_body,
+            )
+
+            for chunk in response:
+                if not hasattr(chunk, "choices") or not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+                chunk_count += 1
+
+                if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                    reasoning_chunk = delta.reasoning_content
+                    accumulated_reasoning += reasoning_chunk
+                    reasoning_chunk_count += 1
+
+                    if self.progress_callback:
+                        try:
+                            self.progress_callback(
+                                event_type="llm_reasoning",
+                                message=reasoning_chunk,
+                                details={
+                                    "phase": "reasoning_stream",
+                                    "model": self.model,
+                                    "chunk_count": reasoning_chunk_count,
+                                    "total_reasoning_length": len(
+                                        accumulated_reasoning
+                                    ),
+                                    "native_thinking": True,
+                                },
+                            )
+                        except Exception as e:
+                            print(f"[ZhipuAIAdapter] Error pushing reasoning: {e}")
+
+                if hasattr(delta, "content") and delta.content:
+                    content_chunk = delta.content
+                    accumulated_content += content_chunk
+
+                    yield ChatGenerationChunk(
+                        message=AIMessageChunk(content=content_chunk),
+                        generation_info={"chunk": True, "phase": "content"},
+                    )
+
+                if hasattr(delta, "tool_calls") and delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_calls_chunks:
+                            tool_calls_chunks[idx] = {
+                                "id": "",
+                                "name": "",
+                                "arguments": "",
+                            }
+
+                        if tc.id:
+                            tool_calls_chunks[idx]["id"] = tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                tool_calls_chunks[idx]["name"] = tc.function.name
+                            if tc.function.arguments:
+                                tool_calls_chunks[idx]["arguments"] += (
+                                    tc.function.arguments
+                                )
+
+            if self.progress_callback:
+                try:
+                    if accumulated_reasoning:
+                        self.progress_callback(
+                            event_type="llm_reasoning_complete",
+                            message=accumulated_reasoning[:500] + "..."
+                            if len(accumulated_reasoning) > 500
+                            else accumulated_reasoning,
+                            details={
+                                "phase": "reasoning_complete",
+                                "model": self.model,
+                                "total_reasoning_length": len(accumulated_reasoning),
+                                "reasoning_chunks": reasoning_chunk_count,
+                            },
+                        )
+
+                    if accumulated_content:
+                        self.progress_callback(
+                            event_type="llm_response",
+                            message=accumulated_content[:500] + "..."
+                            if len(accumulated_content) > 500
+                            else accumulated_content,
+                            details={
+                                "phase": "response_complete",
+                                "model": self.model,
+                                "total_content_length": len(accumulated_content),
+                            },
+                        )
+                except Exception as e:
+                    print(f"[ZhipuAIAdapter] Error reporting completion: {e}")
+
+        except Exception as e:
+            print(f"[ZhipuAIAdapter] Native thinking stream error: {e}")
+            yield from self._stream_legacy(messages, stop, run_manager, **kwargs)
+            return
+
+        if tool_calls_chunks:
+            tool_calls = []
+            for idx in sorted(tool_calls_chunks.keys()):
+                tc_data = tool_calls_chunks[idx]
+                tool_calls.append(
+                    {
+                        "id": tc_data["id"] or f"call_{idx}",
+                        "type": "function",
+                        "function": {
+                            "name": tc_data["name"],
+                            "arguments": tc_data["arguments"],
+                        },
+                    }
+                )
+
+            final_message = AIMessageChunk(
+                content=accumulated_content,
+                additional_kwargs={
+                    "tool_calls": tool_calls,
+                    "reasoning_content": accumulated_reasoning,
+                },
+            )
+            yield ChatGenerationChunk(
+                message=final_message,
+                generation_info={"chunk": False, "has_tool_calls": True},
+            )
+        elif accumulated_content or accumulated_reasoning:
+            final_message = AIMessageChunk(
+                content=accumulated_content,
+                additional_kwargs={"reasoning_content": accumulated_reasoning},
+            )
+            yield ChatGenerationChunk(
+                message=final_message,
+                generation_info={"chunk": False, "final": True},
+            )
+
+    def _stream_legacy(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        """
+        旧版流式生成（兼容模式，不使用原生思考）
+        """
         if self.progress_callback:
             try:
                 user_msg = ""
@@ -724,25 +1015,24 @@ class ZhipuAIAdapter(BaseChatModel):
 
                 self.progress_callback(
                     event_type="llm_thinking",
-                    message=f"[THINK] 开始思考...",
+                    message="Starting to think...",
                     details={
                         "model": self.model,
                         "phase": "streaming_start",
+                        "native_thinking": False,
                         "user_message": user_msg[:100],
                     },
                 )
             except Exception as e:
                 print(f"[ZhipuAIAdapter] Error reporting streaming start: {e}")
 
-        # 转换消息格式
         zhipu_messages = self._convert_messages_to_zhipu_format(messages)
 
-        # 准备请求参数
         request_params = {
             "model": self.model,
             "messages": zhipu_messages,
             "temperature": self.temperature,
-            "stream": True,  # 启用流式输出
+            "stream": True,
         }
 
         if stop:
@@ -754,10 +1044,8 @@ class ZhipuAIAdapter(BaseChatModel):
         chunk_count = 0
 
         try:
-            # 调用 ZhipuAI SDK（流式）
             response = self.zhipu_client.chat.completions.create(**request_params)
 
-            # 处理流式响应
             if hasattr(response, "__iter__"):
                 for chunk in response:
                     if hasattr(chunk, "choices") and len(chunk.choices) > 0:
@@ -767,22 +1055,21 @@ class ZhipuAIAdapter(BaseChatModel):
                             accumulated_content += chunk_content
                             chunk_count += 1
 
-                            # 每 5 个 chunk 或每 50 字符报告一次思维过程
                             if (
                                 self.progress_callback
                                 and chunk_count % 5 == 0
                                 and len(accumulated_content) % 50 < 10
                             ):
                                 try:
-                                    # 截取最近的思维片段
                                     recent_thinking = accumulated_content[-100:]
                                     self.progress_callback(
                                         event_type="llm_streaming",
-                                        message=f"[THOUGHT] {recent_thinking}",
+                                        message=recent_thinking,
                                         details={
                                             "chunk_count": chunk_count,
                                             "total_length": len(accumulated_content),
                                             "phase": "streaming_progress",
+                                            "native_thinking": False,
                                         },
                                     )
                                 except Exception as e:
@@ -795,12 +1082,11 @@ class ZhipuAIAdapter(BaseChatModel):
                                 generation_info={"chunk": True},
                             )
 
-                # 报告流式输出完成
                 if self.progress_callback and accumulated_content:
                     try:
                         self.progress_callback(
-                            event_type="llm_thinking",
-                            message=f"[SUCCESS] 思考完成: {accumulated_content[:200]}...",
+                            event_type="llm_thinking_complete",
+                            message=accumulated_content[:200] + "...",
                             details={
                                 "total_length": len(accumulated_content),
                                 "chunk_count": chunk_count,
@@ -812,12 +1098,9 @@ class ZhipuAIAdapter(BaseChatModel):
                             f"[ZhipuAIAdapter] Error reporting streaming complete: {e}"
                         )
             else:
-                # 如果不是流式响应，回退到普通生成
                 result = self._generate(messages, stop, run_manager, **kwargs)
-                # 将 ChatGeneration 转换为 ChatGenerationChunk
                 if result.generations:
                     gen = result.generations[0]
-                    # 将 AIMessage 转换为 AIMessageChunk
                     msg = gen.message
                     if isinstance(msg, AIMessage):
                         chunk_msg = AIMessageChunk(
@@ -834,6 +1117,61 @@ class ZhipuAIAdapter(BaseChatModel):
 
         except Exception as e:
             raise RuntimeError(f"ZhipuAI 流式调用失败: {e}")
+
+    def _convert_messages_to_openai_format(
+        self, messages: List[BaseMessage]
+    ) -> List[Dict[str, Any]]:
+        """
+        将 LangChain 消息转换为 OpenAI 格式（支持 reasoning_content）
+
+        关键：保留 AIMessage 中的 reasoning_content 以支持保留式思考
+        """
+        openai_messages = []
+
+        for message in messages:
+            msg_dict: Dict[str, Any] = {"role": "user", "content": ""}
+
+            if isinstance(message, SystemMessage):
+                msg_dict["role"] = "system"
+                msg_dict["content"] = str(message.content) if message.content else ""
+            elif isinstance(message, HumanMessage):
+                msg_dict["role"] = "user"
+                msg_dict["content"] = str(message.content) if message.content else ""
+            elif isinstance(message, AIMessage):
+                msg_dict["role"] = "assistant"
+                msg_dict["content"] = str(message.content) if message.content else ""
+
+                if hasattr(message, "additional_kwargs"):
+                    reasoning = message.additional_kwargs.get("reasoning_content", "")
+                    if reasoning:
+                        msg_dict["reasoning_content"] = reasoning
+
+                    if "tool_calls" in message.additional_kwargs:
+                        msg_dict["tool_calls"] = message.additional_kwargs["tool_calls"]
+
+                if hasattr(message, "tool_calls") and message.tool_calls:
+                    if "tool_calls" not in msg_dict:
+                        msg_dict["tool_calls"] = []
+                    for tc in message.tool_calls:
+                        msg_dict["tool_calls"].append(
+                            {
+                                "id": tc.get("id", ""),
+                                "type": "function",
+                                "function": {
+                                    "name": tc.get("name", ""),
+                                    "arguments": json.dumps(
+                                        tc.get("args", {}), ensure_ascii=False
+                                    ),
+                                },
+                            }
+                        )
+            else:
+                msg_dict["content"] = str(getattr(message, "content", message))
+
+            if msg_dict.get("content") or msg_dict.get("tool_calls"):
+                openai_messages.append(msg_dict)
+
+        return openai_messages
 
     def with_structured_output(
         self, schema: Union[Type[BaseModel], Dict[str, Any], Type], **kwargs: Any

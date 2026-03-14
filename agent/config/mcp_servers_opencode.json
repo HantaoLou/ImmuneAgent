@@ -13,6 +13,13 @@
         "oauth": false,
         "timeout": 36000000
     },
+    "metabcrtrain": {
+        "type": "remote",
+        "url": "http://mcp.metabcrtrain.immuneagent.cn:50001/sse",
+        "enabled": true,
+        "oauth": false,
+        "timeout": 36000000
+    },
     "bcell": {
         "type": "remote",
         "url": "http://mcp.bcell.immuneagent.cn:50001/sse",

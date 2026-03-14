@@ -1,0 +1,15 @@
+# Agent Chat robots.txt
+# https://agent-chat.example.com/robots.txt
+
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://agent-chat.example.com/sitemap.xml
+
+# Crawl-delay
+Crawl-delay: 1
+
+# Disallow admin or private pages (if any)
+# Disallow: /admin/
+# Disallow: /api/

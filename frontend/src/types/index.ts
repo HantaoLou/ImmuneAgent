@@ -1,0 +1,62 @@
+export interface FileAttachment {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  url: string;
+  sessionId: string;
+  uploadTime: number;
+  category: 'image' | 'document' | 'code' | 'data' | 'other';
+  uploadProgress?: number;
+}
+
+export interface LogEntry {
+  id: string;
+  event_type: string;
+  message: string;
+  timestamp: string;
+  node_name?: string;
+  details?: Record<string, any>;
+}
+
+export interface Message {
+  id: string;
+  role: 'user' | 'agent';
+  content: string;
+  timestamp: number;
+  status: 'success' | 'loading' | 'error';
+  attachments?: FileAttachment[];
+  executionLogs?: LogEntry[];
+}
+
+export interface Session {
+  id: string;
+  title: string;
+  messages: Message[];
+  createTime: number;
+  updateTime: number;
+}
+
+export interface SessionFiles {
+  sessionId: string;
+  files: FileAttachment[];
+  totalSize: number;
+}
+
+export interface ChatRequest {
+  sessionId: string;
+  messages: Pick<Message, 'role' | 'content'>[];
+  attachments?: FileAttachment[];
+}
+
+export interface ChatResponse {
+  content: string;
+  sessionId: string;
+}
+
+export type FileCategory = 'image' | 'document' | 'code' | 'data' | 'other';
+
+export interface FileFilter {
+  category?: FileCategory;
+  searchQuery?: string;
+}

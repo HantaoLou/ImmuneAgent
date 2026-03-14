@@ -2,6 +2,7 @@ import json
 import os
 import asyncio
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
@@ -25,11 +26,18 @@ from progress_tracker import (
     create_progress_tracker,
     get_progress_tracker,
     remove_progress_tracker,
+    ProgressEventType,
+    ProgressEvent,
 )
 from session_storage import get_session_storage
 
 _session_metadata_cache = {}
-_current_opensandbox_id = None  # 全局存储当前活跃的沙盒 ID
+_current_opensandbox_id = None
+
+
+def generate_session_id() -> str:
+    """生成唯一的会话 ID"""
+    return str(uuid.uuid4())
 
 
 def save_session_metadata(session_id: str, metadata: dict):
@@ -245,6 +253,115 @@ async def chat(request: ChatRequest):
             # 清理进度跟踪器
             if session_id and tracker:
                 remove_progress_tracker(session_id)
+
+    return EventSourceResponse(event_generator())
+
+
+@app.post("/api/chat/submit")
+async def chat_submit(request: ChatRequest):
+    """Submit a chat task and return session_id for SSE streaming"""
+    session_id = request.session_id or generate_session_id()
+    tracker = create_progress_tracker(session_id)
+
+    async def run_agent_background():
+        try:
+            progress_callback = tracker.create_callback()
+            state = create_global_state(request.message, session_id, progress_callback)
+            result = await asyncio.to_thread(invoke_agent_sync, state)
+
+            response = format_agent_response(result)
+
+            if response.get("session_id"):
+                merged_result = response.get("result", {}).get("merged_result", {})
+                session_metadata = {
+                    "opensandbox_id": merged_result.get("opensandbox_id"),
+                    "sandbox_data_dir": merged_result.get("sandbox_data_dir"),
+                    "sandbox_output_dir": merged_result.get("sandbox_output_dir"),
+                    "session_id": response.get("session_id"),
+                }
+                save_session_metadata(response["session_id"], session_metadata)
+
+                global _current_opensandbox_id
+                if merged_result.get("opensandbox_id"):
+                    _current_opensandbox_id = merged_result.get("opensandbox_id")
+
+            await tracker.emit(
+                ProgressEvent(
+                    event_type=ProgressEventType.TASK_COMPLETE,
+                    message="Task completed",
+                    details={"result": response},
+                )
+            )
+        except Exception as e:
+            await tracker.emit(
+                ProgressEvent(
+                    event_type=ProgressEventType.ERROR,
+                    message=str(e),
+                    details={"error": str(e), "error_type": type(e).__name__},
+                )
+            )
+
+    asyncio.create_task(run_agent_background())
+
+    return {"session_id": session_id, "status": "started"}
+
+
+@app.get("/api/chat/stream/{session_id}")
+async def chat_stream(session_id: str):
+    """SSE stream endpoint for real-time execution logs"""
+
+    async def event_generator():
+        tracker = get_progress_tracker(session_id)
+
+        if not tracker:
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": f"Session {session_id} not found"}),
+            }
+            return
+
+        heartbeat_counter = 0
+        max_heartbeat_interval = 30
+
+        try:
+            while True:
+                progress_event = await tracker.get_event(timeout=1.0)
+
+                if progress_event:
+                    heartbeat_counter = 0
+
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps(progress_event.model_dump()),
+                    }
+
+                    if progress_event.event_type == ProgressEventType.TASK_COMPLETE:
+                        break
+
+                else:
+                    heartbeat_counter += 1
+
+                    if heartbeat_counter >= max_heartbeat_interval:
+                        yield {
+                            "event": "heartbeat",
+                            "data": json.dumps(
+                                {"timestamp": asyncio.get_event_loop().time()}
+                            ),
+                        }
+                        heartbeat_counter = 0
+
+                    if not tracker._active:
+                        break
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e), "error_type": type(e).__name__}),
+            }
+        finally:
+            remove_progress_tracker(session_id)
 
     return EventSourceResponse(event_generator())
 

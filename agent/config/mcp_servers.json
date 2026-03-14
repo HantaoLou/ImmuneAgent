@@ -117,5 +117,12 @@
         "timeout": 36000,
         "sse_read_timeout": 36000,
         "session_kwargs": {}
+    },
+    "metabcrtrain": {
+        "transport": "sse",
+        "url": "http://117.10.59.114:40001/mcp/8119/sse",
+        "timeout": 36000,
+        "sse_read_timeout": 36000,
+        "session_kwargs": {}
     }
 }

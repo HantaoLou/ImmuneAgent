@@ -69,12 +69,11 @@ def create_global_state(
     from agent.state import GlobalState, UserTaskType
 
     # 创建沙盒目录路径
-    sandbox_dir = os.path.join(PROJECT_ROOT, "sandbox", "sessions", session_id)
+    sandbox_dir = f"/data/sessions/{session_id}"
 
     state = GlobalState(
         session_id=session_id,
         user_input=message,
-        user_query=message,
         sandbox_dir=sandbox_dir,
         user_task_type=UserTaskType.GENERAL_QA,
     )
@@ -96,7 +95,6 @@ def invoke_agent_sync(state: Any) -> Any:
     from agent.utils.console_output_redirector import (
         ConsoleOutputRedirector,
         set_global_redirector,
-        set_thread_redirector,
     )
 
     async def run_agent():
@@ -104,14 +102,6 @@ def invoke_agent_sync(state: Any) -> Any:
         result = await graph.ainvoke(state)
         return result
 
-    def run_agent_with_redirector():
-        """在新线程中运行agent，并确保redirector正确设置"""
-        # 在新线程中设置redirector
-        if redirector:
-            set_thread_redirector(redirector)
-        return asyncio.run(run_agent())
-
-    # 启动控制台输出重定向器
     redirector = None
     progress_callback = getattr(state, "progress_callback", None)
 
@@ -129,18 +119,27 @@ def invoke_agent_sync(state: Any) -> Any:
             print(f"[agent_service] Failed to start console capture: {e}")
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                # 使用 run_agent_with_redirector 确保在新线程中正确设置 redirector
-                future = pool.submit(run_agent_with_redirector)
-                return future.result()
-        else:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
             return loop.run_until_complete(run_agent())
-    except RuntimeError:
-        return asyncio.run(run_agent())
+        finally:
+            try:
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+            except Exception:
+                pass
+            finally:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
+    except Exception as e:
+        print(f"[agent_service] Error running agent: {e}")
+        raise
     finally:
         # 停止控制台输出重定向
         if redirector:

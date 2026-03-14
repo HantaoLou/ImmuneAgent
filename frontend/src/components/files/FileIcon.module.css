@@ -1,0 +1,28 @@
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 10px currentColor);
+  animation: float 3s ease-in-out infinite;
+}
+
+.small {
+  font-size: 1.5rem;
+}
+
+.medium {
+  font-size: 2rem;
+}
+
+.large {
+  font-size: 3rem;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}

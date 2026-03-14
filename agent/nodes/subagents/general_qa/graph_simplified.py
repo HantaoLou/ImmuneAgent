@@ -25,6 +25,23 @@ import time
 # Import state
 from .state import GeneralQAState
 
+# Import GlobalState to make it available for type resolution
+# This is needed because GeneralQAState has Optional["GlobalState"] type hint
+# and langgraph's StateGraph uses get_type_hints() which requires the type to be resolvable
+try:
+    from agent.state import GlobalState
+
+    # Make GlobalState available in the state module's namespace for type resolution
+    import sys
+
+    state_module = sys.modules.get("agent.nodes.subagents.general_qa.state")
+    if state_module and not hasattr(state_module, "GlobalState"):
+        state_module.GlobalState = GlobalState
+    # Rebuild the model to resolve forward references
+    GeneralQAState.model_rebuild()
+except ImportError:
+    pass
+
 # Import X-Masters
 try:
     from agent.nodes.subagents.x_masters.graph import (

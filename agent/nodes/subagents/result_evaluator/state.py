@@ -10,24 +10,28 @@ Result Evaluator Subgraph State Definition
 4. 生成类似学术论文格式的分析报告
 """
 
-from typing import Dict, List, Any, Optional
-from pydantic import BaseModel, Field
+from typing import Dict, List, Any, Optional, Callable
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class TaskResultSummary(BaseModel):
     """单个任务的执行结果摘要"""
+
     task_id: str = Field(description="任务ID")
     task_type: str = Field(default="", description="任务类型")
     status: str = Field(default="", description="任务状态")
     content: str = Field(default="", description="任务内容")
     error: Optional[str] = Field(default=None, description="错误信息")
     output: Optional[Any] = Field(default=None, description="输出结果")
-    output_files: List[str] = Field(default_factory=list, description="输出文件路径列表")
+    output_files: List[str] = Field(
+        default_factory=list, description="输出文件路径列表"
+    )
     execution_time: Optional[float] = Field(default=None, description="执行时间(秒)")
 
 
 class DeepResearchInfo(BaseModel):
     """深度研究信息"""
+
     research_summary: str = Field(default="", description="研究摘要")
     key_insights: List[str] = Field(default_factory=list, description="关键洞察")
     evidence: List[str] = Field(default_factory=list, description="证据")
@@ -37,25 +41,39 @@ class DeepResearchInfo(BaseModel):
 
 class HypothesisInfo(BaseModel):
     """假设信息"""
+
     hypothesis_summary: str = Field(default="", description="假设摘要")
-    testable_predictions: List[str] = Field(default_factory=list, description="可验证的预测")
+    testable_predictions: List[str] = Field(
+        default_factory=list, description="可验证的预测"
+    )
     confidence: float = Field(default=0.0, description="假设置信度")
 
 
 class TaskListDerivation(BaseModel):
     """任务列表推导依据"""
+
     decomposition_summary: str = Field(default="", description="任务分解摘要")
-    required_services: List[str] = Field(default_factory=list, description="所需服务列表")
+    required_services: List[str] = Field(
+        default_factory=list, description="所需服务列表"
+    )
     dependency_rationale: str = Field(default="", description="依赖关系依据")
-    parallel_groups: Dict[str, Any] = Field(default_factory=dict, description="并行组信息")
+    parallel_groups: Dict[str, Any] = Field(
+        default_factory=dict, description="并行组信息"
+    )
 
 
 class ToolOutputSummary(BaseModel):
     """工具输出摘要"""
+
     file_path: str = Field(default="", description="文件路径")
     file_type: str = Field(default="", description="文件类型")
     content_preview: str = Field(default="", description="内容预览")
     key_results: List[str] = Field(default_factory=list, description="关键结果")
+    content_summary: str = Field(default="", description="LLM总结的内容摘要")
+    file_size: int = Field(default=0, description="文件大小(字节)")
+    row_count: Optional[int] = Field(default=None, description="CSV/表格文件的行数")
+    columns: List[str] = Field(default_factory=list, description="CSV文件的列名")
+    statistics: Dict[str, Any] = Field(default_factory=dict, description="文件统计信息")
 
 
 class ResultEvaluatorState(BaseModel):
@@ -75,6 +93,15 @@ class ResultEvaluatorState(BaseModel):
     - 整合工具输出分析
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # ========== SSE progress callback ==========
+    progress_callback: Optional[Callable] = Field(
+        default=None, description="Progress callback for SSE streaming"
+    )
+    session_id: Optional[str] = Field(default=None, description="会话ID")
+    parent_state: Optional[Any] = Field(default=None, description="父状态引用")
+
     # ========== 输入 ==========
     # 用户原始输入
     user_input: str = Field(default="", description="用户原始输入")
@@ -85,45 +112,38 @@ class ResultEvaluatorState(BaseModel):
     # ========== 增强输入：分析流程信息 ==========
     # 深度研究信息
     deep_research: DeepResearchInfo = Field(
-        default_factory=DeepResearchInfo,
-        description="深度研究结果"
+        default_factory=DeepResearchInfo, description="深度研究结果"
     )
 
     # 假设信息
     hypothesis: HypothesisInfo = Field(
-        default_factory=HypothesisInfo,
-        description="生成的假设"
+        default_factory=HypothesisInfo, description="生成的假设"
     )
 
     # 任务列表推导依据
     task_list_derivation: TaskListDerivation = Field(
-        default_factory=TaskListDerivation,
-        description="任务列表的推导依据"
+        default_factory=TaskListDerivation, description="任务列表的推导依据"
     )
 
     # 任务列表
     task_results: Dict[str, TaskResultSummary] = Field(
-        default_factory=dict,
-        description="任务执行结果，key=task_id"
+        default_factory=dict, description="任务执行结果，key=task_id"
     )
 
     # 所有任务
     all_tasks: List[TaskResultSummary] = Field(
-        default_factory=list,
-        description="所有任务列表"
+        default_factory=list, description="所有任务列表"
     )
 
     # ========== 增强输入：工具输出 ==========
     # Executor 产出的文件路径
     output_files: List[str] = Field(
-        default_factory=list,
-        description="执行器产出的文件路径列表"
+        default_factory=list, description="执行器产出的文件路径列表"
     )
 
     # 工具输出摘要
     tool_output_summaries: List[ToolOutputSummary] = Field(
-        default_factory=list,
-        description="工具输出摘要列表"
+        default_factory=list, description="工具输出摘要列表"
     )
 
     # ========== 执行统计 ==========
@@ -141,7 +161,9 @@ class ResultEvaluatorState(BaseModel):
     methodology: str = Field(default="", description="分析方法描述")
     scientific_rationale: str = Field(default="", description="科学依据")
     limitations: List[str] = Field(default_factory=list, description="局限性")
-    validation_recommendations: List[str] = Field(default_factory=list, description="验证建议")
+    validation_recommendations: List[str] = Field(
+        default_factory=list, description="验证建议"
+    )
 
     # ========== 输出 ==========
     summary_report: str = Field(default="", description="总结报告")
@@ -152,6 +174,34 @@ class ResultEvaluatorState(BaseModel):
 
     # ========== 系统配置 ==========
     sandbox_dir: str = Field(default="", description="沙盒目录")
-    session_id: Optional[str] = Field(default=None, description="会话ID")
-    parent_state: Optional[Any] = Field(default=None, description="父状态引用")
 
+    def get_llm(
+        self, purpose: str = "reasoning", node_name: Optional[str] = None, **kwargs
+    ) -> Optional[Any]:
+        """
+        获取 LLM 实例（推荐方法）
+
+        复用父图的 get_llm 方法，如果父图不可用则使用本地 callback。
+
+        Args:
+            purpose: 模型用途，可选: "reasoning", "bioinformatics", "reasoning_advanced", "code"
+            node_name: 节点名称
+            **kwargs: 传递给 LLM 创建函数的其他参数
+
+        Returns:
+            LLM 实例，如果创建失败则返回 None
+        """
+        if self.parent_state and hasattr(self.parent_state, "get_llm"):
+            return self.parent_state.get_llm(
+                purpose=purpose, node_name=node_name or "result_evaluator", **kwargs
+            )
+
+        from agent.utils.llm_factory import create_llm_with_thinking
+
+        return create_llm_with_thinking(
+            purpose=purpose,
+            progress_callback=self.progress_callback,
+            session_id=self.session_id,
+            node_name=node_name or "result_evaluator",
+            **kwargs,
+        )

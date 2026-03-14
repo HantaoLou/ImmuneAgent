@@ -164,12 +164,23 @@ class ImmunityState(BaseModel):
         Returns:
             LLM 实例，如果创建失败则返回 None
         """
+        # [DEBUG] 检查状态
+        print(f"[ImmunityState.get_llm] 检查状态:")
+        print(f"  - parent_state 存在: {self.parent_state is not None}")
+        print(
+            f"  - parent_state.get_llm 存在: {hasattr(self.parent_state, 'get_llm') if self.parent_state else False}"
+        )
+        print(f"  - self.progress_callback 存在: {self.progress_callback is not None}")
+        print(f"  - self.session_id: {self.session_id}")
+
         if self.parent_state and hasattr(self.parent_state, "get_llm"):
+            print(f"[ImmunityState.get_llm] 使用 parent_state.get_llm()")
             return self.parent_state.get_llm(
                 purpose=purpose, node_name=node_name, **kwargs
             )
 
-        from agent.utils.llm_factory import create_llm_with_thinking
+        print(f"[ImmunityState.get_llm] 使用 create_llm_with_thinking()")
+        from utils.llm_factory import create_llm_with_thinking
 
         return create_llm_with_thinking(
             purpose=purpose,
