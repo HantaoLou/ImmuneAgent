@@ -25,7 +25,42 @@ OPENCODE_EXECUTE_PROMPT = """# OpenCode 任务执行指令
 
 ---
 
-## 二、MCP 调用规则
+## 二、文件系统访问限制 [关键]
+
+### 2.1 允许访问的目录
+**只能**访问会话目录内的文件和目录：
+- **允许**：`/data/sessions/{session_id}/` 及其所有子目录
+- **允许路径示例**：
+  - `/data/sessions/{session_id}/input/`
+  - `/data/sessions/{session_id}/output/`
+  - `/data/sessions/{session_id}/task.md`
+  - `/data/sessions/{session_id}/todo-list.md`
+
+### 2.2 禁止访问的目录
+**绝对不要尝试访问**以下目录：
+- `/root/` 或 `/home/` 用户目录
+- `/etc/` 系统配置
+- `/var/` 系统文件
+- `/usr/` 系统程序
+- `/opt/` 已安装软件（读取除外）
+- 任何不以 `/data/sessions/{session_id}/` 开头的路径
+
+### 2.3 路径验证规则
+任何文件操作（读/写/列表）前，必须验证路径：
+```python
+if not path.startswith('/data/sessions/{session_id}/'):
+    raise PermissionError(f"访问被拒绝: {path} 不在允许的目录内")
+```
+
+### 2.4 输入文件
+用户提供的所有输入文件位于：
+- `/data/sessions/{session_id}/input/`
+
+如果需要的文件不在此目录，**不要**尝试访问外部路径，而是报告问题。
+
+---
+
+## 三、MCP 调用规则
 
 ### 2.1 路径转换 [重要]
 MCP 工具运行在宿主机，无法访问沙盒内路径。传参时需转换路径：
@@ -160,11 +195,12 @@ def get_opencode_runner_prompt(session_id: str, mode: str) -> str:
         prompt = OPENCODE_EXECUTE_PROMPT.format(
             tasks_md_path=tasks_md_path,
             output_dir=output_dir,
+            session_id=session_id,
         )
 
     return f"""#!/bin/bash
 # OpenCode 任务执行脚本
-# 生成时间: {datetime.now().isoformat()}
+# 生成时间: {datetime.datetime.now().isoformat()}
 
 set -e
 

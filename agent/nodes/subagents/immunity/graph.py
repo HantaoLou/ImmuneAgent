@@ -1100,9 +1100,20 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
                 return loop.run_until_complete(coro)
             finally:
                 try:
-                    # Allow pending async generators to close
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(
+                            asyncio.gather(*pending, return_exceptions=True)
+                        )
+                except Exception:
+                    pass
+                try:
                     loop.run_until_complete(loop.shutdown_asyncgens())
-                    # Shutdown default executor to avoid warnings
+                except Exception:
+                    pass
+                try:
                     loop.run_until_complete(loop.shutdown_default_executor())
                 except Exception:
                     pass
@@ -1358,58 +1369,30 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
             response.content if hasattr(response, "content") else str(response)
         )
 
-        import json
+        # 使用健壮的 JSON 提取工具
+        from utils.json_extractor import extract_json_from_llm_response
 
-        def _extract_json_from_llm_response(text: str):
-            """Extract JSON from LLM response with multiple fallback strategies."""
-            text = text.strip()
-
-            # 1. Try direct JSON parse
-            if text.startswith("{"):
-                try:
-                    return json.loads(text)
-                except json.JSONDecodeError:
-                    pass
-
-            # 2. Try markdown code block extraction
-            json_block_match = re.search(
-                r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL
-            )
-            if json_block_match:
-                try:
-                    return json.loads(json_block_match.group(1).strip())
-                except json.JSONDecodeError:
-                    pass
-
-            # 3. Find JSON object with proper brace matching
-            brace_start = text.find("{")
-            if brace_start >= 0:
-                depth = 0
-                for i, char in enumerate(text[brace_start:], brace_start):
-                    if char == "{":
-                        depth += 1
-                    elif char == "}":
-                        depth -= 1
-                        if depth == 0:
-                            try:
-                                return json.loads(text[brace_start : i + 1])
-                            except json.JSONDecodeError:
-                                break
-
-            return None
-
-        # Use JsonOutputParser to parse response
+        # 首先尝试使用 JsonOutputParser
+        hypothesis_data = None
         try:
-            hypothesis_data = output_parser.parse(response_content)
-            if not isinstance(hypothesis_data, dict):
-                hypothesis_data = {}
+            parsed = output_parser.parse(response_content)
+            if isinstance(parsed, dict):
+                hypothesis_data = parsed
         except Exception as e:
-            _progress_logger.log_warning(f"JSON 解析失败，尝试直接解析: {e}")
+            _progress_logger.log_warning(f"JsonOutputParser 解析失败，尝试使用健壮提取: {e}")
 
-            # Try robust JSON extraction
-            hypothesis_data = _extract_json_from_llm_response(response_content)
-            if hypothesis_data is None:
-                hypothesis_data = {}
+        # 如果 JsonOutputParser 失败，使用健壮的提取函数
+        if hypothesis_data is None or not isinstance(hypothesis_data, dict):
+            hypothesis_data = extract_json_from_llm_response(
+                response_content,
+                default={},
+                log_errors=True
+            )
+            
+            if not hypothesis_data:
+                _progress_logger.log_warning(
+                    f"JSON 提取失败，响应内容预览: {response_content[:200] if response_content else '空响应'}"
+                )
 
         if hypothesis_data and hypothesis_data.get("statement"):
             state.hypothesis = hypothesis_data

@@ -33,6 +33,7 @@ GILGFVFTL,TSESTM,,CAVSANSGTYKYIF,SGDLS,,CASSIRSSYEQYF
 
 | Column | Description | Required |
 |--------|-------------|----------|
+| `main_name` | primary key | **required** |
 | `peptide` | Target peptide sequence | **required** |
 | `A3` | TCR alpha chain CDR3 | Recommended |
 | `B3` | TCR beta chain CDR3 | **key field** |

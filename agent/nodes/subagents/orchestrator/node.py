@@ -175,7 +175,7 @@ Output directory: {output_dir}/
 5. After each step, briefly state what was produced before moving on."""
 
 
-def orchestrator_node(state: GlobalState) -> GlobalState:
+async def orchestrator_node(state: GlobalState) -> GlobalState:
     """Orchestrator node - bundles tasks by domain and dispatches each bundle."""
     report_node_start(state, "orchestrator", "Starting orchestrated execution...")
 
@@ -222,7 +222,12 @@ def orchestrator_node(state: GlobalState) -> GlobalState:
             b.dependencies,
         )
 
-    loop = asyncio.new_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
     try:
         while orch.current_step < orch.max_steps:
             orch.current_step += 1
@@ -295,7 +300,7 @@ def orchestrator_node(state: GlobalState) -> GlobalState:
                 progress_percent=min(pct, 90),
             )
 
-            _dispatch_bundles(orch, dispatch_list, output_base, state, loop)
+            await _dispatch_bundles(orch, dispatch_list, output_base, state)
 
         for b in orch.bundles:
             if b.status not in (
@@ -306,7 +311,7 @@ def orchestrator_node(state: GlobalState) -> GlobalState:
                 b.error = f"Orchestrator reached max steps ({orch.max_steps}) before completion"
                 _sync_bundle_to_assignments(orch, b)
     finally:
-        loop.close()
+        pass
 
     return _map_results_to_global(orch, state)
 
@@ -522,12 +527,11 @@ def _observe_bundles(
     return pending, ready, failed_retriable, completed, failed_terminal
 
 
-def _dispatch_bundles(
+async def _dispatch_bundles(
     orch: OrchestratorState,
     bundles: List[SubAgentBundle],
     output_base: str,
     global_state: GlobalState,
-    loop: asyncio.AbstractEventLoop,
 ):
     """Dispatch bundles - parallel via asyncio.gather when multiple are ready."""
     completed_map: Dict[str, SubAgentBundle] = {
@@ -543,8 +547,8 @@ def _dispatch_bundles(
     if len(bundles) == 1:
         b = bundles[0]
         try:
-            result = loop.run_until_complete(
-                _run_bundle_async(b, output_base, global_state, orch, completed_map)
+            result = await _run_bundle_async(
+                b, output_base, global_state, orch, completed_map
             )
             b.status = OrchestratorTaskStatus.COMPLETED
             b.result = result
@@ -556,15 +560,13 @@ def _dispatch_bundles(
             _sync_bundle_to_assignments(orch, b)
         return
 
-    async def _gather():
-        coros = [
-            _run_bundle_async(b, output_base, global_state, orch, completed_map)
-            for b in bundles
-        ]
-        return await asyncio.gather(*coros, return_exceptions=True)
+    coros = [
+        _run_bundle_async(b, output_base, global_state, orch, completed_map)
+        for b in bundles
+    ]
 
     try:
-        results = loop.run_until_complete(_gather())
+        results = await asyncio.gather(*coros, return_exceptions=True)
     except Exception as e:
         for b in bundles:
             if b.status == OrchestratorTaskStatus.DISPATCHED:
@@ -580,7 +582,7 @@ def _dispatch_bundles(
         else:
             b.status = OrchestratorTaskStatus.COMPLETED
             b.result = result
-            b.elapsed = result.get("elapsed", 0.0)
+            b.elapsed = result.get("elapsed", 0.0) if result else 0.0
         _sync_bundle_to_assignments(orch, b)
 
 

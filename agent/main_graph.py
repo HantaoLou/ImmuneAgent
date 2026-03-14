@@ -416,7 +416,7 @@ def task_decomposition_node(state: GlobalState) -> GlobalState:
     return state
 
 
-def orchestrator_node(state: GlobalState) -> GlobalState:
+async def orchestrator_node(state: GlobalState) -> GlobalState:
     """Orchestrator Node - bundles tasks by domain and dispatches to sub-agents"""
     print(f"\n{'=' * 60}")
     print("[Orchestrator] Starting orchestrator...")
@@ -425,7 +425,7 @@ def orchestrator_node(state: GlobalState) -> GlobalState:
     try:
         from nodes.subagents.orchestrator import orchestrator_node as _orchestrator_node
 
-        state = _orchestrator_node(state)
+        state = await _orchestrator_node(state)
 
         print(f"[Orchestrator] Orchestrator completed")
 

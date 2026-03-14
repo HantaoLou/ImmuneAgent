@@ -1244,24 +1244,21 @@ Return in JSON format:
             response.content if hasattr(response, "content") else str(response)
         )
 
-        try:
-            import re
+        # 使用健壮的 JSON 提取工具
+        from utils.json_extractor import extract_json_from_llm_response
 
-            json_match = re.search(r"\{.*\}", response_content, re.DOTALL)
-            if json_match:
-                analysis_result = json.loads(json_match.group())
-            else:
-                analysis_result = json.loads(response_content)
+        analysis_result = extract_json_from_llm_response(
+            response_content,
+            default={"key_findings": [], "recommendations": []},
+            log_errors=True
+        )
 
-            state.key_findings = analysis_result.get("key_findings", [])
-            state.recommendations = analysis_result.get("recommendations", [])
-
-        except (json.JSONDecodeError, TypeError) as e:
-            print(f"[WARN] JSON parse failed: {e}")
-            state.key_findings = [
-                "Task execution completed. See detailed output files for results."
-            ]
-            state.recommendations = ["Review output files for detailed analysis"]
+        state.key_findings = analysis_result.get("key_findings", [
+            "Task execution completed. See detailed output files for results."
+        ])
+        state.recommendations = analysis_result.get("recommendations", [
+            "Review output files for detailed analysis"
+        ])
 
         print(f"[SUCCESS] Results analysis completed")
         print(f"  - Key findings count: {len(state.key_findings)}")

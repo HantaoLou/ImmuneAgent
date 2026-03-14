@@ -35,7 +35,9 @@ class OpenCodeConfig:
     model_provider: str = "glm-4.5"
     api_key: str = field(default_factory=lambda: os.getenv("ZHIPUAI_API_KEY") or "")
     sandbox_domain: str = field(
-        default_factory=lambda: os.getenv("OPENSANDBOX_DOMAIN") or "localhost:8080"
+        default_factory=lambda: os.getenv("SANDBOX_DOMAIN")
+        or os.getenv("OPENSANDBOX_DOMAIN")
+        or "localhost:8080"
     )
     sandbox_image: str = field(
         default_factory=lambda: os.getenv("OPENSANDBOX_IMAGE")
@@ -130,11 +132,16 @@ class OpenCodeExecutor:
                 "result": result,
             }
         except Exception as e:
+            import traceback
+
+            tb_str = traceback.format_exc()
             self._log(f"任务执行失败: {str(e)}", "ERROR")
+            self._log(f"Traceback:\n{tb_str}", "ERROR")
             return {
                 "status": "error",
                 "session_id": self.session_id,
                 "error": str(e),
+                "traceback": tb_str,
                 "logs": self._logs,
             }
         finally:
@@ -221,10 +228,14 @@ class OpenCodeExecutor:
 
         opencode_config["permission"] = {
             "external_directory": {
-                f"/data/sessions/{self.session_id}/**": "allow",
+                "/data/**": "allow",
             },
         }
-        self._log(f"权限配置: 允许访问外部目录 /data/sessions/**")
+        self._log(
+            f"权限配置: 仅允许 /data/**，拒绝其他所有外部目录"
+        )
+
+        opencode_config["instructions"] = ["./AGENTS.md"]
 
         config_path = f"{self.workspace_dir}/opencode/config/opencode/opencode.json"
         await self.sandbox.files.write_file(
@@ -232,6 +243,43 @@ class OpenCodeExecutor:
         )  # type: ignore
 
         self._log(f"配置文件已写入: {config_path}")
+
+        # 复制 OpenCode skills 到沙盒
+        await self._copy_skills_to_sandbox()
+
+    async def _copy_skills_to_sandbox(self) -> None:
+        """
+        复制 OpenCode skills 到沙盒
+
+        OpenCode 从 ~/.agents/skills/<name>/SKILL.md 加载 skills
+        在沙盒中，HOME 被设置为 workspace_dir
+        """
+        skills_src_dir = Path(__file__).parent.parent / "coding_agent" / "skills"
+
+        if not skills_src_dir.exists():
+            self._log(f"Skills 目录不存在: {skills_src_dir}")
+            return
+
+        skills_dest_dir = f"{self.workspace_dir}/.agents/skills"
+        await self.sandbox.commands.run(f"mkdir -p {skills_dest_dir}")
+
+        skill_count = 0
+        for skill_dir in skills_src_dir.iterdir():
+            if skill_dir.is_dir():
+                skill_file = skill_dir / "SKILL.md"
+                if skill_file.exists():
+                    with open(skill_file, "r", encoding="utf-8") as f:
+                        skill_content = f.read()
+
+                    dest_path = f"{skills_dest_dir}/{skill_dir.name}/SKILL.md"
+                    await self.sandbox.commands.run(
+                        f"mkdir -p {skills_dest_dir}/{skill_dir.name}"
+                    )
+                    await self.sandbox.files.write_file(dest_path, skill_content)
+                    skill_count += 1
+
+        if skill_count > 0:
+            self._log(f"已复制 {skill_count} 个 skills 到 {skills_dest_dir}/")
 
     def _build_mcp_servers_config(self) -> Dict[str, Any]:
         mcp_config_path = (
@@ -243,7 +291,9 @@ class OpenCodeExecutor:
         return {}
 
     async def _execute_task(self) -> Dict[str, Any]:
-        self._log(f"步骤3: 执行任务 (iteration={self.iteration})")
+        self._log(
+            f"步骤3: 执行任务 (iteration={self.iteration}, timeout={self.timeout}s)"
+        )
 
         await self._create_runner_script()
         await self.sandbox.files.write_file(f"{self.workspace_dir}/task.md", self.task)
@@ -257,9 +307,48 @@ class OpenCodeExecutor:
             working_directory=self.workspace_dir,
         )
 
-        execution = await self.sandbox.commands.run(cmd, opts=opts, handlers=handlers)
+        self._log(f"开始执行命令: {cmd[:100]}...")
+        start_time = time.time()
+
+        try:
+            execution = await self.sandbox.commands.run(
+                cmd, opts=opts, handlers=handlers
+            )
+        except Exception as e:
+            elapsed = time.time() - start_time
+            self._log(f"命令执行异常 ({elapsed:.1f}s): {e}", "ERROR")
+            return {
+                "status": "error",
+                "error": str(e),
+                "elapsed_seconds": elapsed,
+            }
+
+        elapsed = time.time() - start_time
+        self._log(f"命令执行完成 ({elapsed:.1f}s)")
 
         result = self._convert_execution_to_dict(execution)
+
+        if execution.error:
+            self._log(
+                f"命令返回错误: {execution.error.name}: {execution.error.value}",
+                "ERROR",
+            )
+            result["error_details"] = {
+                "name": execution.error.name,
+                "value": execution.error.value,
+                "traceback": execution.error.traceback,
+            }
+
+        stdout = self._get_stdout(execution)
+        if "===OPENCODE_DONE===" not in stdout:
+            self._log("警告: 未检测到完成标记 '===OPENCODE_DONE==='", "WARNING")
+            self._log(f"stdout 前500字符: {stdout[:500]}", "WARNING")
+            if elapsed < 5:
+                self._log("命令执行时间过短，可能未正常执行", "WARNING")
+                result["status"] = "error"
+                result["error"] = "命令执行时间过短，OpenCode 可能未正常启动"
+                result["elapsed_seconds"] = elapsed
+
         return result
 
     def _create_streaming_handlers(self) -> ExecutionHandlers | None:

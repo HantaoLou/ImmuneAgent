@@ -10,11 +10,6 @@
     "description": "V(D)J recombination analysis using IgBLAST + ChangeO. Returns AIRR format results with V/D/J gene assignments, CDR regions, and SHM identification. Automatically splits large files into batches for efficient processing."
   },
   {
-    "name": "extract_cdr3_from_airr",
-    "service": "igblast",
-    "description": "Extract CDR3 information from AIRR format results. Supports multiple input formats (array, CSV/TSV/JSON files, URLs) and provides standardized CDR3 sequences for downstream analysis with streaming progress."
-  },
-  {
     "name": "predict_tcr_binding_fast",
     "service": "nettcr",
     "description": "Fast TCR-peptide binding prediction using pre-trained NetTCR-2.2 models. 20-model TFLite ensemble for instant prediction. Supports 26 peptide-specific models with percentile rank, plus pan-specific fallback. Auto-detects input format (native 7-CDR or legacy CDR3+V-genes)."
