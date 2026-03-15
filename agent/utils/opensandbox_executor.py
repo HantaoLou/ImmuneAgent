@@ -1289,38 +1289,27 @@ def run_code_in_opensandbox_sync(
         existing_sandbox_id: If provided, connect to existing sandbox instead of creating new one
         keep_alive: If True, don't terminate sandbox after execution (for reuse)
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    run_code_in_opensandbox(
-                        code=code,
-                        task_id=task_id,
-                        timeout_seconds=timeout_seconds,
-                        image=image,
-                        env=env,
-                        ready_timeout_seconds=ready_timeout_seconds,
-                        existing_sandbox_id=existing_sandbox_id,
-                        keep_alive=keep_alive,
-                    ),
-                )
-                return future.result()
-    except RuntimeError:
-        pass
-
-    return asyncio.run(
-        run_code_in_opensandbox(
-            code=code,
-            task_id=task_id,
-            timeout_seconds=timeout_seconds,
-            image=image,
-            env=env,
-            ready_timeout_seconds=ready_timeout_seconds,
-            existing_sandbox_id=existing_sandbox_id,
-            keep_alive=keep_alive,
+    def _run_in_new_loop():
+        return asyncio.run(
+            run_code_in_opensandbox(
+                code=code,
+                task_id=task_id,
+                timeout_seconds=timeout_seconds,
+                image=image,
+                env=env,
+                ready_timeout_seconds=ready_timeout_seconds,
+                existing_sandbox_id=existing_sandbox_id,
+                keep_alive=keep_alive,
+            )
         )
-    )
+
+    try:
+        loop = asyncio.get_running_loop()
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(_run_in_new_loop)
+            return future.result()
+    except RuntimeError:
+        return _run_in_new_loop()

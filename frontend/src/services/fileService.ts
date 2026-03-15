@@ -1,5 +1,5 @@
 import api from './api';
-import { FileAttachment } from '@/types';
+import { FileAttachment, SandboxFile, SandboxFilesResponse } from '@/types';
 import { fileStorage } from '@/lib/fileStorage';
 import { fileUtils } from '@/lib/fileUtils';
 
@@ -226,7 +226,6 @@ class FileService {
     return batchDownloadFiles(params);
   }
 
-  // 触发浏览器下载
   triggerDownload(blob: Blob, filename: string): void {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -236,6 +235,24 @@ class FileService {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  async getSandboxFiles(sessionId: string): Promise<SandboxFilesResponse> {
+    const response = await api.get<SandboxFilesResponse>(`/api/sessions/${sessionId}/files`);
+    return response.data;
+  }
+
+  getSandboxDownloadUrl(sessionId: string, filePath: string): string {
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    return `${baseUrl}/api/download/${sessionId}/${filePath}`;
+  }
+
+  async downloadSandboxFile(sessionId: string, filePath: string): Promise<Blob> {
+    const response = await api.get(`/api/download/${sessionId}/${filePath}`, {
+      responseType: 'blob',
+      timeout: 120000,
+    });
+    return response.data;
   }
 }
 

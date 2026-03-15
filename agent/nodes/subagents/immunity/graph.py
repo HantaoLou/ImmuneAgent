@@ -1092,12 +1092,12 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
         start_time = time.perf_counter()
         result = None
 
-        def run_with_proper_cleanup(coro):
+        def run_with_proper_cleanup(coro_factory):
             """Run async coroutine with proper cleanup to avoid 'Event loop is closed' errors."""
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                return loop.run_until_complete(coro)
+                return loop.run_until_complete(coro_factory())
             finally:
                 try:
                     pending = asyncio.all_tasks(loop)
@@ -1131,13 +1131,13 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
                     max_workers=1, thread_name_prefix="deep_research_"
                 ) as executor:
                     future = executor.submit(
-                        run_with_proper_cleanup, run_deep_research_async()
+                        run_with_proper_cleanup, run_deep_research_async
                     )
-                    result = future.result(timeout=300)  # 5 minute timeout
+                    result = future.result(timeout=1800)  # 30 minute timeout
             except RuntimeError:
                 # No running loop, safe to use our cleanup function
                 _progress_logger.log_info("使用新事件循环执行...")
-                result = run_with_proper_cleanup(run_deep_research_async())
+                result = run_with_proper_cleanup(run_deep_research_async)
 
         except concurrent.futures.TimeoutError:
             elapsed = time.perf_counter() - start_time
@@ -1365,9 +1365,107 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
             elapsed = time.perf_counter() - start_time
             _progress_logger.log_llm_end(elapsed, 0, success=False)
             raise
+        # [DEBUG] 详细的响应调试
+        _progress_logger.log_info(f"[DEBUG] Response type: {type(response).__name__}")
+        _progress_logger.log_info(
+            f"[DEBUG] Response attributes: {dir(response)[:10]}..."
+        )
+        _progress_logger.log_info(
+            f"[DEBUG] Has 'content' attribute: {hasattr(response, 'content')}"
+        )
+        _progress_logger.log_info(
+            f"[DEBUG] Has 'additional_kwargs': {hasattr(response, 'additional_kwargs')}"
+        )
+
+        # [CRITICAL] 检查是否有reasoning_content（原生thinking模式）
+        if hasattr(response, "additional_kwargs"):
+            additional_kwargs = response.additional_kwargs
+            _progress_logger.log_info(
+                f"[DEBUG] additional_kwargs keys: {list(additional_kwargs.keys()) if additional_kwargs else 'None'}"
+            )
+            if additional_kwargs and "reasoning_content" in additional_kwargs:
+                reasoning = additional_kwargs["reasoning_content"]
+                _progress_logger.log_info(
+                    f"[DEBUG] Found reasoning_content! Length: {len(reasoning) if reasoning else 0}"
+                )
+                _progress_logger.log_info(
+                    f"[DEBUG] reasoning_content preview: {reasoning[:200] if reasoning else 'None'}"
+                )
+
+        if hasattr(response, "content"):
+            raw_content = response.content
+            _progress_logger.log_info(
+                f"[DEBUG] Content type: {type(raw_content).__name__}"
+            )
+            _progress_logger.log_info(f"[DEBUG] Content is None: {raw_content is None}")
+            _progress_logger.log_info(
+                f"[DEBUG] Content is str: {isinstance(raw_content, str)}"
+            )
+            _progress_logger.log_info(
+                f"[DEBUG] Content is list: {isinstance(raw_content, list)}"
+            )
+            if raw_content:
+                if isinstance(raw_content, str):
+                    _progress_logger.log_info(
+                        f"[DEBUG] Content length: {len(raw_content)}"
+                    )
+                    _progress_logger.log_info(
+                        f"[DEBUG] Content preview: {raw_content[:300]}"
+                    )
+                elif isinstance(raw_content, list):
+                    _progress_logger.log_info(
+                        f"[DEBUG] Content list length: {len(raw_content)}"
+                    )
+                    if len(raw_content) > 0:
+                        _progress_logger.log_info(
+                            f"[DEBUG] First item type: {type(raw_content[0]).__name__}"
+                        )
+                        _progress_logger.log_info(
+                            f"[DEBUG] First item: {str(raw_content[0])[:300]}"
+                        )
+
         response_content = (
             response.content if hasattr(response, "content") else str(response)
         )
+
+        # [CRITICAL] 如果content是list（多模态响应），需要特殊处理
+        if isinstance(response_content, list):
+            _progress_logger.log_info(
+                f"[DEBUG] Detected list response, extracting text..."
+            )
+            text_parts = []
+            for item in response_content:
+                if isinstance(item, str):
+                    text_parts.append(item)
+                elif isinstance(item, dict) and "text" in item:
+                    text_parts.append(item["text"])
+                elif hasattr(item, "content"):
+                    text_parts.append(item.content)
+            response_content = "\n".join(text_parts)
+            _progress_logger.log_info(
+                f"[DEBUG] Extracted text length: {len(response_content)}"
+            )
+            _progress_logger.log_info(
+                f"[DEBUG] Extracted text preview: {response_content[:300]}"
+            )
+
+        # [VALIDATION] 检查响应是否为空
+        if (
+            not response_content
+            or not isinstance(response_content, str)
+            or not response_content.strip()
+        ):
+            _progress_logger.log_error("LLM 返回空响应或无效响应")
+            _progress_logger.log_error(
+                f"Response content type: {type(response_content).__name__}"
+            )
+            _progress_logger.log_error(
+                f"Response content value: {repr(response_content)}"
+            )
+            _progress_logger.end_stage(
+                "hypothesis_generation", success=False, details="LLM 返回空响应"
+            )
+            return state
 
         # 使用健壮的 JSON 提取工具
         from utils.json_extractor import extract_json_from_llm_response
@@ -1379,16 +1477,16 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
             if isinstance(parsed, dict):
                 hypothesis_data = parsed
         except Exception as e:
-            _progress_logger.log_warning(f"JsonOutputParser 解析失败，尝试使用健壮提取: {e}")
+            _progress_logger.log_warning(
+                f"JsonOutputParser 解析失败，尝试使用健壮提取: {e}"
+            )
 
         # 如果 JsonOutputParser 失败，使用健壮的提取函数
         if hypothesis_data is None or not isinstance(hypothesis_data, dict):
             hypothesis_data = extract_json_from_llm_response(
-                response_content,
-                default={},
-                log_errors=True
+                response_content, default={}, log_errors=True
             )
-            
+
             if not hypothesis_data:
                 _progress_logger.log_warning(
                     f"JSON 提取失败，响应内容预览: {response_content[:200] if response_content else '空响应'}"

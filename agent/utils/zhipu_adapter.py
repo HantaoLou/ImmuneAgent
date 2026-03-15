@@ -510,6 +510,15 @@ Final Answer: ..."""
                         ):
                             reasoning_content = message.reasoning_content
 
+                        # [FIX] 如果content为空但有reasoning_content，使用reasoning_content
+                        # 这在thinking模式下很常见，模型会把实际内容放在reasoning_content中
+                        if not content.strip() and reasoning_content:
+                            print(
+                                f"[ZhipuAIAdapter] content为空，使用reasoning_content (长度: {len(reasoning_content)})"
+                            )
+                            content = reasoning_content
+                            reasoning_content = ""  # 避免重复
+
                         tool_calls = []
                         additional_kwargs = {}
 

@@ -135,8 +135,16 @@ def invoke_agent_sync(state: Any) -> Any:
             except Exception:
                 pass
             finally:
-                loop.run_until_complete(loop.shutdown_asyncgens())
-                loop.close()
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                    loop.run_until_complete(loop.shutdown_default_executor())
+                    import time
+
+                    time.sleep(0.1)
+                except Exception:
+                    pass
+                finally:
+                    loop.close()
     except Exception as e:
         print(f"[agent_service] Error running agent: {e}")
         raise

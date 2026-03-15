@@ -71,6 +71,71 @@ def _save_report(content: str, report_type: str, sandbox_dir: str) -> str:
         return ""
 
 
+def _upload_report_to_opensandbox(
+    content: str,
+    report_type: str,
+    session_id: str,
+    opensandbox_id: str,
+) -> str:
+    """
+    Upload report to OpenSandbox
+
+    Args:
+        content: Report content
+        report_type: Report type (e.g., "result_evaluation", "analysis_report")
+        session_id: Session ID for path construction
+        opensandbox_id: OpenSandbox instance ID
+
+    Returns:
+        Remote file path if successful, empty string otherwise
+    """
+    import asyncio
+
+    try:
+        from opensandbox.sandbox import Sandbox
+        from datetime import timedelta
+    except ImportError:
+        print(f"  [ReportUpload] OpenSandbox SDK not available, skipping upload")
+        return ""
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ext = "txt" if report_type == "analysis_report" else "md"
+    remote_file_path = (
+        f"/data/sessions/{session_id}/output/reports/{report_type}_{timestamp}.{ext}"
+    )
+
+    async def _upload():
+        try:
+            sandbox = await Sandbox.connect(
+                opensandbox_id,
+                connect_timeout=timedelta(seconds=10),
+            )
+            await sandbox.files.write_file(remote_file_path, content.encode("utf-8"))
+            return remote_file_path
+        except Exception as e:
+            print(f"  [ReportUpload] Failed: {e}")
+            return ""
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _upload())
+                result_path = future.result(timeout=30)
+        else:
+            result_path = loop.run_until_complete(_upload())
+
+        if result_path:
+            print(f"  [ReportUpload] ✅ {report_type} uploaded: {result_path}")
+            return result_path
+        return ""
+    except Exception as e:
+        print(f"  [ReportUpload] ❌ Exception: {e}")
+        return ""
+
+
 def _save_txt_report(content: str, report_type: str, sandbox_dir: str) -> str:
     """
     Save TXT format report to file
@@ -1250,15 +1315,16 @@ Return in JSON format:
         analysis_result = extract_json_from_llm_response(
             response_content,
             default={"key_findings": [], "recommendations": []},
-            log_errors=True
+            log_errors=True,
         )
 
-        state.key_findings = analysis_result.get("key_findings", [
-            "Task execution completed. See detailed output files for results."
-        ])
-        state.recommendations = analysis_result.get("recommendations", [
-            "Review output files for detailed analysis"
-        ])
+        state.key_findings = analysis_result.get(
+            "key_findings",
+            ["Task execution completed. See detailed output files for results."],
+        )
+        state.recommendations = analysis_result.get(
+            "recommendations", ["Review output files for detailed analysis"]
+        )
 
         print(f"[SUCCESS] Results analysis completed")
         print(f"  - Key findings count: {len(state.key_findings)}")
@@ -1421,7 +1487,13 @@ Please output the summary paragraph directly without any additional content.
         state.detailed_report = detailed_report
         state.summary_report = summary_text
 
-        # Save Markdown report
+        # Get opensandbox_id for uploading reports
+        opensandbox_id = None
+        if state.parent_state:
+            merged_result = getattr(state.parent_state, "merged_result", None) or {}
+            opensandbox_id = merged_result.get("opensandbox_id")
+
+        # Save Markdown report to local
         report_path = _save_report(
             detailed_report, "result_evaluation", state.sandbox_dir
         )
@@ -1431,15 +1503,53 @@ Please output the summary paragraph directly without any additional content.
         txt_report = _generate_txt_analysis_report(state, llm)
         state.txt_report = txt_report
 
-        # Save TXT report
+        # Save TXT report to local
         txt_report_path = _save_txt_report(
             txt_report, "analysis_report", state.sandbox_dir
         )
         state.txt_report_path = txt_report_path
 
+        # ========== Upload reports to OpenSandbox ==========
+        remote_report_path = ""
+        remote_txt_report_path = ""
+
+        if opensandbox_id and state.session_id:
+            print(f"  [ReportUpload] Uploading reports to OpenSandbox...")
+            print(f"  [ReportUpload] opensandbox_id: {opensandbox_id}")
+            print(f"  [ReportUpload] session_id: {state.session_id}")
+
+            # Upload markdown report
+            remote_report_path = _upload_report_to_opensandbox(
+                content=detailed_report,
+                report_type="result_evaluation",
+                session_id=state.session_id,
+                opensandbox_id=opensandbox_id,
+            )
+
+            # Upload TXT report
+            remote_txt_report_path = _upload_report_to_opensandbox(
+                content=txt_report,
+                report_type="analysis_report",
+                session_id=state.session_id,
+                opensandbox_id=opensandbox_id,
+            )
+
+            # Update output files with remote paths
+            if remote_report_path and remote_report_path not in state.output_files:
+                state.output_files.append(remote_report_path)
+            if (
+                remote_txt_report_path
+                and remote_txt_report_path not in state.output_files
+            ):
+                state.output_files.append(remote_txt_report_path)
+
         print(f"[SUCCESS] Report generation completed")
         print(f"  - Markdown report path: {report_path}")
         print(f"  - TXT analysis report path: {txt_report_path}")
+        if remote_report_path:
+            print(f"  - Remote MD report path: {remote_report_path}")
+        if remote_txt_report_path:
+            print(f"  - Remote TXT report path: {remote_txt_report_path}")
 
     except Exception as e:
         print(f"[WARN] Report generation failed: {e}")

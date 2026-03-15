@@ -478,24 +478,27 @@ async def download_file(session_id: str, file_path: str):
 
     Uses temporary sandbox to read files from mounted volume.
     """
-    from agent_service import collect_files_from_new_sandbox, _get_cmd_stdout
+    from agent_service import _get_cmd_stdout
     from fastapi.responses import Response
     import base64
 
-    # 尝试从本地读取
     sandbox_dir = Path(f"./sandbox/sessions/{session_id}")
-    full_path = sandbox_dir / file_path
 
-    if full_path.exists() and full_path.is_file():
-        ext = full_path.suffix.lower()
-        content_type = _get_content_type(ext)
-        return FileResponse(
-            path=str(full_path),
-            media_type=content_type,
-            filename=full_path.name,
-        )
+    local_paths = [
+        sandbox_dir / "output" / file_path,
+        sandbox_dir / file_path,
+    ]
 
-    # 从远程沙盒读取
+    for full_path in local_paths:
+        if full_path.exists() and full_path.is_file():
+            ext = full_path.suffix.lower()
+            content_type = _get_content_type(ext)
+            return FileResponse(
+                path=str(full_path),
+                media_type=content_type,
+                filename=full_path.name,
+            )
+
     try:
         from opensandbox.sandbox import Sandbox
         from opensandbox.config import ConnectionConfig
@@ -555,18 +558,16 @@ async def download_file(session_id: str, file_path: str):
 
         sandbox = await Sandbox.connect(sandbox_id, connection_config=connection_config)
 
-        # 尝试两个路径
-        possible_paths = [
+        sandbox_paths = [
             f"/data/sessions/{session_id}/output/{file_path}",
-            f"/data/sessions/{session_id}/output/{file_path}",
+            f"/data/sessions/{session_id}/{file_path}",
         ]
 
         file_content = None
         actual_path = None
 
-        for sandbox_file_path in possible_paths:
+        for sandbox_file_path in sandbox_paths:
             try:
-                # 使用 base64 编码来避免二进制文件问题
                 cmd = f"cat {sandbox_file_path} | base64 2>/dev/null || echo ''"
                 result = await sandbox.commands.run(cmd)
                 stdout = _get_cmd_stdout(result)
@@ -574,6 +575,7 @@ async def download_file(session_id: str, file_path: str):
                 if stdout and stdout.strip():
                     file_content = base64.b64decode(stdout.strip())
                     actual_path = sandbox_file_path
+                    print(f"[download_file] Found file at: {sandbox_file_path}")
                     break
             except Exception as e:
                 print(f"[download_file] Error reading {sandbox_file_path}: {e}")

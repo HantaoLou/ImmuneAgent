@@ -60,3 +60,22 @@ export interface FileFilter {
   category?: FileCategory;
   searchQuery?: string;
 }
+
+export interface SandboxFile {
+  name: string;
+  path: string;
+  relative_path: string;
+  size: number;
+  size_formatted: string;
+  type: string;
+  extension: string;
+  source: string;
+  modified?: string;
+}
+
+export interface SandboxFilesResponse {
+  session_id: string;
+  files: SandboxFile[];
+  count: number;
+  source: string;
+}
