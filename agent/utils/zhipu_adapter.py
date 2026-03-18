@@ -67,6 +67,7 @@ class ZhipuAIAdapter(BaseChatModel):
     fallback_models: Optional[List[str]] = None
     auto_fallback: bool = True
     progress_callback: Optional[Callable] = None
+    session_id: Optional[str] = None
     enable_thinking_prompt: bool = True
     compact_thinking_mode: bool = True
     enable_native_thinking: bool = True
@@ -91,6 +92,7 @@ class ZhipuAIAdapter(BaseChatModel):
         fallback_models: Optional[List[str]] = None,
         auto_fallback: bool = True,
         progress_callback: Optional[Callable] = None,
+        session_id: Optional[str] = None,
         enable_native_thinking: bool = True,
         clear_thinking: bool = False,
         **kwargs,
@@ -107,7 +109,8 @@ class ZhipuAIAdapter(BaseChatModel):
             retry_delay: 重试之间的延迟时间（秒），默认 2.0
             fallback_models: 备用模型列表
             auto_fallback: 是否启用自动备用模型切换，默认 True
-            progress_callback: 进度回调函数，用于 SSE 推送思考过程
+            progress_callback: 进度回调函数，用于 SSE 推送思考过程（已废弃，请使用session_id）
+            session_id: 会话ID，用于从全局registry获取进度回调函数
             enable_native_thinking: 是否启用 GLM 原生思考模式（推荐 True）
             clear_thinking: 是否清除思考内容（False = 保留式思考，推荐 Agent 场景）
             **kwargs: 其他参数
@@ -121,6 +124,7 @@ class ZhipuAIAdapter(BaseChatModel):
         self.retry_delay = retry_delay
         self.auto_fallback = auto_fallback
         self.progress_callback = progress_callback
+        self.session_id = session_id
         self.enable_native_thinking = enable_native_thinking
         self.clear_thinking = clear_thinking
 
@@ -166,6 +170,41 @@ class ZhipuAIAdapter(BaseChatModel):
     def _llm_type(self) -> str:
         """返回 LLM 类型标识"""
         return "zhipu"
+
+    def _get_progress_callback(self) -> Optional[Callable]:
+        """
+        获取进度回调函数
+
+        优先级：
+        1. self._get_progress_callback()（兼容旧代码）
+        2. 通过session_id从全局registry获取（推荐）
+
+        Returns:
+            进度回调函数，如果不存在则返回None
+        """
+        # 优先使用传入的progress_callback（兼容性）
+        if self.progress_callback:
+            return self.progress_callback
+
+        # 通过session_id从全局registry获取
+        if self.session_id:
+            try:
+                import sys
+                from pathlib import Path
+
+                # 添加backend到path以导入progress_tracker
+                backend_dir = Path(__file__).parent.parent.parent / "backend"
+                if str(backend_dir) not in sys.path:
+                    sys.path.insert(0, str(backend_dir))
+
+                import backend.progress_tracker as pt_module
+
+                callback = pt_module.get_progress_callback(self.session_id)
+                return callback
+            except (ImportError, AttributeError):
+                pass
+
+        return None
 
     def _convert_messages_to_zhipu_format(
         self, messages: List[BaseMessage]
@@ -396,11 +435,15 @@ Final Answer: ..."""
 
         # [DEBUG] 检查 progress_callback 状态
         print(f"[ZhipuAIAdapter._generate] progress_callback 状态:")
-        print(f"  - self.progress_callback is None: {self.progress_callback is None}")
-        print(f"  - self.progress_callback type: {type(self.progress_callback)}")
+        print(
+            f"  - self._get_progress_callback() is None: {self._get_progress_callback() is None}"
+        )
+        print(
+            f"  - self._get_progress_callback() type: {type(self._get_progress_callback())}"
+        )
 
         # [HOT] 报告开始思考（无论是否有 tools 都要推送）
-        if self.progress_callback:
+        if self._get_progress_callback():
             try:
                 user_msg = ""
                 for msg in messages:
@@ -411,7 +454,7 @@ Final Answer: ..."""
                 print(
                     f"[ZhipuAIAdapter._generate] Preparing to call progress_callback..."
                 )
-                self.progress_callback(
+                self._get_progress_callback()(
                     event_type="llm_thinking",
                     message=f"[THINK] Starting to think: {user_msg}",
                     details={
@@ -579,10 +622,10 @@ Final Answer: ..."""
                             additional_kwargs=additional_kwargs,
                         )
 
-                        if self.progress_callback:
+                        if self._get_progress_callback():
                             try:
                                 if reasoning_content:
-                                    self.progress_callback(
+                                    self._get_progress_callback()(
                                         event_type="llm_reasoning",
                                         message=reasoning_content,
                                         details={
@@ -594,7 +637,7 @@ Final Answer: ..."""
                                     )
 
                                 if content and not tool_calls:
-                                    self.progress_callback(
+                                    self._get_progress_callback()(
                                         event_type="llm_response",
                                         message=content,
                                         details={
@@ -606,7 +649,7 @@ Final Answer: ..."""
                                 elif tool_calls:
                                     for tc in tool_calls:
                                         tool_name = tc.get("name", "unknown")
-                                        self.progress_callback(
+                                        self._get_progress_callback()(
                                             event_type="tool_call",
                                             message=f"Calling tool: {tool_name}",
                                             details={
@@ -715,11 +758,11 @@ Final Answer: ..."""
         self, content: str, phase: str, accumulated_length: int = 0
     ):
         """报告思维链片段（内部辅助方法）"""
-        if not self.progress_callback:
+        if not self._get_progress_callback():
             return
 
         try:
-            self.progress_callback(
+            self._get_progress_callback()(
                 event_type="llm_thinking",
                 message=f"[THOUGHT] {content[:150]}",
                 details={
@@ -817,7 +860,7 @@ Final Answer: ..."""
         """
         openai_messages = self._convert_messages_to_openai_format(messages)
 
-        if self.progress_callback:
+        if self._get_progress_callback():
             try:
                 user_msg = ""
                 for msg in messages:
@@ -825,7 +868,7 @@ Final Answer: ..."""
                         user_msg = str(msg.content)[:200]
                         break
 
-                self.progress_callback(
+                self._get_progress_callback()(
                     event_type="llm_thinking_start",
                     message="Starting deep thinking...",
                     details={
@@ -885,9 +928,9 @@ Final Answer: ..."""
                     accumulated_reasoning += reasoning_chunk
                     reasoning_chunk_count += 1
 
-                    if self.progress_callback:
+                    if self._get_progress_callback():
                         try:
-                            self.progress_callback(
+                            self._get_progress_callback()(
                                 event_type="llm_reasoning",
                                 message=reasoning_chunk,
                                 details={
@@ -932,10 +975,10 @@ Final Answer: ..."""
                                     tc.function.arguments
                                 )
 
-            if self.progress_callback:
+            if self._get_progress_callback():
                 try:
                     if accumulated_reasoning:
-                        self.progress_callback(
+                        self._get_progress_callback()(
                             event_type="llm_reasoning_complete",
                             message=accumulated_reasoning[:500] + "..."
                             if len(accumulated_reasoning) > 500
@@ -949,7 +992,7 @@ Final Answer: ..."""
                         )
 
                     if accumulated_content:
-                        self.progress_callback(
+                        self._get_progress_callback()(
                             event_type="llm_response",
                             message=accumulated_content[:500] + "..."
                             if len(accumulated_content) > 500
@@ -1014,7 +1057,7 @@ Final Answer: ..."""
         """
         旧版流式生成（兼容模式，不使用原生思考）
         """
-        if self.progress_callback:
+        if self._get_progress_callback():
             try:
                 user_msg = ""
                 for msg in messages:
@@ -1022,7 +1065,7 @@ Final Answer: ..."""
                         user_msg = str(msg.content)[:200]
                         break
 
-                self.progress_callback(
+                self._get_progress_callback()(
                     event_type="llm_thinking",
                     message="Starting to think...",
                     details={
@@ -1065,13 +1108,13 @@ Final Answer: ..."""
                             chunk_count += 1
 
                             if (
-                                self.progress_callback
+                                self._get_progress_callback()
                                 and chunk_count % 5 == 0
                                 and len(accumulated_content) % 50 < 10
                             ):
                                 try:
                                     recent_thinking = accumulated_content[-100:]
-                                    self.progress_callback(
+                                    self._get_progress_callback()(
                                         event_type="llm_streaming",
                                         message=recent_thinking,
                                         details={
@@ -1091,9 +1134,9 @@ Final Answer: ..."""
                                 generation_info={"chunk": True},
                             )
 
-                if self.progress_callback and accumulated_content:
+                if self._get_progress_callback() and accumulated_content:
                     try:
-                        self.progress_callback(
+                        self._get_progress_callback()(
                             event_type="llm_thinking_complete",
                             message=accumulated_content[:200] + "...",
                             details={

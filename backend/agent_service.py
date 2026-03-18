@@ -78,8 +78,12 @@ def create_global_state(
         user_task_type=UserTaskType.GENERAL_QA,
     )
 
+    # 将callback设置到全局registry，而不是存储在state中
     if progress_callback:
-        state.progress_callback = progress_callback
+        from progress_tracker import set_progress_callback
+
+        set_progress_callback(session_id, progress_callback)
+        print(f"[agent_service] Set progress callback for session: {session_id}")
 
     return state
 
@@ -98,12 +102,32 @@ def invoke_agent_sync(state: Any) -> Any:
     )
 
     async def run_agent():
-        graph = build_main_graph()
-        result = await graph.ainvoke(state)
+        from checkpointer import get_checkpointer
+
+        checkpointer_saver = get_checkpointer().get_saver(state.session_id)
+        graph = build_main_graph(checkpointer=checkpointer_saver)
+
+        if checkpointer_saver:
+            result = await graph.ainvoke(
+                state, config={"configurable": {"thread_id": state.session_id}}
+            )
+        else:
+            result = await graph.ainvoke(state)
         return result
 
     redirector = None
-    progress_callback = getattr(state, "progress_callback", None)
+    # 从全局registry获取progress_callback（通过session_id）
+    progress_callback = None
+    if state.session_id:
+        try:
+            from progress_tracker import get_progress_callback
+
+            progress_callback = get_progress_callback(state.session_id)
+            print(
+                f"[agent_service] Got progress callback from registry: {progress_callback is not None}"
+            )
+        except Exception as e:
+            print(f"[agent_service] Failed to get progress callback: {e}")
 
     if progress_callback:
         try:

@@ -1,12 +1,15 @@
 # agent/main_graph.py
 """
-Bio-Agent Main Graph (Refactored v2)
+Bio-Agent Main Graph (Refactored v3 with HITL)
 
 Flow:
-1. init => classify (immunity) => immunity subgraph => task_decomposition => orchestrator => result_evaluation => END
-2. init => classify (has_plan) => task_decomposition => orchestrator => result_evaluation => END
-3. init => classify (general_qa) => general_qa subgraph => extract_answer => END
-4. init => classify (model_training) => model_training (generates subtask) => orchestrator => result_evaluation => END
+1. init => classify (immunity) => immunity => generate_task => hitl => (confirmed) orchestrator => result_evaluator => END
+                                                        => (rejected) generate_task (loop)
+2. init => classify (has_plan) => generate_task => hitl => (confirmed) orchestrator => result_evaluator => END
+                                                    => (rejected) generate_task (loop)
+3. init => classify (general_qa) => general_qa => extract_answer => END
+4. init => classify (model_training) => generate_task => hitl => (confirmed) orchestrator => result_evaluator => END
+                                                          => (rejected) generate_task (loop)
 """
 
 from typing import Optional, Dict, Any, List
@@ -442,6 +445,34 @@ async def orchestrator_node(state: GlobalState) -> GlobalState:
     return state
 
 
+async def generate_task_node_wrapper(state: GlobalState) -> GlobalState:
+    """Wrapper for generate_task_node"""
+    from nodes.generate_task_node import generate_task_node
+
+    return await generate_task_node(state)
+
+
+async def hitl_node_wrapper(state: GlobalState) -> GlobalState:
+    """Wrapper for hitl_node"""
+    from nodes.hitl_node import hitl_node
+
+    return await hitl_node(state)
+
+
+def hitl_router(state: GlobalState) -> str:
+    """Router for HITL node"""
+    from nodes.hitl_node import hitl_router as _hitl_router
+
+    return _hitl_router(state)
+
+
+def generate_task_router(state: GlobalState) -> str:
+    """Router for generate_task node"""
+    from nodes.generate_task_node import generate_task_router as _generate_task_router
+
+    return _generate_task_router(state)
+
+
 def result_evaluator_node(state: GlobalState) -> GlobalState:
     """Result Evaluator 子图节点"""
     print(f"\n{'=' * 60}")
@@ -761,8 +792,15 @@ def _parse_json_response(response_text: str) -> Dict[str, Any]:
     }
 
 
-def build_main_graph():
-    """构建主图"""
+def build_main_graph(checkpointer=None):
+    """构建主图
+
+    Args:
+        checkpointer: Checkpoint saver for state persistence (required for HITL)
+
+    Returns:
+        CompiledStateGraph
+    """
     graph = StateGraph(GlobalState)
 
     # 添加节点
@@ -775,6 +813,8 @@ def build_main_graph():
     graph.add_node("general_qa", general_qa_node)
     graph.add_node("extract_answer", extract_answer_node)
     graph.add_node("model_training", model_training_node)
+    graph.add_node("generate_task", generate_task_node_wrapper)
+    graph.add_node("hitl", hitl_node_wrapper)
 
     # 添加边
     graph.add_edge(START, "init")
@@ -786,15 +826,30 @@ def build_main_graph():
         classify_router,
         {
             "immunity_branch": "immunity",
-            "has_plan_branch": "task_decomposition",
+            "has_plan_branch": "generate_task",
             "general_qa_branch": "general_qa",
             "model_training_branch": "model_training",
         },
     )
 
-    # Immunity branch flow
-    graph.add_edge("immunity", "task_decomposition")
-    graph.add_edge("task_decomposition", "orchestrator")
+    # Immunity branch flow: immunity => generate_task => hitl => (confirmed) orchestrator => result_evaluator => END
+    graph.add_edge("immunity", "generate_task")
+    graph.add_conditional_edges(
+        "generate_task",
+        generate_task_router,
+        {
+            "hitl": "hitl",
+            "orchestrator": "orchestrator",
+        },
+    )
+    graph.add_conditional_edges(
+        "hitl",
+        hitl_router,
+        {
+            "generate_task": "generate_task",
+            "orchestrator": "orchestrator",
+        },
+    )
     graph.add_edge("orchestrator", "result_evaluator")
     graph.add_edge("result_evaluator", END)
 
@@ -802,11 +857,12 @@ def build_main_graph():
     graph.add_edge("general_qa", "extract_answer")
     graph.add_edge("extract_answer", END)
 
-    # Model Training branch flow
-    graph.add_edge("model_training", "orchestrator")
-    graph.add_edge("orchestrator", "result_evaluator")
-    graph.add_edge("result_evaluator", END)
+    # Model Training branch flow: generate_task => hitl => (confirmed) orchestrator => result_evaluator => END
+    graph.add_edge("model_training", "generate_task")
 
+    # 使用 checkpointer 编译图（如果提供）
+    if checkpointer:
+        return graph.compile(checkpointer=checkpointer)
     return graph.compile()
 
 
@@ -817,7 +873,6 @@ async def run_agent_async(user_input: str, **kwargs) -> GlobalState:
     initial_state = GlobalState(
         user_input=user_input,
         session_id=kwargs.get("session_id"),
-        progress_callback=kwargs.get("progress_callback"),
         **{
             k: v
             for k, v in kwargs.items()
@@ -838,7 +893,6 @@ def run_agent(user_input: str, **kwargs) -> GlobalState:
     initial_state = GlobalState(
         user_input=user_input,
         session_id=kwargs.get("session_id"),
-        progress_callback=kwargs.get("progress_callback"),
         **{
             k: v
             for k, v in kwargs.items()

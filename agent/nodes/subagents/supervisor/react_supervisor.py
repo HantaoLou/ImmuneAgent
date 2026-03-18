@@ -224,7 +224,7 @@ def user_description_classify_node(state: ReactSupervisorState) -> ReactSupervis
     user_input = state.user_input
     classification = _classify_user_task_type(
         user_input,
-        progress_callback=state.progress_callback,
+        progress_callback=get_progress_callback_by_session(state.session_id),
         session_id=state.session_id,
     )
     state.decision = classification.get("decision")

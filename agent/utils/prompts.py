@@ -61,19 +61,7 @@ If you need files that are not in this directory, do NOT attempt to access exter
 
 ## 3. MCP Calling Rules
 
-### 3.1 Path Conversion [Important]
-MCP tools run on the host machine and cannot access sandbox paths. Convert paths when passing parameters:
-
-| Sandbox Path | MCP Parameter Path |
-|--------------|-------------------|
-| `/tmp/...` | `/data/...` |
-| `/workspace/...` | `/data/workspace/...` |
-
-**Example**:
-- File in sandbox: `/tmp/input.fasta`
-- Pass to MCP: `/data/input.fasta`
-
-### 3.2 SSE Streaming Tasks
+### 3.1 SSE Streaming Tasks
 
 When MCP tool returns a `streaming_task` type, retrieve real-time results through SSE endpoint.
 

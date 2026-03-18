@@ -1,21 +1,14 @@
 import { useCallback, useRef, useState } from 'react';
 import api from '@/services/api';
-import { LogEntry } from '@/types';
+import { LogEntry, HITLRequest } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
-
-interface SSEEvent {
-  event_type: string;
-  message: string;
-  timestamp: string;
-  node_name?: string;
-  details?: Record<string, any>;
-  session_id?: string;
-}
+import { parseSSEEventData, SSEEventData } from '@/utils/sseParser';
 
 interface UseChatStreamOptions {
   onProgress?: (log: LogEntry) => void;
   onComplete?: (result: any) => void;
   onError?: (error: string) => void;
+  onHITLRequest?: (hitlRequest: HITLRequest) => void;
 }
 
 export const useChatStream = (options?: UseChatStreamOptions) => {
@@ -25,10 +18,16 @@ export const useChatStream = (options?: UseChatStreamOptions) => {
   const logsRef = useRef<LogEntry[]>([]);
 
   const handleSSEEvent = useCallback((event: MessageEvent, eventType: string) => {
+    console.log('[useChatStream] handleSSEEvent called:', { eventType, data: event.data });
+
     try {
-      const data: SSEEvent = JSON.parse(event.data);
+      const rawData = event.data;
+      const parsed = parseSSEEventData(rawData);
       
-      if (eventType === 'progress') {
+      console.log('[useChatStream] Parsed result:', parsed);
+
+      if (eventType === 'progress' || eventType === 'message') {
+        const data = parsed.data;
         const logEntry: LogEntry = {
           id: uuidv4(),
           event_type: data.event_type,
@@ -37,16 +36,24 @@ export const useChatStream = (options?: UseChatStreamOptions) => {
           node_name: data.node_name,
           details: data.details,
         };
-        
+
         logsRef.current = [...logsRef.current, logEntry];
         options?.onProgress?.(logEntry);
-        
-        if (data.event_type === 'task_complete') {
-          options?.onComplete?.(data.details?.result);
+
+        if (parsed.type === 'task_complete') {
+          console.log('[useChatStream] Handling task_complete');
+          options?.onComplete?.(parsed.result);
+          disconnect();
+        } else if (parsed.type === 'hitl_request') {
+          console.log('[useChatStream] Handling hitl_request');
+          console.log('[useChatStream] HITL request:', parsed.hitlRequest);
+          if (parsed.hitlRequest) {
+            options?.onHITLRequest?.(parsed.hitlRequest);
+          }
           disconnect();
         }
       } else if (eventType === 'error') {
-        options?.onError?.(data.message || 'Unknown error');
+        options?.onError?.(parsed.data.message || 'Unknown error');
         disconnect();
       }
     } catch (e) {
@@ -65,9 +72,11 @@ export const useChatStream = (options?: UseChatStreamOptions) => {
 
   const submitTask = useCallback(async (message: string, sessionId?: string) => {
     if (isLoading) return;
-    
+
     logsRef.current = [];
     setIsLoading(true);
+
+    console.log('[useChatStream] submitTask called:', { message, sessionId, isLoading });
 
     try {
       const response = await api.post('/api/chat/submit', {
@@ -76,44 +85,53 @@ export const useChatStream = (options?: UseChatStreamOptions) => {
       });
 
       const { session_id } = response.data;
-      
+      console.log('[useChatStream] Submit response:', response.data);
+
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const sseUrl = `${apiUrl}/api/chat/stream/${session_id}`;
-      
+      console.log('[useChatStream] SSE URL:', sseUrl);
+
       const eventSource = new EventSource(sseUrl);
       eventSourceRef.current = eventSource;
       setIsConnected(true);
 
       eventSource.onopen = () => {
+        console.log('[useChatStream] EventSource opened');
         setIsConnected(true);
       };
 
       eventSource.addEventListener('progress', (event) => {
+        console.log('[useChatStream] Received progress event:', event);
         handleSSEEvent(event as MessageEvent, 'progress');
       });
 
       eventSource.addEventListener('status', (event) => {
+        console.log('[useChatStream] Received status event:', event);
         handleSSEEvent(event as MessageEvent, 'status');
       });
 
       eventSource.addEventListener('done', (event) => {
+        console.log('[useChatStream] Received done event:', event);
         handleSSEEvent(event as MessageEvent, 'done');
         disconnect();
       });
 
       eventSource.addEventListener('error', (event) => {
+        console.log('[useChatStream] Received error event:', event);
         if ((event as MessageEvent).data) {
           handleSSEEvent(event as MessageEvent, 'error');
         }
         disconnect();
       });
 
-      eventSource.onerror = () => {
+      eventSource.onerror = (error) => {
+        console.error('[useChatStream] EventSource error:', error);
         disconnect();
       };
 
       return session_id;
     } catch (error: any) {
+      console.error('[useChatStream] Submit error:', error);
       setIsLoading(false);
       options?.onError?.(error.message || 'Failed to submit task');
       throw error;

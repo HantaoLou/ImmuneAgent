@@ -27,6 +27,7 @@ export interface Message {
   status: 'success' | 'loading' | 'error';
   attachments?: FileAttachment[];
   executionLogs?: LogEntry[];
+  hitlRequest?: HITLRequest;
 }
 
 export interface Session {
@@ -78,4 +79,23 @@ export interface SandboxFilesResponse {
   files: SandboxFile[];
   count: number;
   source: string;
+}
+
+export interface MissingParameter {
+  name: string;
+  description: string;
+  type: string;
+  required: boolean;
+}
+
+export interface HITLRequest {
+  type: string;
+  session_id: string;
+  task_md: string;
+  missing_parameters: MissingParameter[];
+  iteration: number;
+  max_iterations: number;
+  timestamp: string;
+  previous_feedback: string | null;
+  hitl_id: string;
 }

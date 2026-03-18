@@ -78,20 +78,34 @@ if USE_SIMPLIFIED_QA:
             print(f"  - Final answer: {str(final_answer)[:200]}...")
 
             # [HOT] 通过SSE推送最终答案到前端
-            if (
-                hasattr(global_state, "progress_callback")
-                and global_state.progress_callback
-            ):
+            if global_state.session_id:
                 try:
-                    global_state.progress_callback(
-                        event_type="final_answer",
-                        message=f"最终答案: {str(final_answer)[:300]}",
-                        details={
-                            "answer": str(final_answer),
-                            "answer_length": len(str(final_answer)),
-                            "node": "general_qa_N8",
-                        },
+                    import sys
+                    from pathlib import Path
+
+                    # 添加backend到path以导入progress_tracker
+                    backend_dir = (
+                        Path(__file__).parent.parent.parent.parent.parent / "backend"
                     )
+                    if str(backend_dir) not in sys.path:
+                        sys.path.insert(0, str(backend_dir))
+
+                    import backend.progress_tracker as pt_module
+
+                    progress_callback = pt_module.get_progress_callback(
+                        global_state.session_id
+                    )
+
+                    if progress_callback:
+                        progress_callback(
+                            event_type="final_answer",
+                            message=f"最终答案: {str(final_answer)[:300]}",
+                            details={
+                                "answer": str(final_answer),
+                                "answer_length": len(str(final_answer)),
+                                "node": "general_qa_N8",
+                            },
+                        )
                 except Exception as e:
                     print(f"  [警告] 推送答案到SSE失败: {e}")
 

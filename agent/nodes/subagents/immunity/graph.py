@@ -30,6 +30,32 @@ from utils.llm_factory import (
 from .state import ImmunityState
 from .prompts import ImmunityPrompts
 
+
+def get_progress_callback_by_session(session_id: Optional[str]) -> Optional[Any]:
+    """
+    Get progress callback from global registry by session_id
+
+    Args:
+        session_id: Session ID to look up
+
+    Returns:
+        Progress callback function if found, None otherwise
+    """
+    if not session_id:
+        return None
+
+    try:
+        # 添加backend到path以导入progress_tracker
+        backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+
+        import backend.progress_tracker as pt_module
+
+        return pt_module.get_progress_callback(session_id)
+    except (ImportError, AttributeError):
+        return None
+
 # Mem0 记忆管理
 try:
     from utils.mem0_manager import (
@@ -202,42 +228,55 @@ def _get_llm_with_callback(state, purpose="bioinformatics"):
         purpose: LLM用途（"bioinformatics", "reasoning", "code"等）
 
     Returns:
-        LLM实例（带或不带progress_callback）
-    """
-    # [DEBUG] 检查 progress_callback 是否可用
-    has_progress_callback = (
-        hasattr(state, "progress_callback") and state.progress_callback
-    )
-    has_session_id = hasattr(state, "session_id") and state.session_id
-    has_parent_state = hasattr(state, "parent_state") and state.parent_state
-    has_get_llm = hasattr(state, "get_llm") and callable(
-        getattr(state, "get_llm", None)
-    )
+         LLM实例（带或不带progress_callback）
+     """
+     # [DEBUG] 检查 session_id 是否可用
+     has_session_id = hasattr(state, "session_id") and state.session_id
+     has_parent_state = hasattr(state, "parent_state") and state.parent_state
+     has_get_llm = hasattr(state, "get_llm") and callable(
+         getattr(state, "get_llm", None)
+     )
 
-    print(f"[Immunity] _get_llm_with_callback 状态检查:")
-    print(f"  - has_progress_callback: {has_progress_callback}")
-    print(f"  - has_session_id: {has_session_id}")
-    print(f"  - has_parent_state: {has_parent_state}")
-    print(f"  - has_get_llm: {has_get_llm}")
+     print(f"[Immunity] _get_llm_with_callback 状态检查:")
+     print(f"  - has_session_id: {has_session_id}")
+     print(f"  - has_parent_state: {has_parent_state}")
+     print(f"  - has_get_llm: {has_get_llm}")
 
-    # [HOT] 优先使用 state.get_llm() 方法
-    if has_get_llm:
-        print(f"[Immunity] 使用 state.get_llm() 方法")
-        return state.get_llm(purpose=purpose, node_name="immunity")
+     # [HOT] 优先使用 state.get_llm() 方法
+     if has_get_llm:
+         print(f"[Immunity] 使用 state.get_llm() 方法")
+         return state.get_llm(purpose=purpose, node_name="immunity")
 
-    # [FALLBACK] 如果没有 get_llm 方法，手动获取 callback 并创建 LLM
+     # [FALLBACK] 如果没有 get_llm 方法，通过session_id获取 callback 并创建 LLM
     progress_callback = None
     session_id = None
-    if has_progress_callback:
-        progress_callback = state.progress_callback
     if has_session_id:
         session_id = state.session_id
     elif has_parent_state:
-        progress_callback = getattr(state.parent_state, "progress_callback", None)
         session_id = getattr(state.parent_state, "session_id", None)
         print(
-            f"[Immunity] 从 parent_state 获取: progress_callback={progress_callback is not None}, session_id={session_id}"
+            f"[Immunity] 从 parent_state 获取: session_id={session_id}"
         )
+
+    # 通过session_id从全局registry获取callback
+    if session_id:
+        try:
+            import sys
+            from pathlib import Path
+
+            # 添加backend到path以导入progress_tracker
+            backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+            if str(backend_dir) not in sys.path:
+                sys.path.insert(0, str(backend_dir))
+
+            import backend.progress_tracker as pt_module
+
+            progress_callback = pt_module.get_progress_callback(session_id)
+            print(
+                f"[Immunity] 从全局 registry 获取 callback: {progress_callback is not None}"
+            )
+        except (ImportError, AttributeError) as e:
+            print(f"[Immunity] 获取callback失败: {e}")
 
     # 创建带SSE推送的LLM实例
     if progress_callback or session_id:
@@ -987,7 +1026,7 @@ Main Citations (Top 10):
             state.sandbox_dir,
             state.local_sandbox_dir,
             opensandbox_id=_get_opensandbox_id(state),
-            progress_callback=state.progress_callback,
+            progress_callback=get_progress_callback_by_session(state.session_id),
             session_id=state.session_id,
         )
         state.retrieval_report_path = report_path
@@ -1221,7 +1260,7 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
                 state.sandbox_dir,
                 state.local_sandbox_dir,
                 opensandbox_id=_get_opensandbox_id(state),
-                progress_callback=state.progress_callback,
+                progress_callback=get_progress_callback_by_session(state.session_id),
                 session_id=state.session_id,
             )
 
@@ -1560,7 +1599,7 @@ Scientific Rationale:
                 state.sandbox_dir,
                 state.local_sandbox_dir,
                 opensandbox_id=_get_opensandbox_id(state),
-                progress_callback=state.progress_callback,
+                progress_callback=get_progress_callback_by_session(state.session_id),
                 session_id=state.session_id,
             )
 
@@ -1783,7 +1822,7 @@ def planning_node(state: ImmunityState) -> ImmunityState:
             state.sandbox_dir,
             state.local_sandbox_dir,
             opensandbox_id=_get_opensandbox_id(state),
-            progress_callback=state.progress_callback,
+            progress_callback=get_progress_callback_by_session(state.session_id),
             session_id=state.session_id,
         )
 
@@ -1861,7 +1900,7 @@ Evaluation Note: This plan was directly provided by the user, automatic evaluati
             state.sandbox_dir,
             state.local_sandbox_dir,
             opensandbox_id=_get_opensandbox_id(state),
-            progress_callback=state.progress_callback,
+            progress_callback=get_progress_callback_by_session(state.session_id),
             session_id=state.session_id,
         )
         _progress_logger.end_stage(
@@ -1917,7 +1956,7 @@ Evaluation Note: This plan was directly provided by the user, automatic evaluati
             state.sandbox_dir,
             state.local_sandbox_dir,
             opensandbox_id=_get_opensandbox_id(state),
-            progress_callback=state.progress_callback,
+            progress_callback=get_progress_callback_by_session(state.session_id),
             session_id=state.session_id,
         )
 
@@ -1958,7 +1997,7 @@ def immunity_input_mapper(global_state: GlobalState) -> ImmunityState:
 
     # [DEBUG] 检查 global_state 中的 progress_callback
     has_progress_callback = (
-        hasattr(global_state, "progress_callback") and global_state.progress_callback
+        global_state.session_id
     )
     has_session_id = hasattr(global_state, "session_id") and global_state.session_id
     print(f"[Immunity] immunity_input_mapper 状态检查:")
@@ -2082,7 +2121,7 @@ def immunity_output_mapper(
     )
 
     # [HOT] 推送生成的文件内容到前端（通过SSE）
-    if hasattr(global_state, "progress_callback") and global_state.progress_callback:
+    if global_state.session_id:
         try:
             # 获取session_id和沙盒目录
             session_id = getattr(global_state, "session_id", None)
@@ -2092,7 +2131,7 @@ def immunity_output_mapper(
                 # 推送执行计划
                 if final_enhanced_plan or execution_plan:
                     plan_content = final_enhanced_plan or execution_plan
-                    global_state.progress_callback(
+                    global_get_progress_callback_by_session(state.session_id)(
                         event_type="file_content",
                         message=f"📄 实验计划生成完成",
                         details={
@@ -2109,7 +2148,7 @@ def immunity_output_mapper(
 
                 # 推送研究报告（如果有）
                 if research_summary:
-                    global_state.progress_callback(
+                    global_get_progress_callback_by_session(state.session_id)(
                         event_type="file_content",
                         message=f"📚 研究报告已生成",
                         details={
@@ -2126,7 +2165,7 @@ def immunity_output_mapper(
 
                 # 推送假设生成报告（如果有）
                 if hypothesis_summary:
-                    global_state.progress_callback(
+                    global_get_progress_callback_by_session(state.session_id)(
                         event_type="file_content",
                         message=f"🧬 假设生成报告已生成",
                         details={
@@ -2143,7 +2182,7 @@ def immunity_output_mapper(
 
                 # 推送评估报告（如果有）
                 if final_evaluation:
-                    global_state.progress_callback(
+                    global_get_progress_callback_by_session(state.session_id)(
                         event_type="file_content",
                         message=f"[STAT] 评估报告已生成",
                         details={

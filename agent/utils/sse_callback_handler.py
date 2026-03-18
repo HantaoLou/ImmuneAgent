@@ -215,6 +215,7 @@ def create_llm_with_sse(
     model: str = "glm-4-flash",
     temperature: float = 0.7,
     progress_callback: Optional[callable] = None,
+    session_id: Optional[str] = None,
     streaming: bool = True,
     enable_thinking_prompt: bool = True,
     compact_thinking_mode: bool = True,
@@ -227,6 +228,7 @@ def create_llm_with_sse(
         model: 模型名称
         temperature: 温度参数
         progress_callback: SSE 进度回调函数
+        session_id: 会话ID，用于从全局registry获取进度回调函数
         streaming: 是否启用流式输出
         enable_thinking_prompt: 是否启用思考引导 prompt
         compact_thinking_mode: 是否使用紧凑模式的思考指令
@@ -280,6 +282,7 @@ def create_llm_with_sse(
             temperature=temperature,
             streaming=streaming,
             progress_callback=progress_callback,
+            session_id=session_id,
             enable_thinking_prompt=enable_thinking_prompt,
             compact_thinking_mode=compact_thinking_mode,
             **kwargs,

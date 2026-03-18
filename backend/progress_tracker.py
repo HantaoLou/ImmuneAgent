@@ -50,6 +50,9 @@ class ProgressEventType(str, Enum):
     OPENCODE_RESULT = "opencode_result"
     OPENCODE_ERROR = "opencode_error"
     OPENCODE_COMPLETE = "opencode_complete"
+    HITL_REQUEST = "hitl_request"
+    HITL_CONFIRMED = "hitl_confirmed"
+    HITL_REJECTED = "hitl_rejected"
 
 
 class ProgressEvent(BaseModel):
@@ -72,6 +75,9 @@ class ProgressEvent(BaseModel):
 
 
 _global_trackers: Dict[str, "ProgressTracker"] = {}
+
+# Global registry of progress callbacks (keyed by session_id)
+_global_callbacks: Dict[str, Callable] = {}
 
 
 class ProgressTracker:
@@ -206,6 +212,22 @@ class ProgressTracker:
         return progress_callback
 
 
+def create_progress_callback_with_session(session_id: str) -> Optional[Callable]:
+    """
+    根据session_id创建进度回调函数
+
+    Args:
+        session_id: 会话ID
+
+    Returns:
+        进度回调函数，如果找不到对应的tracker则返回None
+    """
+    tracker = get_progress_tracker(session_id)
+    if tracker:
+        return tracker.create_callback()
+    return None
+
+
 def create_progress_tracker(session_id: str) -> ProgressTracker:
     """
     创建进度跟踪器（强制绑定 session_id 和主事件循环）
@@ -240,4 +262,53 @@ def remove_progress_tracker(session_id: str):
     """移除进度跟踪器"""
     if session_id in _global_trackers:
         tracker = _global_trackers.pop(session_id)
-        tracker.stop()
+
+
+def set_progress_callback(session_id: str, callback: Callable):
+    """
+    设置进度回调函数（保存到全局registry）
+
+    Args:
+        session_id: 会话ID
+        callback: 进度回调函数
+    """
+    if callback:
+        _global_callbacks[session_id] = callback
+        print(f"[ProgressTracker] Set callback for session: {session_id}")
+        print(
+            f"[ProgressTracker] Total callbacks in registry: {len(_global_callbacks)}"
+        )
+    else:
+        print(
+            f"[ProgressTracker] WARNING: Trying to set None callback for session: {session_id}"
+        )
+
+
+def get_progress_callback(session_id: str) -> Optional[Callable]:
+    """
+    获取进度回调函数（从全局registry）
+
+    Args:
+        session_id: 会话ID
+
+    Returns:
+        进度回调函数，如果不存在则返回None
+    """
+    callback = _global_callbacks.get(session_id)
+    print(f"[ProgressTracker] get_progress_callback called for session: {session_id}")
+    print(f"[ProgressTracker] Callback found: {callback is not None}")
+    print(f"[ProgressTracker] Total callbacks in registry: {len(_global_callbacks)}")
+    print(f"[ProgressTracker] Available sessions: {list(_global_callbacks.keys())}")
+    return callback
+
+
+def remove_progress_callback(session_id: str):
+    """
+    移除进度回调函数
+
+    Args:
+        session_id: 会话ID
+    """
+    if session_id in _global_callbacks:
+        _global_callbacks.pop(session_id)
+        print(f"[ProgressTracker] Removed callback for session: {session_id}")

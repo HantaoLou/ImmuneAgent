@@ -79,7 +79,7 @@ def _get_auto_progress_callback() -> Optional[Callable]:
     Automatically get progress callback from context (ContextVar)
 
     This allows all LLM creation functions to automatically use SSE
-    when a callback is set in the context, without requiring explicit passing.
+    when a callback is set in context, without requiring explicit passing.
 
     Returns:
         Progress callback function if available in context, None otherwise
@@ -87,6 +87,38 @@ def _get_auto_progress_callback() -> Optional[Callable]:
     if PROGRESS_CONTEXT_AVAILABLE and get_progress_callback is not None:
         return get_progress_callback()
     return None
+
+
+def _get_progress_callback_by_session(session_id: Optional[str]) -> Optional[Callable]:
+    """
+    Get progress callback from global registry by session_id
+
+    This allows LLM instances to retrieve callbacks without requiring
+    the callback to be stored in the state.
+
+    Args:
+        session_id: Session ID to look up
+
+    Returns:
+        Progress callback function if found, None otherwise
+    """
+    if not session_id:
+        return None
+
+    try:
+        import sys
+        from pathlib import Path
+
+        # Add backend to path to import progress_tracker
+        backend_dir = Path(__file__).parent.parent.parent / "backend"
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+
+        import backend.progress_tracker as pt_module
+
+        return pt_module.get_progress_callback(session_id)
+    except (ImportError, AttributeError):
+        return None
 
 
 def _bind_session_to_callback(
@@ -256,6 +288,7 @@ def _create_zhipu_llm(
     temperature: float = 0.1,
     api_key: Optional[str] = None,
     progress_callback: Optional[Callable] = None,
+    session_id: Optional[str] = None,
     enable_thinking_prompt: bool = True,
     compact_thinking_mode: bool = True,
 ) -> Optional[Any]:
@@ -291,6 +324,7 @@ def _create_zhipu_llm(
             model=model,
             temperature=temperature,
             progress_callback=progress_callback,
+            session_id=session_id,
             streaming=bool(progress_callback),
             enable_thinking_prompt=enable_thinking_prompt,
             compact_thinking_mode=compact_thinking_mode,
@@ -460,6 +494,7 @@ def _create_llm_by_purpose(
     temperature: Optional[float] = None,
     custom_model: Optional[str] = None,
     progress_callback: Optional[Callable] = None,
+    session_id: Optional[str] = None,
     enable_thinking_prompt: bool = True,
     compact_thinking_mode: bool = True,
     **kwargs,
@@ -472,6 +507,7 @@ def _create_llm_by_purpose(
         temperature: Temperature parameter, if None uses default configuration
         custom_model: Custom model name (format: provider:model)
         progress_callback: Optional progress callback for SSE streaming
+        session_id: Optional session ID for multi-session isolation
         enable_thinking_prompt: Whether to inject thinking guidance prompt
         compact_thinking_mode: Whether to use compact thinking prompt
         **kwargs: Additional arguments
@@ -524,6 +560,7 @@ def _create_llm_by_purpose(
                         temp,
                         api_key=zhipu_key,
                         progress_callback=progress_callback,
+                        session_id=session_id,
                         enable_thinking_prompt=enable_thinking_prompt,
                         compact_thinking_mode=compact_thinking_mode,
                     )
@@ -882,7 +919,13 @@ def create_llm_with_thinking(
     """
     # 1. Auto-detect callback if not provided
     if progress_callback is None:
-        progress_callback = _get_auto_progress_callback()
+        # Try to get callback from session_id (global registry)
+        if session_id:
+            progress_callback = _get_progress_callback_by_session(session_id)
+
+        # Fall back to context-based detection
+        if progress_callback is None:
+            progress_callback = _get_auto_progress_callback()
 
     # 2. Bind session_id to callback if both are available
     if progress_callback and session_id:
@@ -911,6 +954,7 @@ def create_llm_with_thinking(
         temperature=temperature,
         custom_model=custom_model,
         progress_callback=progress_callback,
+        session_id=session_id,
         **thinking_kwargs,
     )
 
@@ -1014,6 +1058,7 @@ def get_llm(
                         temperature=use_temp,
                         api_key=zhipu_key,
                         progress_callback=bound_callback,
+                        session_id=session_id,
                         enable_thinking_prompt=enable_thinking,
                         compact_thinking_mode=kwargs.get("compact_thinking_mode", True),
                         timeout=kwargs.get("timeout", 120),

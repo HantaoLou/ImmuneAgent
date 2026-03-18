@@ -93,7 +93,10 @@ class ParallelTaskGroup(BaseModel):
 
 # Global state class
 class GlobalState(BaseModel):
-    model_config = ConfigDict(use_enum_values=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(
+        use_enum_values=True,
+        arbitrary_types_allowed=True,
+    )
 
     user_input: str = Field(description="User's original input")
     user_task_type: Optional[UserTaskType] = Field(
@@ -173,11 +176,6 @@ class GlobalState(BaseModel):
         default_factory=list, description="MCP 工具调用记录"
     )
 
-    # 进度回调函数 - 用于实时推送执行进度
-    progress_callback: Optional[Callable] = Field(
-        default=None, description="进度回调函数，用于实时推送执行进度"
-    )
-
     # Thinking 历史记录 - 用于跟踪 LLM thinking 过程
     thinking_history: List[Dict[str, Any]] = Field(
         default_factory=list, description="LLM thinking 过程历史记录"
@@ -198,6 +196,67 @@ class GlobalState(BaseModel):
     # Mem0 任务历史
     immunity_history: List[Dict[str, Any]] = Field(
         default_factory=list, description="Mem0 中该 session 的历史任务结果"
+    )
+
+    # ==================== HITL (Human-in-the-Loop) 新增字段 ====================
+
+    # HITL 迭代计数器
+    hitl_iteration: int = Field(default=0, description="HITL 迭代次数计数器")
+
+    # 用户反馈内容
+    user_feedback: Optional[str] = Field(default=None, description="用户反馈内容")
+
+    # 缺失的参数
+    missing_parameters: List[Dict[str, Any]] = Field(
+        default_factory=list, description="缺失的参数"
+    )
+
+    # HITL 确认状态
+    hitl_confirmed: bool = Field(default=False, description="HITL 用户确认状态")
+
+    # HITL 请求数据
+    hitl_request: Optional[Dict[str, Any]] = Field(
+        default=None, description="HITL 请求数据"
+    )
+
+    # HITL 历史记录
+    hitl_history: List[Dict[str, Any]] = Field(
+        default_factory=list, description="HITL 历史记录"
+    )
+
+    # HITL 请求数据历史
+    hitl_request_history: List[Dict[str, Any]] = Field(
+        default_factory=list, description="HITL 请求数据历史"
+    )
+
+    # HITL 请求数据列表
+    hitl_requests: List[Dict[str, Any]] = Field(
+        default_factory=list, description="HITL 请求数据列表"
+    )
+
+    # HITL 响应数据
+    hitl_response: Optional[Dict[str, Any]] = Field(
+        default=None, description="HITL 响应数据"
+    )
+
+    # HITL 响应数据历史
+    hitl_response_history: List[Dict[str, Any]] = Field(
+        default_factory=list, description="HITL 响应数据历史"
+    )
+
+    # HITL 响应数据列表
+    hitl_responses: List[Dict[str, Any]] = Field(
+        default_factory=list, description="HITL 响应数据列表"
+    )
+
+    # 父状态（用于子图）
+    parent_state: Optional["GlobalState"] = Field(
+        default=None, description="父状态（用于子图）"
+    )
+
+    # 任务 markdown 内容
+    task_md_content: Optional[str] = Field(
+        default=None, description="任务 markdown 内容"
     )
 
     def get_llm(
@@ -227,17 +286,23 @@ class GlobalState(BaseModel):
         if node_name is None:
             node_name = self._get_caller_node_name()
 
-        # 如果没有 callback 但有 session_id，尝试创建 callback
-        callback = self.progress_callback
-        if not callback and self.session_id:
+        # 通过session_id从全局registry获取callback
+        callback = None
+        if self.session_id:
             try:
-                from utils.progress_reporter import (
-                    create_progress_callback_with_session,
-                )
+                import sys
+                from pathlib import Path
 
-                callback = create_progress_callback_with_session(self.session_id)
-                self.progress_callback = callback
-            except ImportError:
+                # 添加backend到path以导入progress_tracker
+                backend_dir = Path(__file__).parent.parent / "backend"
+                if str(backend_dir) not in sys.path:
+                    sys.path.insert(0, str(backend_dir))
+
+                # 使用完整的导入路径，确保导入的是同一个模块实例
+                import backend.progress_tracker as pt_module
+
+                callback = pt_module.get_progress_callback(self.session_id)
+            except (ImportError, AttributeError):
                 pass
 
         return create_llm_with_thinking(

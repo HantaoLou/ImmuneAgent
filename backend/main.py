@@ -4,7 +4,7 @@ import asyncio
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -14,6 +14,7 @@ import asyncio
 import threading
 
 from config import CORS_ORIGINS, API_HOST, API_PORT, API_RELOAD
+from checkpointer import get_checkpointer
 from agent_service import (
     AGENT_AVAILABLE,
     invoke_agent_sync,
@@ -85,6 +86,14 @@ class ChatResponse(BaseModel):
     session_id: str
     task_type: str
     result: dict
+
+
+class HITLResumeRequest(BaseModel):
+    session_id: str
+    hitl_id: str
+    confirmed: bool
+    feedback: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
 
 
 @app.get("/api/health")
@@ -189,6 +198,46 @@ async def chat(request: ChatRequest):
                 ),
             }
 
+            # 关键修复：检查是否是 HITL 中断
+            # LangGraph 的 interrupt() 不会抛出异常，而是返回包含 __interrupt__ 的结果
+            is_hitl_interrupt = (
+                isinstance(agent_result, dict)
+                and "__interrupt__" in agent_result
+                and len(agent_result["__interrupt__"]) > 0
+            )
+
+            if is_hitl_interrupt:
+                # HITL 中断状态，发送 HITL_REQUEST 事件
+                print(
+                    f"[chat] Detected HITL interrupt in result: {agent_result.get('__interrupt__')}"
+                )
+                interrupt_value = agent_result["__interrupt__"][0]
+                hitl_request = getattr(interrupt_value, "value", None)
+
+                yield {
+                    "event": "progress",
+                    "data": json.dumps(
+                        ProgressEvent(
+                            event_type=ProgressEventType.HITL_REQUEST,
+                            message="Waiting for user confirmation",
+                            details={
+                                "hitl_status": "waiting",
+                                "hitl_request": hitl_request,
+                            },
+                        ).model_dump()
+                    ),
+                }
+                return
+
+            # 在format_agent_response之前检查HITL状态，防止在HITL等待时发送错误的事件
+            hitl_status = getattr(agent_result, "hitl_status", None)
+            if hitl_status in ("waiting", "waiting_no_interrupt"):
+                # HITL中断状态，不format响应，也不发送task_complete事件
+                print(
+                    f"[chat] HITL status is {hitl_status}, skipping format_agent_response"
+                )
+                return
+
             response = format_agent_response(agent_result)
             print(f"[chat] Response session_id: {response.get('session_id')}")
             print(
@@ -240,6 +289,392 @@ async def chat(request: ChatRequest):
             yield {"event": "done", "data": json.dumps(response)}
 
         except Exception as e:
+            # 检查是否是GraphInterrupt（HITL）
+            exception_type = type(e).__name__
+            print(f"[chat] Exception occurred: {exception_type}: {str(e)[:200]}")
+            if "GraphInterrupt" in exception_type or "Interrupt" in exception_type:
+                # HITL中断，发送剩余的进度事件（包括hitl_request），然后保持tracker
+                print(f"[chat] HITL interrupt detected: {exception_type}")
+                print(f"[chat] Sending remaining progress events...")
+
+                # 发送剩余的进度事件
+                while True:
+                    progress_event = await tracker.get_event(timeout=0.01)
+                    if not progress_event:
+                        break
+                    print(f"[chat] Sending progress event: {progress_event.event_type}")
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps(progress_event.model_dump()),
+                    }
+
+                print(
+                    f"[chat] Keeping tracker for HITL session: {session_id} (NOT removing)"
+                )
+                # 不发送error事件，让前端知道这是正常的HITL中断
+                return  # 直接返回，不进入finally（或者进入但不删除）
+            else:
+                # 其他错误，返回错误信息
+                print(f"[chat] Non-HITL error: {exception_type}")
+                yield {
+                    "event": "error",
+                    "data": json.dumps(
+                        {
+                            "error": str(e),
+                            "error_type": exception_type,
+                        }
+                    ),
+                }
+        finally:
+            # 完全移除tracker删除逻辑，让tracker保持活跃状态
+            # HITL和resume都依赖同一个tracker，不应该删除它
+            print(
+                f"[chat] Finally block: session_id={session_id}, tracker={tracker is not None}"
+            )
+            # 只在明确要求时才删除tracker（通过单独的API）
+            # 这里永远不删除，避免HITL时tracker丢失
+
+    return EventSourceResponse(event_generator())
+
+
+@app.post("/api/chat/resume")
+async def chat_resume(request: HITLResumeRequest):
+    """Resume chat after HITL confirmation/rejection"""
+
+    async def generate_resume_event():
+        session_id = request.session_id
+        print(f"[chat_resume] ========== Resume Request Started ==========")
+        print(f"[chat_resume] Session ID: {session_id}")
+        print(f"[chat_resume] Request: {request}")
+
+        tracker = get_progress_tracker(session_id)
+        print(f"[chat_resume] Tracker found: {tracker is not None}")
+
+        if not tracker:
+            print(f"[chat_resume] ERROR: Tracker not found for session: {session_id}")
+            from progress_tracker import _global_trackers
+
+            print(f"[chat_resume] Available sessions: {list(_global_trackers.keys())}")
+            print(f"[chat_resume] ========== Resume Request Aborted ==========")
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": f"Session {session_id} not found"}),
+            }
+            return
+
+        # 关键修复：重新设置 progress_callback 到全局 registry
+        # 因为 resume_agent 不经过 invoke_agent_sync，不会设置 progress_callback
+        progress_callback = tracker.create_callback()
+        from progress_tracker import set_progress_callback
+
+        set_progress_callback(session_id, progress_callback)
+        print(f"[chat_resume] Set progress callback for session: {session_id}")
+
+        # 关键修复：重新设置 progress_callback 到全局 registry
+        # 因为 resume_agent 不经过 invoke_agent_sync，不会设置 progress_callback
+        try:
+            progress_callback = tracker.create_callback()
+            from progress_tracker import set_progress_callback
+
+            set_progress_callback(session_id, progress_callback)
+            print(f"[chat_resume] Set progress callback for session: {session_id}")
+        except Exception as e:
+            print(f"[chat_resume] ERROR setting progress callback: {e}")
+            import traceback
+
+            traceback.print_exc()
+
+        print(f"[chat_resume] Tracker found and active: {tracker._active}")
+        print(f"[chat_resume] ========== Resume Request Continuing ==========")
+
+        try:
+            if not AGENT_AVAILABLE:
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"error": "Agent not available"}),
+                }
+                return
+
+            from agent.main_graph import build_main_graph
+            from checkpointer import get_checkpointer
+
+            try:
+                from langgraph.types import Command
+            except ImportError:
+                Command = None
+
+            checkpointer = get_checkpointer()
+            checkpointer_saver = checkpointer.get_saver(session_id)
+
+            if not checkpointer_saver:
+                print(f"[chat_resume] ERROR: Checkpointer saver is None!")
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"error": "Checkpointer saver not found"}),
+                }
+                return
+
+            print(f"[chat_resume] Checkpointer saver: {checkpointer_saver}")
+            print(f"[chat_resume] Checkpointer type: {type(checkpointer_saver)}")
+
+            # 检查checkpoint状态
+            try:
+                checkpoint = await checkpointer_saver.aget(
+                    config={"configurable": {"thread_id": session_id}}
+                )
+                if checkpoint:
+                    print(
+                        f"[chat_resume] Found checkpoint: {checkpoint.get('id', 'N/A')}"
+                    )
+                    print(
+                        f"[chat_resume] Channel values keys: {list(checkpoint.get('channel_values', {}).keys())[:10]}"
+                    )
+                    hitl_status = checkpoint.get("channel_values", {}).get(
+                        "hitl_status"
+                    )
+                    print(f"[chat_resume] HITL status from checkpoint: {hitl_status}")
+                else:
+                    print(f"[chat_resume] WARNING: No checkpoint found for session!")
+            except Exception as e:
+                print(f"[chat_resume] Error checking checkpoint: {e}")
+
+            graph_with_checkpointer = build_main_graph(checkpointer=checkpointer_saver)
+            print(f"[chat_resume] Graph with checkpointer: {graph_with_checkpointer}")
+
+            resume_value = {
+                "type": "task_review_response",
+                "confirmed": request.confirmed,
+                "feedback": request.feedback or "",
+                "parameters": request.parameters or {},
+            }
+
+            print(
+                f"[chat_resume] Resuming session {session_id} with resume_value:",
+                resume_value,
+            )
+            print(f"[chat_resume] Checkpointer saver: {checkpointer_saver}")
+            print(f"[chat_resume] Graph: {graph_with_checkpointer}")
+
+            # 检查HITL state文件
+            try:
+                hitl_state = checkpointer.load_hitl_state(session_id)
+                if hitl_state:
+                    print(f"[chat_resume] HITL state found: {list(hitl_state.keys())}")
+                    print(
+                        f"[chat_resume] HITL request keys: {list(hitl_state.get('hitl_request', {}).keys()) if hitl_state.get('hitl_request') else 'N/A'}"
+                    )
+                    print(
+                        f"[chat_resume] HITL response: {hitl_state.get('hitl_response', 'N/A')}"
+                    )
+                else:
+                    print(f"[chat_resume] WARNING: No HITL state found!")
+            except Exception as e:
+                print(f"[chat_resume] Error loading HITL state: {e}")
+
+            yield {
+                "event": "status",
+                "data": json.dumps(
+                    {
+                        "stage": "resuming",
+                        "message": "Resuming execution with user response...",
+                        "session_id": session_id,
+                    }
+                ),
+            }
+
+            await asyncio.sleep(0.1)
+
+            async def resume_agent():
+                try:
+                    print(f"[chat_resume] >>> Starting resume_agent execution")
+                    if Command is not None:
+                        print(f"[chat_resume] Using Command(resume=...)")
+                        result = await graph_with_checkpointer.ainvoke(
+                            Command(resume=resume_value),
+                            config={"configurable": {"thread_id": session_id}},
+                        )
+                    else:
+                        print(f"[chat_resume] Using resume_value directly")
+                        result = await graph_with_checkpointer.ainvoke(
+                            resume_value,
+                            config={"configurable": {"thread_id": session_id}},
+                        )
+                    print(
+                        f"[chat_resume] >>> resume_agent completed, result type: {type(result)}"
+                    )
+                    return result
+                except Exception as e:
+                    print(f"[chat_resume] >>> Error during resume: {e}")
+                    import traceback
+
+                    traceback.print_exc()
+                    raise
+
+            print(f"[chat_resume] >>> Creating resume_agent task")
+            agent_task = asyncio.create_task(resume_agent())
+
+            print(f"[chat_resume] >>> Starting progress monitoring loop")
+            loop_count = 0
+            while not agent_task.done():
+                loop_count += 1
+                if loop_count % 20 == 0:  # 每秒打印一次（0.05*20=1秒）
+                    print(
+                        f"[chat_resume] Monitoring loop {loop_count}, agent_task.done={agent_task.done()}"
+                    )
+
+                progress_event = await tracker.get_event(timeout=0.1)
+                if progress_event:
+                    print(f"[chat_resume] Progress event: {progress_event.event_type}")
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps(progress_event.model_dump()),
+                    }
+
+                await asyncio.sleep(0.05)
+
+            print(
+                f"[chat_resume] >>> Agent task completed after {loop_count} iterations"
+            )
+            agent_result = agent_task.result()
+            print(f"[chat_resume] >>> Got agent result, type: {type(agent_result)}")
+
+            # 关键修复：延长等待时间，确保所有事件都被发送
+            # 特别是 HITL 事件，可能在 agent_task 完成后才被调用
+            print(f"[chat_resume] >>> Collecting remaining events...")
+            collected_events = 0
+            max_wait_loops = 20  # 等待最多 1 秒（0.05 * 20）
+            for i in range(max_wait_loops):
+                progress_event = await tracker.get_event(timeout=0.05)
+                if progress_event:
+                    collected_events += 1
+                    print(
+                        f"[chat_resume] >>> Collected event {collected_events}: {progress_event.event_type}"
+                    )
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps(progress_event.model_dump()),
+                    }
+
+            print(f"[chat_resume] >>> Collected {collected_events} remaining events")
+
+            # 再次检查是否有事件（最后清理）
+            while True:
+                progress_event = await tracker.get_event(timeout=0.01)
+                if not progress_event:
+                    break
+                collected_events += 1
+                print(
+                    f"[chat_resume] >>> Final event {collected_events}: {progress_event.event_type}"
+                )
+                yield {
+                    "event": "progress",
+                    "data": json.dumps(progress_event.model_dump()),
+                }
+
+            print(f"[chat_resume] >>> Total collected events: {collected_events}")
+
+            yield {
+                "event": "status",
+                "data": json.dumps(
+                    {
+                        "stage": "formatting_response",
+                        "message": "Formatting response...",
+                    }
+                ),
+            }
+
+            # 关键修复：检查是否是 HITL 中断
+            # LangGraph 的 interrupt() 不会抛出异常，而是返回包含 __interrupt__ 的结果
+            is_hitl_interrupt = (
+                isinstance(agent_result, dict)
+                and "__interrupt__" in agent_result
+                and len(agent_result["__interrupt__"]) > 0
+            )
+
+            print(f"[chat_resume] Checking if HITL interrupt: {is_hitl_interrupt}")
+            print(f"[chat_resume] agent_result type: {type(agent_result)}")
+            print(
+                f"[chat_resume] agent_result keys: {agent_result.keys() if isinstance(agent_result, dict) else 'N/A'}"
+            )
+
+            response = None  # 初始化 response
+
+            if is_hitl_interrupt:
+                # HITL 中断状态，发送 HITL_REQUEST 事件
+                print(
+                    f"[chat_resume] Detected HITL interrupt in result: {agent_result.get('__interrupt__')}"
+                )
+                interrupt_value = agent_result["__interrupt__"][0]
+                hitl_request = getattr(interrupt_value, "value", None)
+                print(f"[chat_resume] Extracted hitl_request: {hitl_request}")
+
+                hitl_event = ProgressEvent(
+                    event_type=ProgressEventType.HITL_REQUEST,
+                    message="Waiting for user confirmation",
+                    details={
+                        "hitl_status": "waiting",
+                        "hitl_request": hitl_request,
+                    },
+                )
+                await tracker.emit(hitl_event)
+                print(f"[chat_resume] HITL_REQUEST event emitted")
+
+                # 立即发送HITL_REQUEST事件（直接yield，不依赖queue）
+                yield {
+                    "event": "progress",
+                    "data": json.dumps(hitl_event.model_dump()),
+                }
+                print(f"[chat_resume] HITL_REQUEST event yielded to SSE")
+
+                # 对于 HITL 中断，不发送 done 事件，直接返回
+                # 让前端通过 progress 事件处理 HITL 请求
+                print(f"[chat_resume] HITL interrupt detected, not sending done event")
+                return
+            else:
+                response = format_agent_response(agent_result)
+
+                hitl_status = getattr(agent_result, "hitl_status", None)
+                print(f"[chat_resume] hitl_status: {hitl_status}")
+
+                if hitl_status in ("waiting", "waiting_no_interrupt"):
+                    hitl_event = ProgressEvent(
+                        event_type=ProgressEventType.HITL_REQUEST,
+                        message="Waiting for user confirmation",
+                        details={"hitl_status": hitl_status, "result": response},
+                    )
+                    await tracker.emit(hitl_event)
+
+                    # 立即发送HITL_REQUEST事件（直接yield，不依赖queue）
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps(hitl_event.model_dump()),
+                    }
+                    print(f"[chat_resume] HITL_REQUEST event yielded to SSE")
+
+                    # HITL 状态，不发送 done 事件
+                    print(
+                        f"[chat_resume] HITL waiting status detected, not sending done event"
+                    )
+                    return
+                else:
+                    await tracker.emit(
+                        ProgressEvent(
+                            event_type=ProgressEventType.TASK_COMPLETE,
+                            message="Task completed",
+                            details={"result": response},
+                        )
+                    )
+                    print(f"[chat_resume] TASK_COMPLETE event emitted")
+
+            # 只有在非 HITL 状态下才发送 done 事件
+            print(f"[chat_resume] Sending done event")
+            yield {"event": "done", "data": json.dumps(response)}
+
+        except Exception as e:
+            print(f"[chat_resume] Error: {e}")
+            import traceback
+
+            traceback.print_exc()
             yield {
                 "event": "error",
                 "data": json.dumps(
@@ -250,11 +685,14 @@ async def chat(request: ChatRequest):
                 ),
             }
         finally:
-            # 清理进度跟踪器
-            if session_id and tracker:
-                remove_progress_tracker(session_id)
+            # 不删除tracker，让它保持活跃状态
+            # resume完成后，可能还会有后续的HITL，所以tracker需要保留
+            print(
+                f"[chat_resume] Finally block: session_id={session_id}, tracker={tracker is not None}"
+            )
+            # 只有通过单独的cleanup API才会删除tracker
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(generate_resume_event())
 
 
 @app.post("/api/chat/submit")
@@ -268,6 +706,43 @@ async def chat_submit(request: ChatRequest):
             progress_callback = tracker.create_callback()
             state = create_global_state(request.message, session_id, progress_callback)
             result = await asyncio.to_thread(invoke_agent_sync, state)
+
+            # 关键修复：检查是否是 HITL 中断
+            # LangGraph 的 interrupt() 不会抛出异常，而是返回包含 __interrupt__ 的结果
+            is_hitl_interrupt = (
+                isinstance(result, dict)
+                and "__interrupt__" in result
+                and len(result["__interrupt__"]) > 0
+            )
+
+            if is_hitl_interrupt:
+                # HITL 中断状态，发送 HITL_REQUEST 事件
+                print(
+                    f"[chat_submit] Detected HITL interrupt in result: {result.get('__interrupt__')}"
+                )
+                interrupt_value = result["__interrupt__"][0]
+                hitl_request = getattr(interrupt_value, "value", None)
+
+                await tracker.emit(
+                    ProgressEvent(
+                        event_type=ProgressEventType.HITL_REQUEST,
+                        message="Waiting for user confirmation",
+                        details={
+                            "hitl_status": "waiting",
+                            "hitl_request": hitl_request,
+                        },
+                    )
+                )
+                return
+
+            # 在format_agent_response之前检查HITL状态，防止在HITL等待时发送错误的事件
+            hitl_status = getattr(result, "hitl_status", None)
+            if hitl_status in ("waiting", "waiting_no_interrupt"):
+                # HITL中断状态，不发送TASK_COMPLETE事件
+                print(
+                    f"[chat_submit] HITL status is {hitl_status}, skipping task completion event"
+                )
+                return
 
             response = format_agent_response(result)
 
@@ -285,21 +760,75 @@ async def chat_submit(request: ChatRequest):
                 if merged_result.get("opensandbox_id"):
                     _current_opensandbox_id = merged_result.get("opensandbox_id")
 
-            await tracker.emit(
-                ProgressEvent(
-                    event_type=ProgressEventType.TASK_COMPLETE,
-                    message="Task completed",
-                    details={"result": response},
+            hitl_status = getattr(result, "hitl_status", None)
+            if hitl_status in ("waiting", "waiting_no_interrupt"):
+                await tracker.emit(
+                    ProgressEvent(
+                        event_type=ProgressEventType.HITL_REQUEST,
+                        message="Waiting for user confirmation",
+                        details={"hitl_status": hitl_status, "result": response},
+                    )
                 )
-            )
+            else:
+                # 检查是否是 GraphInterrupt 导致的异常
+                if hasattr(result, "hitl_request") and result.hitl_request is not None:
+                    # 如果有 hitl_request，说明是 HITL 中断，发送 HITL_REQUEST 事件
+                    await tracker.emit(
+                        ProgressEvent(
+                            event_type=ProgressEventType.HITL_REQUEST,
+                            message="Waiting for user confirmation (HITL interrupt)",
+                            details={
+                                "hitl_status": hitl_status or "waiting",
+                                "result": response,
+                                "hitl_request": result.hitl_request,
+                            },
+                        )
+                    )
+                else:
+                    # 正常完成，发送 TASK_COMPLETE 事件
+                    await tracker.emit(
+                        ProgressEvent(
+                            event_type=ProgressEventType.TASK_COMPLETE,
+                            message="Task completed",
+                            details={"result": response},
+                        )
+                    )
         except Exception as e:
-            await tracker.emit(
-                ProgressEvent(
-                    event_type=ProgressEventType.ERROR,
-                    message=str(e),
-                    details={"error": str(e), "error_type": type(e).__name__},
+            exception_type = type(e).__name__
+            print(f"[chat_submit] Exception occurred: {exception_type}: {str(e)[:200]}")
+
+            # 检查是否是 GraphInterrupt（HITL）
+            if "GraphInterrupt" in exception_type or "Interrupt" in exception_type:
+                # HITL中断，发送剩余的进度事件（包括hitl_request），然后保持tracker
+                print(f"[chat_submit] HITL interrupt detected: {exception_type}")
+                print(f"[chat_submit] Sending remaining progress events...")
+
+                # 发送剩余的进度事件
+                while True:
+                    progress_event = await tracker.get_event(timeout=0.01)
+                    if not progress_event:
+                        break
+                    print(
+                        f"[chat_submit] Sending progress event: {progress_event.event_type}"
+                    )
+                    await tracker.emit(progress_event)
+
+                print(
+                    f"[chat_submit] Keeping tracker for HITL session: {session_id} (NOT removing)"
                 )
-            )
+                # 不发送error事件，让前端知道这是正常的HITL中断
+                # 关键修复：确保不会发送 TASK_COMPLETE 事件
+                return
+            else:
+                # 其他错误，发送错误事件
+                print(f"[chat_submit] Non-HITL error: {exception_type}")
+                await tracker.emit(
+                    ProgressEvent(
+                        event_type=ProgressEventType.ERROR,
+                        message=str(e),
+                        details={"error": str(e), "error_type": type(e).__name__},
+                    )
+                )
 
     asyncio.create_task(run_agent_background())
 
@@ -335,7 +864,10 @@ async def chat_stream(session_id: str):
                         "data": json.dumps(progress_event.model_dump()),
                     }
 
-                    if progress_event.event_type == ProgressEventType.TASK_COMPLETE:
+                    if progress_event.event_type in (
+                        ProgressEventType.TASK_COMPLETE,
+                        ProgressEventType.HITL_REQUEST,
+                    ):
                         break
 
                 else:
@@ -361,7 +893,10 @@ async def chat_stream(session_id: str):
                 "data": json.dumps({"error": str(e), "error_type": type(e).__name__}),
             }
         finally:
-            remove_progress_tracker(session_id)
+            # 不删除tracker，让它在HITL和resume之间保持活跃
+            print(
+                f"[chat_stream] Finally block: session_id={session_id}, NOT removing tracker"
+            )
 
     return EventSourceResponse(event_generator())
 

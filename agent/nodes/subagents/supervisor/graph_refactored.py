@@ -1260,7 +1260,7 @@ print("__SANDBOX_DIRS_CREATED__:success")
     # 3. LLM 结构化提取
     logger.info("  正在执行 LLM 结构化提取...")
     llm_result = _llm_extract_structured_input(
-        user_input, progress_callback=state.progress_callback
+        user_input, progress_callback=get_progress_callback_by_session(state.session_id)
     )
 
     # 4. 打印提取结果
@@ -1898,7 +1898,7 @@ def build_params_node(state: SupervisorState) -> SupervisorState:
     # 1. 重新获取 LLM 提取结果
     logger.debug("  重新获取 LLM 提取结果...")
     llm_result = _llm_extract_structured_input(
-        state.user_input, progress_callback=state.progress_callback
+        state.user_input, progress_callback=get_progress_callback_by_session(state.session_id)
     )
 
     # 2. 构建参数表
@@ -1979,7 +1979,7 @@ def classify_user_description_node(state: SupervisorState) -> SupervisorState:
         return state
 
     # 使用 LLM 进行分类（如果有）
-    llm = _get_llm(progress_callback=state.progress_callback)
+    llm = _get_llm(progress_callback=get_progress_callback_by_session(state.session_id))
 
     if llm:
         try:

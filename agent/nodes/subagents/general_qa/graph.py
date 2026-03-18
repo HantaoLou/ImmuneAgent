@@ -2126,7 +2126,7 @@ def n0_input_preprocessing_node(state: GeneralQAState) -> GeneralQAState:
             print(f"  [WARN] HLE domain template detection failed: {e}")
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable, cannot preprocess input"
         return state
@@ -2617,7 +2617,7 @@ def n1_question_decomposition_node(state: GeneralQAState) -> GeneralQAState:
     print("=" * 60)
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for question decomposition"
         return state
@@ -2860,7 +2860,7 @@ def n2_calculation_algorithm_recognition_node(state: GeneralQAState) -> GeneralQ
     print("=" * 60)
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for calculation/algorithm recognition"
         return state
@@ -3118,7 +3118,7 @@ def n3_knowledge_retrieval_node(state: GeneralQAState) -> GeneralQAState:
             print(f"    - Combined missing entities: {missing_entities_to_search[:5]}")
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for knowledge retrieval"
         return state
@@ -4888,7 +4888,7 @@ def _generate_fallback_knowledge(
     Returns:
         Dictionary of domain -> knowledge mapping, or None if generation fails
     """
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         return None
 
@@ -5362,7 +5362,7 @@ def n4_calculation_decomposition_node(state: GeneralQAState) -> GeneralQAState:
     print("=" * 60)
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for calculation decomposition"
         return state
@@ -5581,7 +5581,7 @@ def n5_algorithm_validation_node(state: GeneralQAState) -> GeneralQAState:
     print("=" * 60)
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for algorithm validation"
         return state
@@ -5736,7 +5736,7 @@ def n6_initial_inference_node(state: GeneralQAState) -> GeneralQAState:
     print("=" * 60)
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for initial inference"
         return state
@@ -6092,7 +6092,7 @@ def n7_complete_inference_node(state: GeneralQAState) -> GeneralQAState:
             return state
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for complete inference"
         return state
@@ -6897,7 +6897,7 @@ def n8_answer_generation_node(state: GeneralQAState) -> GeneralQAState:
         return state
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for answer generation"
         return state
@@ -9020,7 +9020,7 @@ def n9_result_validation_node(state: GeneralQAState) -> GeneralQAState:
         # Don't return here - continue to LLM validation for additional checks
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for result validation"
         return state
@@ -9535,7 +9535,7 @@ def n10_exception_handling_node(state: GeneralQAState) -> GeneralQAState:
             return state
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for exception handling"
         return state
@@ -9714,7 +9714,7 @@ def n11_manual_intervention_node(state: GeneralQAState) -> GeneralQAState:
     print("=" * 60)
 
     # Data preparation
-    llm = _get_llm(state.progress_callback)
+    llm = _get_llm(session_id=state.session_id)
     if llm is None:
         state.error_message = "LLM unavailable for manual intervention"
         return state
