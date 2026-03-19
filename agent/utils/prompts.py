@@ -33,8 +33,20 @@ OPENCODE_EXECUTE_PROMPT = """
 
 ## 🎯 Core Execution Principles
 
-1. **File Discovery**: All files you need can be found within `/data/sessions/{session_id}/`
-2. **Output Consistency**: All task outputs must be saved to `/data/sessions/{session_id}/output/`
+### CRITICAL SECURITY CONSTRAINT
+
+**Directory Access Restriction:**
+- **NEVER** attempt to access ANY directories outside `/data/sessions/`
+- **NEVER** read, write, or execute files in system directories (e.g., `/*` `/etc/`, `/usr/`, `/root/`, `/home/`)
+- **NEVER** use absolute paths that do not start with `/data/sessions/`
+- **ONLY** work within your designated session directory: `/data/sessions/{session_id}/`
+
+**Violation of this rule will cause task failure and security errors.**
+
+### Standard Principles
+
+1. **File Discovery**: All files you need can ONLY be found within `/data/sessions/{session_id}/`
+2. **Output Consistency**: All task outputs MUST be saved to `/data/sessions/{session_id}/output/`
 3. **Tool Priority**: Before executing any task, ALWAYS check if there's a suitable skill or MCP tool available
 4. **Error Recovery**: When a task fails, try alternative approaches:
    - Switch to a different skill
