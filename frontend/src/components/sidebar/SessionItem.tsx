@@ -27,18 +27,18 @@ export const SessionItem: React.FC<SessionItemProps> = ({
       <div className={styles.content}>
         <div className={styles.title}>{session.title}</div>
         <div className={styles.meta}>
-          {session.messages.length} 条消息
+          {session.messages.length} messages
         </div>
       </div>
       <Popconfirm
-        title="确定删除此会话吗？"
+        title="Are you sure to delete this session?"
         onConfirm={(e) => {
           e?.stopPropagation();
           onDelete(session.id);
         }}
         onCancel={(e) => e?.stopPropagation()}
-        okText="确定"
-        cancelText="取消"
+        okText="Yes"
+        cancelText="No"
       >
         <Button
           type="text"

@@ -4,7 +4,7 @@ import { fileStorage } from '@/lib/fileStorage';
 import { fileUtils } from '@/lib/fileUtils';
 
 /**
- * 文件上传 API
+ * File Upload API
  * POST /api/files/upload
  */
 export interface UploadFileRequest {
@@ -44,7 +44,7 @@ export const uploadFile = async (params: UploadFileRequest): Promise<UploadFileR
 };
 
 /**
- * 文件下载 API
+ * File Download API
  * GET /api/files/download/:fileId
  */
 export interface DownloadFileRequest {
@@ -62,7 +62,7 @@ export const downloadFile = async (params: DownloadFileRequest): Promise<Blob> =
 };
 
 /**
- * 获取会话文件列表 API
+ * Get Session Files API
  * GET /api/files/session/:sessionId
  */
 export interface GetSessionFilesRequest {
@@ -81,7 +81,7 @@ export const getSessionFiles = async (params: GetSessionFilesRequest): Promise<G
 };
 
 /**
- * 删除文件 API
+ * Delete File API
  * DELETE /api/files/:fileId
  */
 export interface DeleteFileRequest {
@@ -96,7 +96,7 @@ export const deleteFile = async (params: DeleteFileRequest): Promise<void> => {
 };
 
 /**
- * 批量下载文件 API
+ * Batch Download Files API
  * POST /api/files/batch-download
  */
 export interface BatchDownloadRequest {
@@ -113,7 +113,7 @@ export const batchDownloadFiles = async (params: BatchDownloadRequest): Promise<
 };
 
 /**
- * 本地文件上传（开发模式，不调用后端）
+ * Local File Upload (development mode, no backend call)
  */
 export const uploadFileLocal = async (params: UploadFileRequest): Promise<UploadFileResponse> => {
   return new Promise((resolve, reject) => {
@@ -153,7 +153,7 @@ export const uploadFileLocal = async (params: UploadFileRequest): Promise<Upload
 
     reader.onerror = () => reject(reader.error);
 
-    // 模拟进度
+    // Simulate progress
     if (params.onProgress) {
       let progress = 0;
       const interval = setInterval(() => {
@@ -168,18 +168,18 @@ export const uploadFileLocal = async (params: UploadFileRequest): Promise<Upload
 };
 
 /**
- * 本地文件下载（开发模式）
+ * Local File Download (development mode)
  */
 export const downloadFileLocal = async (params: DownloadFileRequest): Promise<Blob> => {
   const blob = await fileStorage.getFile(params.fileId);
   if (!blob) {
-    throw new Error('文件不存在');
+    throw new Error('File not found');
   }
   return blob;
 };
 
 /**
- * 文件服务类（统一管理本地/远程模式）
+ * File Service Class (unified management of local/remote modes)
  */
 class FileService {
   private useLocalMode: boolean;
@@ -220,7 +220,7 @@ class FileService {
 
   async batchDownload(params: BatchDownloadRequest): Promise<Blob> {
     if (this.useLocalMode) {
-      throw new Error('本地模式暂不支持批量下载');
+      throw new Error('Batch download not supported in local mode');
     }
     return batchDownloadFiles(params);
   }

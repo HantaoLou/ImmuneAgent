@@ -5,24 +5,24 @@ import axios, { CancelTokenSource } from 'axios';
 
 /**
  * Chat Service Hook
- * 提供聊天消息发送功能，自动管理请求取消令牌，避免内存泄漏
+ * Provides chat message sending functionality, automatically manages request cancellation tokens to avoid memory leaks
  */
 export const useChatService = () => {
   const cancelTokenRef = useRef<CancelTokenSource | null>(null);
 
   /**
-   * 发送聊天消息
-   * @param params 聊天请求参数
-   * @returns 聊天响应
+   * Send chat message
+   * @param params Chat request parameters
+   * @returns Chat response
    */
   const sendChatMessage = useCallback(async (params: ChatRequest): Promise<ChatResponse> => {
-    // 取消之前的请求
+    // Cancel previous request
     if (cancelTokenRef.current) {
-      cancelTokenRef.current.cancel('取消上一个请求');
+      cancelTokenRef.current.cancel('Cancel previous request');
       cancelTokenRef.current = null;
     }
 
-    // 创建新的取消令牌
+    // Create new cancel token
     cancelTokenRef.current = axios.CancelToken.source();
 
     try {
@@ -32,26 +32,26 @@ export const useChatService = () => {
       
       return response.data;
     } finally {
-      // 请求完成后清理
+      // Clean up after request completes
       cancelTokenRef.current = null;
     }
   }, []);
 
   /**
-   * 取消当前请求
+   * Cancel current request
    */
   const cancelChatRequest = useCallback(() => {
     if (cancelTokenRef.current) {
-      cancelTokenRef.current.cancel('请求已取消');
+      cancelTokenRef.current.cancel('Request cancelled');
       cancelTokenRef.current = null;
     }
   }, []);
 
-  // 组件卸载时清理
+  // Clean up on component unmount
   useEffect(() => {
     return () => {
       if (cancelTokenRef.current) {
-        cancelTokenRef.current.cancel('组件卸载');
+        cancelTokenRef.current.cancel('Component unmounted');
         cancelTokenRef.current = null;
       }
     };
@@ -64,11 +64,11 @@ export const useChatService = () => {
 };
 
 /**
- * 兼容旧版本的导出（已废弃，请使用 useChatService）
- * @deprecated 使用 useChatService Hook 代替
+ * Legacy export for compatibility (deprecated, please use useChatService)
+ * @deprecated Use useChatService Hook instead
  */
 export const sendChatMessage = async (params: ChatRequest): Promise<ChatResponse> => {
-  console.warn('sendChatMessage 已废弃，请使用 useChatService Hook');
+  console.warn('sendChatMessage is deprecated, please use useChatService Hook');
   
   const cancelToken = axios.CancelToken.source();
   
@@ -80,9 +80,9 @@ export const sendChatMessage = async (params: ChatRequest): Promise<ChatResponse
 };
 
 /**
- * 兼容旧版本的导出（已废弃）
- * @deprecated 使用 useChatService Hook 代替
+ * Legacy export for compatibility (deprecated)
+ * @deprecated Use useChatService Hook instead
  */
 export const cancelChatRequest = () => {
-  console.warn('cancelChatRequest 已废弃，请使用 useChatService Hook');
+  console.warn('cancelChatRequest is deprecated, please use useChatService Hook');
 };

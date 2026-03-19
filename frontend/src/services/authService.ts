@@ -15,7 +15,7 @@ export const login = async (username: string, password: string): Promise<LoginRe
     });
     return response.data;
   } catch (error: any) {
-    throw new Error(error.response?.data?.detail || '登录失败');
+    throw new Error(error.response?.data?.detail || 'Login failed');
   }
 };
 

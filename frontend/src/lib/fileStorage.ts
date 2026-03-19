@@ -105,7 +105,7 @@ class FileStorageManager {
     const deletePromises = (await files).map(f => this.deleteFile(f.id));
     await Promise.all(deletePromises);
     
-    // 清理 localStorage
+    // Clean up localStorage
     const meta = this.getAllFilesMeta();
     const filtered = meta.filter(f => f.sessionId !== sessionId);
     localStorage.setItem('file-metadata', JSON.stringify(filtered));

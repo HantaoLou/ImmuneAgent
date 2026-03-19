@@ -36,7 +36,7 @@ export default function Home() {
       background: '#0a0a0a',
       color: '#86909C'
     }}>
-      正在跳转...
+      Redirecting...
     </div>
   );
 }

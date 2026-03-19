@@ -34,8 +34,41 @@
   font-family: var(--font-mono);
   font-size: clamp(0.875rem, 2vw, 1rem);
   color: var(--text-secondary);
-  max-width: 400px;
+  max-width: 500px;
   line-height: 1.6;
+}
+
+.questionTemplates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-top: 1.25rem;
+  max-width: 500px;
+}
+
+.questionTag {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.questionTag:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: rgba(0, 240, 255, 0.05);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+}
+
+.questionTag:active {
+  transform: scale(0.95);
 }
 
 .glow {

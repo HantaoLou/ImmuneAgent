@@ -35,7 +35,7 @@ export const FileAttachmentCard: React.FC<FileAttachmentCardProps> = ({
       });
       fileService.triggerDownload(blob, file.name);
     } catch (error) {
-      console.error('文件下载失败:', error);
+      console.error('File download failed:', error);
     }
   };
 

@@ -52,7 +52,7 @@ export const FilePreview: React.FC<FilePreviewProps> = ({
         <button 
           className={styles.removeBtn}
           onClick={onRemove}
-          aria-label="移除文件"
+          aria-label="Remove file"
         >
           ✕
         </button>

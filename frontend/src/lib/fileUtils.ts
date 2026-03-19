@@ -2,7 +2,7 @@ import { FileCategory, FileAttachment } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
 
 const FILE_TYPE_MAP: Record<string, FileCategory> = {
-  // 图片
+  // Image
   'image/jpeg': 'image',
   'image/jpg': 'image',
   'image/png': 'image',
@@ -10,14 +10,14 @@ const FILE_TYPE_MAP: Record<string, FileCategory> = {
   'image/svg+xml': 'image',
   'image/webp': 'image',
   
-  // 文档
+  // Document
   'application/pdf': 'document',
   'application/msword': 'document',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'document',
   'text/plain': 'document',
   'text/markdown': 'document',
   
-  // 代码
+  // Code
   'text/javascript': 'code',
   'text/typescript': 'code',
   'application/javascript': 'code',
@@ -26,7 +26,7 @@ const FILE_TYPE_MAP: Record<string, FileCategory> = {
   'text/x-c': 'code',
   'text/x-cpp': 'code',
   
-  // 数据
+  // Data
   'text/csv': 'data',
   'application/json': 'data',
   'application/vnd.ms-excel': 'data',
@@ -36,7 +36,7 @@ const FILE_TYPE_MAP: Record<string, FileCategory> = {
 };
 
 const FILE_EXTENSION_MAP: Record<string, FileCategory> = {
-  // 图片
+  // Image
   '.jpg': 'image',
   '.jpeg': 'image',
   '.png': 'image',
@@ -44,14 +44,14 @@ const FILE_EXTENSION_MAP: Record<string, FileCategory> = {
   '.svg': 'image',
   '.webp': 'image',
   
-  // 文档
+  // Document
   '.pdf': 'document',
   '.doc': 'document',
   '.docx': 'document',
   '.txt': 'document',
   '.md': 'document',
   
-  // 代码
+  // Code
   '.js': 'code',
   '.jsx': 'code',
   '.ts': 'code',
@@ -61,7 +61,7 @@ const FILE_EXTENSION_MAP: Record<string, FileCategory> = {
   '.c': 'code',
   '.cpp': 'code',
   
-  // 数据
+  // Data
   '.csv': 'data',
   '.json': 'data',
   '.xls': 'data',

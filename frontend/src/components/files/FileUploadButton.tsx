@@ -55,7 +55,7 @@ export const FileUploadButton: React.FC<FileUploadButtonProps> = ({
         className={styles.uploadBtn}
         type="text"
       >
-        上传文件
+        Upload File
       </Button>
     </>
   );

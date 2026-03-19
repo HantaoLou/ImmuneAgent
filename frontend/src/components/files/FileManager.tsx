@@ -60,8 +60,8 @@ export const FileManager: React.FC<FileManagerProps> = ({ isOpen, onClose }) => 
       setSandboxFiles(response.files);
       setSource(response.source);
     } catch (err: any) {
-      console.error('获取文件列表失败:', err);
-      setError(err.response?.data?.detail || '获取文件列表失败');
+      console.error('Failed to fetch file list:', err);
+      setError(err.response?.data?.detail || 'Failed to fetch file list');
       setSandboxFiles([]);
     } finally {
       setIsLoading(false);
@@ -88,15 +88,15 @@ export const FileManager: React.FC<FileManagerProps> = ({ isOpen, onClose }) => 
     const fileKey = file.path;
     
     setDownloadingFiles(prev => new Set(prev).add(fileKey));
-    message.loading({ content: '正在准备下载，请稍候...', key: fileKey, duration: 0 });
+    message.loading({ content: 'Preparing download, please wait...', key: fileKey, duration: 0 });
     
     try {
       const blob = await fileService.downloadSandboxFile(activeSessionId, downloadPath);
       fileService.triggerDownload(blob, file.name);
-      message.success({ content: '下载成功', key: fileKey });
+      message.success({ content: 'Download successful', key: fileKey });
     } catch (error: any) {
-      console.error('下载失败:', error);
-      message.error({ content: error.response?.data?.detail || '下载失败', key: fileKey });
+      console.error('Download failed:', error);
+      message.error({ content: error.response?.data?.detail || 'Download failed', key: fileKey });
     } finally {
       setDownloadingFiles(prev => {
         const next = new Set(prev);
@@ -112,13 +112,13 @@ export const FileManager: React.FC<FileManagerProps> = ({ isOpen, onClose }) => 
     <div className={styles.fileManager}>
       <div className={styles.header}>
         <div className={styles.headerContent}>
-          <h3 className={styles.title}>沙盒文件管理</h3>
+          <h3 className={styles.title}>Sandbox File Manager</h3>
           <button className={styles.closeBtn} onClick={onClose}>
             <CloseOutlined />
           </button>
         </div>
         <div className={styles.stats}>
-          <span className={styles.count}>{sandboxFiles.length} 个文件</span>
+          <span className={styles.count}>{sandboxFiles.length} files</span>
           <span className={styles.divider}>•</span>
           <span className={styles.size}>{formatFileSize(totalSize)}</span>
           {source && (
@@ -133,7 +133,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ isOpen, onClose }) => 
       <div className={styles.toolbar}>
         <div className={styles.searchRow}>
           <Input
-            placeholder="搜索文件..."
+            placeholder="Search files..."
             prefix={<SearchOutlined />}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -152,12 +152,12 @@ export const FileManager: React.FC<FileManagerProps> = ({ isOpen, onClose }) => 
         {isLoading ? (
           <div className={styles.loadingState}>
             <Spin size="large" />
-            <p>正在加载文件列表...</p>
+            <p>Loading file list...</p>
           </div>
         ) : error ? (
           <div className={styles.errorState}>
             <p>{error}</p>
-            <Button onClick={fetchFiles}>重试</Button>
+            <Button onClick={fetchFiles}>Retry</Button>
           </div>
         ) : filteredFiles.length > 0 ? (
           <div className={styles.fileGrid}>
@@ -182,7 +182,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ isOpen, onClose }) => 
                     className={styles.downloadBtn}
                     onClick={() => handleDownload(file)}
                     disabled={downloadingFiles.has(file.path)}
-                    title={downloadingFiles.has(file.path) ? '下载中...' : '下载文件'}
+                    title={downloadingFiles.has(file.path) ? 'Downloading...' : 'Download file'}
                   >
                     {downloadingFiles.has(file.path) ? <LoadingOutlined /> : <DownloadOutlined />}
                   </button>
@@ -193,12 +193,12 @@ export const FileManager: React.FC<FileManagerProps> = ({ isOpen, onClose }) => 
         ) : (
           <div className={styles.emptyState}>
             <Empty
-              description={searchQuery ? '没有找到匹配的文件' : '暂无输出文件'}
+              description={searchQuery ? 'No matching files found' : 'No output files yet'}
               image={Empty.PRESENTED_IMAGE_SIMPLE}
             />
             {!searchQuery && (
               <p className={styles.emptyTip}>
-                执行任务后，生成的文件将显示在这里
+                Generated files will appear here after task execution
               </p>
             )}
           </div>

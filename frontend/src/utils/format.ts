@@ -11,7 +11,7 @@ export const formatTime = (timestamp: number): string => {
   if (diffDays === 0) {
     return date.format('HH:mm:ss');
   } else if (diffDays === 1) {
-    return '昨天 ' + date.format('HH:mm');
+    return 'Yesterday ' + date.format('HH:mm');
   } else if (diffDays < 7) {
     return date.format('dddd HH:mm');
   } else {

@@ -63,7 +63,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         <div className={styles.defaultContent}>
           <div className={styles.icon}>📁</div>
           <div className={styles.text}>
-            拖拽文件到此处，或
+            Drag and drop files here, or
             <FileUploadButton
               sessionId={sessionId}
               onFilesSelected={onFilesSelected}
@@ -71,7 +71,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             />
           </div>
           <div className={styles.hint}>
-            支持图片、文档、代码、数据文件（最大 10MB）
+            Supports images, documents, code, and data files (max 10MB)
           </div>
         </div>
       )}

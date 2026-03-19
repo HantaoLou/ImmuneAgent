@@ -100,7 +100,7 @@ export default function ChatPage() {
     const oldHitlId = hitlMessage?.hitlRequest?.hitl_id;
 
     if (!hitlMessage || !oldHitlId) {
-      antMessage.error('找不到 HITL 请求');
+      antMessage.error('HITL request not found');
       return;
     }
 
@@ -108,7 +108,7 @@ export default function ChatPage() {
 
     const agentMessageId = hitlMessage.id;
 
-    // 添加用户确认消息（在agent消息之前）
+    // Add user confirmation message (before agent message)
     const userConfirmMessage = {
       role: 'user' as const,
       content: `user confirm the plan:\n${taskMd || hitlMessage.hitlRequest?.task_md || ''}`,
@@ -117,16 +117,16 @@ export default function ChatPage() {
     };
     addMessage(sessionId, userConfirmMessage);
 
-    // 清除hitlRequest，保留executionLogs，设置为loading状态
+    // Clear hitlRequest, keep executionLogs, set to loading state
     updateMessage(sessionId, agentMessageId, {
       hitlRequest: undefined,
       status: 'loading' as const,
     });
     
-    // 设置 ref 指向原消息
+    // Set ref to point to original message
     agentMessageIdRef.current = agentMessageId;
 
-    // 进度回调
+    // Progress callback
     const handleResumeProgress = (event: MessageEvent) => {
       console.log('[page] handleResumeProgress (confirm) called');
       try {
@@ -140,7 +140,7 @@ export default function ChatPage() {
             node_name: parsed.data.node_name,
             details: parsed.data.details,
           };
-          // 从 store 获取最新日志并追加到原消息
+          // Get latest logs from store and append to original message
           const { sessions: latestSessions } = useSessionStore.getState();
           const latestSession = latestSessions.find(s => s.id === sessionId);
           const currentMessage = latestSession?.messages.find(m => m.id === agentMessageId);
@@ -172,22 +172,22 @@ export default function ChatPage() {
           hitlRequest: result.hitlRequest,
           status: 'success' as const,
         });
-        antMessage.info('任务有新的确认请求');
+        antMessage.info('New confirmation request received');
       } else {
         console.log('[page] No new HITL, task complete');
         updateMessage(sessionId, agentMessageId, {
           content: 'Task completed successfully',
           status: 'success' as const,
         });
-        antMessage.success('任务已完成');
+        antMessage.success('Task completed');
       }
     } catch (error: any) {
       console.error('[page] Failed to confirm HITL:', error);
       updateMessage(sessionId, agentMessageId, {
-        content: error.message || '确认失败',
+        content: error.message || 'Confirmation failed',
         status: 'error' as const,
       });
-      antMessage.error('确认失败: ' + error.message);
+      antMessage.error('Confirmation failed: ' + error.message);
     } finally {
       agentMessageIdRef.current = null;
     }
@@ -202,13 +202,13 @@ export default function ChatPage() {
     const oldHitlId = hitlMessage?.hitlRequest?.hitl_id;
 
     if (!hitlMessage || !oldHitlId) {
-      antMessage.error('找不到 HITL 请求');
+      antMessage.error('HITL request not found');
       return;
     }
 
     const agentMessageId = hitlMessage.id;
 
-    // 添加用户拒绝消息（在agent消息之前）
+    // Add user rejection message (before agent message)
     const userRejectMessage = {
       role: 'user' as const,
       content: `user reject the plan with feedback:\n${feedback}`,
@@ -217,16 +217,16 @@ export default function ChatPage() {
     };
     addMessage(sessionId, userRejectMessage);
 
-    // 清除hitlRequest，保留executionLogs，设置为loading状态
+    // Clear hitlRequest, keep executionLogs, set to loading state
     updateMessage(sessionId, agentMessageId, {
       hitlRequest: undefined,
       status: 'loading' as const,
     });
     
-    // 设置 ref 指向原消息
+    // Set ref to point to original message
     agentMessageIdRef.current = agentMessageId;
 
-    // 进度回调
+    // Progress callback
     const handleResumeProgress = (event: MessageEvent) => {
       console.log('[page] handleResumeProgress (reject) called');
       try {
@@ -240,7 +240,7 @@ export default function ChatPage() {
             node_name: parsed.data.node_name,
             details: parsed.data.details,
           };
-          // 从 store 获取最新日志并追加到原消息
+          // Get latest logs from store and append to original message
           const { sessions: latestSessions } = useSessionStore.getState();
           const latestSession = latestSessions.find(s => s.id === sessionId);
           const currentMessage = latestSession?.messages.find(m => m.id === agentMessageId);
@@ -270,22 +270,22 @@ export default function ChatPage() {
           hitlRequest: result.hitlRequest,
           status: 'success' as const,
         });
-        antMessage.info('任务有新的确认请求');
+        antMessage.info('New confirmation request received');
       } else {
         console.log('[page] Task updated');
         updateMessage(sessionId, agentMessageId, {
           content: 'Task updated based on feedback',
           status: 'success' as const,
         });
-        antMessage.success('修改请求已提交');
+        antMessage.success('Modification request submitted');
       }
     } catch (error: any) {
       console.error('[page] Failed to reject HITL:', error);
       updateMessage(sessionId, agentMessageId, {
-        content: error.message || '提交失败',
+        content: error.message || 'Submission failed',
         status: 'error' as const,
       });
-      antMessage.error('提交失败: ' + error.message);
+      antMessage.error('Submission failed: ' + error.message);
     } finally {
       agentMessageIdRef.current = null;
     }
@@ -342,23 +342,15 @@ export default function ChatPage() {
     try {
       await submitTask(userMessage.content, activeSessionId);
     } catch (error: any) {
-      console.error('发送消息失败:', error);
-      antMessage.error(error.message || '消息发送失败');
+      console.error('Failed to send message:', error);
+      antMessage.error(error.message || 'Failed to send message');
     }
   };
 
   return (
     <div className={styles.container}>
-      <a href="#main-content" className={styles.skipLink}>跳过导航</a>
+      <a href="#main-content" className={styles.skipLink}>Skip navigation</a>
       <div className={styles.backgroundGrid}></div>
-      
-      <button
-        onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
-        className={styles.mobileMenuBtn}
-        aria-label={isMobileSidebarOpen ? "关闭侧边栏" : "打开侧边栏"}
-      >
-        {isMobileSidebarOpen ? <CloseOutlined /> : <MenuOutlined />}
-      </button>
 
       <div className={`${styles.sidebar} ${isMobileSidebarOpen ? styles.sidebarOpen : ''}`}>
         <div className={styles.sidebarHeader}>
@@ -366,7 +358,7 @@ export default function ChatPage() {
         </div>
         <div className={styles.newSessionBtn}>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleNewSession} block>
-            新建会话
+            New Session
           </Button>
         </div>
         <SessionList
@@ -388,7 +380,7 @@ export default function ChatPage() {
               <span className={styles.statusText}>ONLINE</span>
             </div>
             <Button icon={<FolderOutlined />} onClick={() => setIsFileManagerOpen(true)} disabled={!activeSessionId}>
-              文件管理
+              File Manager
             </Button>
           </div>
         </header>
@@ -404,7 +396,11 @@ export default function ChatPage() {
             </div>
           ) : (
             <div className={styles.emptyState}>
-              <EmptyState tip="发送第一条消息，开始与Agent的对话吧～" />
+              <EmptyState 
+                tip="Send your first message to start the conversation with Agent~" 
+                showTemplates={!!activeSessionId}
+                onQuestionClick={(question) => setInputValue(question)}
+              />
             </div>
           )}
           <div className={styles.inputArea}>

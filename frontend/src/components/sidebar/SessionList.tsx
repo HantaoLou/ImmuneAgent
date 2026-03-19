@@ -19,7 +19,7 @@ export const SessionList: React.FC<SessionListProps> = ({
   onSessionDelete,
 }) => {
   if (sessions.length === 0) {
-    return <EmptyState tip="暂无会话，点击新建会话开始聊天" />;
+    return <EmptyState tip="No sessions yet. Click 'New Session' to start chatting." showTemplates={false} />;
   }
 
   return (

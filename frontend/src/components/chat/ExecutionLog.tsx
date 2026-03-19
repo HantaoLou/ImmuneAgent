@@ -99,7 +99,7 @@ export const ExecutionLog: React.FC<ExecutionLogProps> = ({ logs, defaultExpande
           <span className={styles.title}>Execution Log</span>
           <span className={styles.countBadge}>{logs.length}</span>
         </span>
-        <span className={styles.hint}>{expanded ? '收起' : '展开'}</span>
+        <span className={styles.hint}>{expanded ? 'Collapse' : 'Expand'}</span>
       </button>
       
       {expanded && (

@@ -50,7 +50,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 
   const handleFilesSelected = async (files: FileList) => {
     if (!activeSessionId) {
-      message.warning('请先创建会话');
+      message.warning('Please create a session first');
       return;
     }
 
@@ -72,7 +72,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
           file,
           sessionId: activeSessionId,
           onProgress: (progress) => {
-            // 可选：显示上传进度
+            // Optional: Show upload progress
           },
         });
 
@@ -90,9 +90,9 @@ export const InputPanel: React.FC<InputPanelProps> = ({
         };
 
         newAttachments.push(attachment);
-        message.success(`文件 ${file.name} 上传成功`);
+        message.success(`File ${file.name} uploaded successfully`);
       } catch (error) {
-        message.error(`文件 ${file.name} 上传失败`);
+        message.error(`File ${file.name} upload failed`);
       } finally {
         setUploadingCount(prev => prev - 1);
       }
@@ -107,26 +107,26 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 
   return (
     <div className={styles.inputPanel}>
-      {/* 上传提示 */}
+      {/* Upload hint */}
       {uploadingCount > 0 && (
         <div className={styles.uploadingHint}>
-          正在上传 {uploadingCount} 个文件...
+          Uploading {uploadingCount} file(s)...
         </div>
       )}
 
-      {/* 输入框 */}
+      {/* Input field */}
       <textarea
         ref={textareaRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
+        placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
         disabled={disabled}
         className={styles.textarea}
         rows={3}
       />
       
-      {/* 控制按钮 */}
+      {/* Control buttons */}
       <div className={styles.controls}>
         <div className={styles.leftControls}>
           <FileUploadButton
@@ -142,7 +142,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
             className={styles.clearBtn}
             type="text"
           >
-            清空
+            Clear
           </Button>
         </div>
         <Button
@@ -152,7 +152,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
           disabled={!canSend}
           className={styles.sendBtn}
         >
-          发送
+          Send
         </Button>
       </div>
     </div>

@@ -17,10 +17,10 @@ export default function LoginPage() {
       const result = await login(values.username, values.password);
       localStorage.setItem('token', result.access_token);
       localStorage.setItem('username', result.username);
-      message.success('登录成功');
+      message.success('Login successful');
       router.push('/chat');
     } catch (error: any) {
-      message.error(error.message || '登录失败');
+      message.error(error.message || 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -29,7 +29,7 @@ export default function LoginPage() {
   return (
     <div className={styles.container}>
       <div className={styles.backgroundGrid}></div>
-      <Card className={styles.loginCard} title={<div className={styles.title}>AGENT CHAT 登录</div>}>
+      <Card className={styles.loginCard} title={<div className={styles.title}>AGENT CHAT Login</div>}>
         <Form
           name="login"
           onFinish={onFinish}
@@ -38,27 +38,27 @@ export default function LoginPage() {
         >
           <Form.Item
             name="username"
-            rules={[{ required: true, message: '请输入用户名' }]}
+            rules={[{ required: true, message: 'Please enter username' }]}
           >
             <Input 
               prefix={<UserOutlined />} 
-              placeholder="用户名" 
+              placeholder="Username" 
             />
           </Form.Item>
 
           <Form.Item
             name="password"
-            rules={[{ required: true, message: '请输入密码' }]}
+            rules={[{ required: true, message: 'Please enter password' }]}
           >
             <Input.Password
               prefix={<LockOutlined />}
-              placeholder="密码"
+              placeholder="Password"
             />
           </Form.Item>
 
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={loading} block>
-              登录
+              Login
             </Button>
           </Form.Item>
 

@@ -34,7 +34,7 @@ export const useSessionStore = create<SessionState>()(
       addSession: (session) => {
         const newSession: Session = {
           id: session?.id || uuidv4(),
-          title: session?.title || '新会话',
+          title: session?.title || 'New Session',
           messages: session?.messages || [],
           createTime: session?.createTime || Date.now(),
           updateTime: session?.updateTime || Date.now(),
@@ -58,7 +58,10 @@ export const useSessionStore = create<SessionState>()(
         
         let newActiveId = activeSessionId;
         
-        if (activeSessionId === sessionId) {
+        // Check if current activeSessionId is still valid (exists in newSessions)
+        const isActiveValid = newSessions.some(s => s.id === activeSessionId);
+        
+        if (!isActiveValid) {
           newActiveId = newSessions.length > 0 ? newSessions[newSessions.length - 1].id : null;
           if (!newActiveId) {
             newActiveId = get().addSession();
@@ -88,7 +91,7 @@ export const useSessionStore = create<SessionState>()(
               };
               
               if (message.role === 'user' && s.messages.length === 0) {
-                session.title = message.content.slice(0, 15) || '新会话';
+                session.title = message.content.slice(0, 15) || 'New Session';
               }
               
               return session;
@@ -203,8 +206,8 @@ export const useSessionStore = create<SessionState>()(
       name: 'agent-chat-sessions',
       version: 1,
       partialize: (state) => ({ 
-        // 只持久化最近 50 条消息，避免 localStorage 膨胀导致性能问题
-        // 完整历史可通过服务器 API 获取
+        // Only persist the most recent 50 messages to avoid localStorage bloat causing performance issues
+        // Complete history can be retrieved via server API
         sessions: state.sessions.map(s => ({
           ...s,
           messages: s.messages.slice(-50),
@@ -213,17 +216,29 @@ export const useSessionStore = create<SessionState>()(
       }),
       migrate: (persistedState: any, version: number) => {
         if (version === 0) {
-          // 从版本 0 迁移到版本 1：限制消息数量
+          // Migrate from version 0 to version 1: limit message count
           if (persistedState.sessions) {
             persistedState.sessions = persistedState.sessions.map((s: Session) => ({
               ...s,
               messages: s.messages.slice(-50),
             }));
           }
-          // 移除旧的 sessionFiles（不再持久化）
+          // Remove old sessionFiles (no longer persisted)
           delete persistedState.sessionFiles;
         }
         return persistedState;
+      },
+      onRehydrateStorage: () => (state) => {
+        // Check if activeSessionId is valid after rehydration
+        if (state) {
+          const { sessions, activeSessionId } = state;
+          const isActiveValid = sessions.some(s => s.id === activeSessionId);
+          if (!isActiveValid && sessions.length > 0) {
+            state.activeSessionId = sessions[sessions.length - 1].id;
+          } else if (!isActiveValid) {
+            state.activeSessionId = null;
+          }
+        }
       },
     }
   )

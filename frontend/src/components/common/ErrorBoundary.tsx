@@ -13,8 +13,8 @@ interface State {
 }
 
 /**
- * 全局错误边界组件
- * 捕获 React 组件树中的 JavaScript 错误，记录错误并显示备用 UI
+ * Global Error Boundary Component
+ * Catches JavaScript errors in React component tree, logs errors and displays fallback UI
  */
 export class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
@@ -23,32 +23,32 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   static getDerivedStateFromError(error: Error): State {
-    // 更新 state，下一次渲染显示备用 UI
+    // Update state to show fallback UI on next render
     return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    // 记录错误到控制台
-    console.error('ErrorBoundary 捕获到错误:', error);
-    console.error('错误组件栈:', errorInfo.componentStack);
+    // Log error to console
+    console.error('ErrorBoundary caught error:', error);
+    console.error('Error component stack:', errorInfo.componentStack);
     
-    // TODO: 可以在这里上报错误到监控系统
+    // TODO: Report error to monitoring system here
     // reportError(error, errorInfo);
   }
 
   handleReset = () => {
-    // 刷新页面来重置错误状态
+    // Refresh page to reset error state
     window.location.reload();
   };
 
   render() {
     if (this.state.hasError) {
-      // 如果提供了自定义的 fallback，使用它
+      // If custom fallback is provided, use it
       if (this.props.fallback) {
         return this.props.fallback;
       }
 
-      // 默认的错误 UI
+      // Default error UI
       return (
         <div style={{
           display: 'flex',
@@ -78,14 +78,14 @@ export class ErrorBoundary extends Component<Props, State> {
               color: '#1f2937',
               marginBottom: '1rem',
             }}>
-              出现了一些问题
+              Something went wrong
             </h2>
             <p style={{
               color: '#6b7280',
               marginBottom: '1.5rem',
               lineHeight: '1.6',
             }}>
-              应用程序遇到了一个错误。请尝试刷新页面，如果问题持续存在，请联系技术支持。
+              The application encountered an error. Please try refreshing the page. If the problem persists, please contact technical support.
             </p>
             {process.env.NODE_ENV === 'development' && this.state.error && (
               <details style={{
@@ -100,7 +100,7 @@ export class ErrorBoundary extends Component<Props, State> {
                   color: '#374151',
                   fontWeight: '500',
                 }}>
-                  错误详情（仅开发环境可见）
+                  Error details (visible in development only)
                 </summary>
                 <pre style={{
                   marginTop: '0.5rem',
@@ -131,9 +131,9 @@ export class ErrorBoundary extends Component<Props, State> {
               onMouseOut={(e) => {
                 e.currentTarget.style.background = '#3b82f6';
               }}
-            >
-              刷新页面
-            </button>
+              >
+                Refresh Page
+              </button>
           </div>
         </div>
       );
