@@ -191,6 +191,7 @@ EOF
 | `task_name` | ✅ | string | Brief description of the task |
 | `task_type` | ✅ | enum | `MCP_TOOL`, `CODE_GENERATION`, `FILE_OPERATION`, `ANALYSIS`, `REPORT` |
 | `status` | ✅ | enum | `success` or `failed` |
+| `input_parameters` | ⚠️ | object | Input parameters of the task |
 | `mcp_tool_name` | ⚠️ | string | Required if `task_type` is `MCP_TOOL`. Format: `server.tool` |
 | `output_files` | ✅ | array | List of output file paths |
 | `output_data` | ⭕ | object | Summary of key return data |
