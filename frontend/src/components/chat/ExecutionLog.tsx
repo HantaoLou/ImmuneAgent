@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
   BulbOutlined,
   CodeOutlined,
@@ -51,17 +51,6 @@ const eventTypeConfig: Record<string, { icon: React.ReactNode; className: string
 
 export const ExecutionLog: React.FC<ExecutionLogProps> = ({ logs, defaultExpanded = false }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const logListRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (logListRef.current && expanded) {
-      const element = logListRef.current;
-      const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 50;
-      if (isAtBottom) {
-        element.scrollTop = element.scrollHeight;
-      }
-    }
-  }, [logs, expanded]);
 
   if (!logs || logs.length === 0) {
     return null;
@@ -114,7 +103,7 @@ export const ExecutionLog: React.FC<ExecutionLogProps> = ({ logs, defaultExpande
       </button>
       
       {expanded && (
-        <div className={styles.logList} ref={logListRef}>
+        <div className={styles.logList}>
           {logs.map((log, index) => {
             const config = getEventConfig(log.event_type);
             return (

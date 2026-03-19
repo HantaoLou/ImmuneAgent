@@ -298,24 +298,6 @@ export default function ChatPage() {
     onHITLRequest: handleHITLRequest,
   });
 
-  useEffect(() => {
-    if (sessions.length === 0) {
-      addSession();
-    }
-  }, []);
-
-  const scrollToBottom = () => {
-    if (messageListRef.current) {
-      messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
-    }
-  };
-
-  useEffect(() => {
-    if (activeSession?.messages.length) {
-      scrollToBottom();
-    }
-  }, [activeSession?.messages]);
-
   const handleNewSession = () => {
     const newSessionId = addSession();
     switchSession(newSessionId);

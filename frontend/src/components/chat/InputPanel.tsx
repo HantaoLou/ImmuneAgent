@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Button, message } from 'antd';
 import { SendOutlined, ClearOutlined } from '@ant-design/icons';
 import { FileAttachment } from '@/types';
-import { FileUploadButton, FilePreview } from '@/components/files';
+import { FileUploadButton } from '@/components/files';
 import { useSessionStore } from '@/store/sessionStore';
 import { fileService } from '@/services/fileService';
 import { fileUtils } from '@/lib/fileUtils';
@@ -42,6 +42,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 
   const handleClear = () => {
     onChange('');
+    onAttachmentsChange?.([]);
     if (textareaRef.current) {
       textareaRef.current.focus();
     }
@@ -102,30 +103,10 @@ export const InputPanel: React.FC<InputPanelProps> = ({
     }
   };
 
-  const handleRemoveAttachment = (fileId: string) => {
-    if (onAttachmentsChange) {
-      onAttachmentsChange(attachments.filter(f => f.id !== fileId));
-    }
-  };
-
   const canSend = !disabled && (value.trim() || attachments.length > 0) && uploadingCount === 0;
 
   return (
     <div className={styles.inputPanel}>
-      {/* 文件预览区域 */}
-      {attachments.length > 0 && (
-        <div className={styles.attachments}>
-          {attachments.map(file => (
-            <FilePreview
-              key={file.id}
-              file={file}
-              onRemove={() => handleRemoveAttachment(file.id)}
-              compact
-            />
-          ))}
-        </div>
-      )}
-
       {/* 上传提示 */}
       {uploadingCount > 0 && (
         <div className={styles.uploadingHint}>
