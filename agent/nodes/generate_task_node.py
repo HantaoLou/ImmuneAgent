@@ -95,12 +95,17 @@ GENERATE_TASK_USER_PROMPT = """## User Request
 ## Available Files
 {available_files}
 
+## Previous Task Plan (if regenerating)
+{previous_task_md}
+
 ## User Feedback (if regenerating)
 {user_feedback}
 
 ---
 
-Please generate a task breakdown (task.md) and identify any missing parameters."""
+Please generate a task breakdown (task.md) and identify any missing parameters.
+
+**Note**: If there is a Previous Task Plan, you should revise it based on the User Feedback while keeping the good parts. Focus on addressing the user's specific concerns."""
 
 
 def _extract_response_text(response) -> str:
@@ -315,6 +320,7 @@ async def generate_task_node(state: GlobalState) -> GlobalState:
             user_input=user_input,
             execution_plan=execution_plan or "Not provided",
             available_files=available_files,
+            previous_task_md=state.task_md_content or "None - initial generation",
             user_feedback=user_feedback or "None - initial generation",
         )
 
