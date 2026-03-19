@@ -7,6 +7,8 @@ pydantic>=2.11.4
 sse-starlette>=2.1.0
 python-multipart>=0.0.9
 python-dotenv>=1.0.1
+PyJWT>=2.8.0
+passlib>=1.7.4
 
 # =============================================================================
 # Agent Core Dependencies (from agent/pyproject.toml)

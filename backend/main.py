@@ -5,10 +5,11 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
+from auth import authenticate_user, create_access_token, get_current_user
 from sse_starlette.sse import EventSourceResponse
 import asyncio
 import threading
@@ -122,6 +123,18 @@ class HITLResumeRequest(BaseModel):
     parameters: Optional[Dict[str, Any]] = None
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    username: str
+    role: str
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
@@ -129,6 +142,35 @@ async def health_check():
         "status": "healthy",
         "service": "bio-agent-backend",
         "version": "1.0.0",
+    }
+
+
+@app.post("/api/login", response_model=LoginResponse)
+async def login(request: LoginRequest):
+    """Login endpoint"""
+    user = authenticate_user(request.username, request.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    access_token = create_access_token(
+        data={"sub": user["username"], "role": user["role"]}
+    )
+
+    return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        username=user["username"],
+        role=user["role"],
+    )
+
+
+@app.get("/api/verify-token")
+async def verify_token(current_user: dict = Depends(get_current_user)):
+    """Verify token endpoint"""
+    return {
+        "valid": True,
+        "username": current_user["username"],
+        "role": current_user["role"],
     }
 
 
