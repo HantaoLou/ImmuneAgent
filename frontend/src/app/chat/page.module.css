@@ -190,6 +190,24 @@
   margin-bottom: 1.5rem;
   padding: 0 1rem;
   scrollbar-width: thin;
+  scrollbar-color: var(--dark-hover) transparent;
+}
+
+.messageList::-webkit-scrollbar {
+  width: 6px;
+}
+
+.messageList::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.messageList::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--accent-cyan), var(--accent-purple));
+  border-radius: 3px;
+}
+
+.messageList::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-cyan);
 }
 
 .emptyState {

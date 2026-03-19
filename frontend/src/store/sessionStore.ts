@@ -13,6 +13,7 @@ interface SessionState {
   deleteSession: (sessionId: string) => void;
   addMessage: (sessionId: string, message: Omit<Message, 'id'>) => void;
   updateMessage: (sessionId: string, messageId: string, updates: Partial<Message>) => void;
+  deleteMessage: (sessionId: string, messageId: string) => void;
   updateMessageStatus: (sessionId: string, messageId: string, status: Message['status']) => void;
   updateSessionTitle: (sessionId: string, title: string) => void;
   
@@ -108,6 +109,21 @@ export const useSessionStore = create<SessionState>()(
                 messages: s.messages.map((m) => 
                   m.id === messageId ? { ...m, ...updates } : m
                 ),
+                updateTime: Date.now()
+              };
+            }
+            return s;
+          }),
+        }));
+      },
+      
+      deleteMessage: (sessionId, messageId) => {
+        set((state) => ({
+          sessions: state.sessions.map((s) => {
+            if (s.id === sessionId) {
+              return {
+                ...s,
+                messages: s.messages.filter((m) => m.id !== messageId),
                 updateTime: Date.now()
               };
             }

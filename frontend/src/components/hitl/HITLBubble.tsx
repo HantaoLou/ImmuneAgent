@@ -5,7 +5,7 @@ import HITLInteraction from './HITLInteraction';
 
 interface HITLBubbleProps {
   hitlRequest: HITLRequest;
-  onConfirm?: (sessionId: string, feedback?: string, parameters?: Record<string, any>) => void;
+  onConfirm?: (sessionId: string, feedback?: string, parameters?: Record<string, any>, taskMd?: string) => void;
   onReject?: (sessionId: string, feedback: string) => void;
   isCollapsed?: boolean;
 }
@@ -25,7 +25,7 @@ const HITLBubble: React.FC<HITLBubbleProps> = ({
 
   const handleConfirm = (feedback?: string, parameters?: Record<string, any>) => {
     console.log('[HITLBubble] handleConfirm called');
-    onConfirm?.(session_id, feedback, parameters);
+    onConfirm?.(session_id, feedback, parameters, task_md);
   };
 
   const handleReject = (feedback: string) => {

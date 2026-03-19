@@ -109,15 +109,23 @@ def _get_progress_callback_by_session(session_id: Optional[str]) -> Optional[Cal
         import sys
         from pathlib import Path
 
-        # Add backend to path to import progress_tracker
         backend_dir = Path(__file__).parent.parent.parent / "backend"
+        project_root = backend_dir.parent
+
         if str(backend_dir) not in sys.path:
             sys.path.insert(0, str(backend_dir))
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
 
-        import backend.progress_tracker as pt_module
+        from backend import progress_tracker as pt_module
 
-        return pt_module.get_progress_callback(session_id)
-    except (ImportError, AttributeError):
+        callback = pt_module.get_progress_callback(session_id)
+        print(
+            f"[LLM Factory] Got callback for session {session_id}: {callback is not None}"
+        )
+        return callback
+    except (ImportError, AttributeError) as e:
+        print(f"[LLM Factory] Failed to get callback: {e}")
         return None
 
 
@@ -177,27 +185,27 @@ class ModelPurpose(str, Enum):
 # ===================== Model Configuration Mapping =====================
 MODEL_CONFIGS: Dict[ModelPurpose, List[Tuple[str, str, float]]] = {
     ModelPurpose.REASONING: [
-        ("zhipu", "glm-4.5", 0.2),
+        ("zhipu", "glm-4.7", 0.2),
         ("dashscope", "qwen-max", 0.2),  # Qwen Max - preferred
         ("dashscope", "qwen-turbo", 0.1),  # Qwen Turbo - preferred
     ],
     # Bioinformatics model: Prefer Qwen, then use models with good scientific literature understanding
     ModelPurpose.BIOINFORMATICS: [
-        ("zhipu", "glm-4.5", 0.2),
+        ("zhipu", "glm-4.7", 0.2),
         ("dashscope", "qwen-max", 0.2),  # Qwen Max - preferred
-        ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.2),
+        ("zhipu", "glm-4.7-air:1131206110::21rbvay4", 0.2),
     ],
     # Advanced reasoning model: Prefer Qwen for complex reasoning tasks
     ModelPurpose.REASONING_ADVANCED: [
-        ("zhipu", "glm-4.5", 0.1),
+        ("zhipu", "glm-4.7", 0.1),
         ("dashscope", "qwen-max", 0.1),
-        ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.1),  # Zhipu AI
+        ("zhipu", "glm-4.7-air:1131206110::21rbvay4", 0.1),  # Zhipu AI
     ],
     # Code model: Prefer Qwen, then use models with strong code generation capabilities
     ModelPurpose.CODE: [
-        ("zhipu", "glm-4.5", 0.1),
+        ("zhipu", "glm-4.7", 0.1),
         ("dashscope", "qwen-max", 0.1),  # Qwen Max - preferred
-        ("zhipu", "glm-4.5-air:1131206110::21rbvay4", 0.1),
+        ("zhipu", "glm-4.7-air:1131206110::21rbvay4", 0.1),
     ],
 }
 
@@ -762,7 +770,7 @@ def get_current_llm_config() -> Dict[str, str]:
         Dict containing 'model' and 'provider' fields
     """
     if os.getenv("ZHIPU_API_KEY") or os.getenv("ZHIPUAI_API_KEY"):
-        return {"model": "glm-4.5", "provider": "zhipu"}
+        return {"model": "glm-4.7", "provider": "zhipu"}
     elif os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY"):
         return {"model": "qwen-max", "provider": "dashscope"}
     elif os.getenv("OPENAI_API_KEY"):

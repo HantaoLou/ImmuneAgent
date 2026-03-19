@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OpenCodeConfig:
-    model_provider: str = "glm-4.5"
+    model_provider: str = "glm-4.7"
     api_key: str = field(default_factory=lambda: os.getenv("ZHIPUAI_API_KEY") or "")
     sandbox_domain: str = field(
         default_factory=lambda: os.getenv("SANDBOX_DOMAIN")
@@ -86,6 +86,10 @@ class OpenCodeExecutor:
         else:
             self.workspace_dir = f"/data/sessions/{session_id}"
 
+        self._execution_id: Optional[str] = None
+        self._execution_result: Any = None
+        self._execution_error: Optional[str] = None
+
     @classmethod
     async def execute(
         cls,
@@ -114,6 +118,7 @@ class OpenCodeExecutor:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"[{timestamp}] [{level}] [{self.session_id}] {message}"
         self._logs.append(log_entry)
+        print(f"[opencode_executor] {message}")
         getattr(logger, level.lower(), logger.info)(log_entry)
 
     async def run(self) -> Dict[str, Any]:
@@ -148,12 +153,17 @@ class OpenCodeExecutor:
             await self._cleanup()
 
     async def _create_sandbox(self) -> Sandbox:
-        self._log(f"步骤1: 创建沙盒 (timeout={self.timeout}s)")
+        # Use sandbox_timeout_seconds from config for sandbox lifecycle
+        # and self.timeout for command execution
+        sandbox_timeout = self.config.sandbox_timeout_seconds
+        self._log(
+            f"步骤1: 创建沙盒 (sandbox_timeout={sandbox_timeout}s, cmd_timeout={self.timeout}s)"
+        )
 
         connection_config = ConnectionConfig(
             domain=self.config.sandbox_domain,
             api_key=self.config.api_key,
-            request_timeout=timedelta(seconds=self.timeout),
+            request_timeout=timedelta(seconds=max(sandbox_timeout, self.timeout)),
             debug=self.config.debug,
         )
 
@@ -165,7 +175,7 @@ class OpenCodeExecutor:
         sandbox = await Sandbox.create(
             image,
             connection_config=connection_config,
-            timeout=timedelta(seconds=self.timeout),
+            timeout=timedelta(seconds=sandbox_timeout),
             ready_timeout=timedelta(seconds=self.config.sandbox_ready_timeout_seconds),
             env=env,
         )
@@ -231,9 +241,7 @@ class OpenCodeExecutor:
                 "/data/**": "allow",
             },
         }
-        self._log(
-            f"权限配置: 仅允许 /data/**，拒绝其他所有外部目录"
-        )
+        self._log(f"权限配置: 仅允许 /data/**，拒绝其他所有外部目录")
 
         opencode_config["instructions"] = ["./AGENTS.md"]
 
@@ -291,144 +299,245 @@ class OpenCodeExecutor:
         return {}
 
     async def _execute_task(self) -> Dict[str, Any]:
-        self._log(
-            f"步骤3: 执行任务 (iteration={self.iteration}, timeout={self.timeout}s)"
-        )
+        self._log(f"步骤3: 执行任务 (timeout={self.timeout}s)")
 
         await self._create_runner_script()
         await self.sandbox.files.write_file(f"{self.workspace_dir}/task.md", self.task)
 
         cmd = f"cd {self.workspace_dir} && bash {self.workspace_dir}/runner.sh"
-
-        handlers = self._create_streaming_handlers()
+        self._log(f"开始执行: {cmd}")
+        start_time = time.time()
 
         opts = RunCommandOpts(
             timeout=timedelta(seconds=self.timeout),
             working_directory=self.workspace_dir,
         )
 
-        self._log(f"开始执行命令: {cmd[:100]}...")
-        start_time = time.time()
+        handlers = self._create_nonblocking_handlers()
+        self._log(f"Handlers created: {handlers is not None}")
 
+        execution = None
         try:
             execution = await self.sandbox.commands.run(
                 cmd, opts=opts, handlers=handlers
             )
-        except Exception as e:
+            self._log(f"sandbox.commands.run() returned")
+        except asyncio.TimeoutError:
             elapsed = time.time() - start_time
-            self._log(f"命令执行异常 ({elapsed:.1f}s): {e}", "ERROR")
+            self._log(f"执行超时 ({self.timeout}s)", "ERROR")
             return {
                 "status": "error",
-                "error": str(e),
+                "error": f"Timeout after {self.timeout}s",
                 "elapsed_seconds": elapsed,
             }
+        except Exception as e:
+            elapsed = time.time() - start_time
+            self._log(f"命令执行异常: {e}", "ERROR")
+            return {"status": "error", "error": str(e), "elapsed_seconds": elapsed}
 
         elapsed = time.time() - start_time
         self._log(f"命令执行完成 ({elapsed:.1f}s)")
 
-        result = self._convert_execution_to_dict(execution)
-
-        if execution.error:
-            self._log(
-                f"命令返回错误: {execution.error.name}: {execution.error.value}",
-                "ERROR",
-            )
-            result["error_details"] = {
-                "name": execution.error.name,
-                "value": execution.error.value,
-                "traceback": execution.error.traceback,
+        if not execution:
+            return {
+                "status": "error",
+                "error": "No execution result",
+                "elapsed_seconds": elapsed,
             }
 
+        result = self._convert_execution_to_dict(execution)
         stdout = self._get_stdout(execution)
-        if "===OPENCODE_DONE===" not in stdout:
-            self._log("警告: 未检测到完成标记 '===OPENCODE_DONE==='", "WARNING")
-            self._log(f"stdout 前500字符: {stdout[:500]}", "WARNING")
-            if elapsed < 5:
-                self._log("命令执行时间过短，可能未正常执行", "WARNING")
-                result["status"] = "error"
-                result["error"] = "命令执行时间过短，OpenCode 可能未正常启动"
-                result["elapsed_seconds"] = elapsed
+        self._log(f"stdout 长度: {len(stdout)} chars")
+
+        if "===OPENCODE_DONE===" in stdout:
+            self._log("检测到完成标记")
+        else:
+            self._log("未检测到完成标记", "WARNING")
 
         return result
 
-    def _create_streaming_handlers(self) -> ExecutionHandlers | None:
-        if not self.progress_callback:
+    def _create_nonblocking_handlers(self) -> ExecutionHandlers | None:
+        progress_queue = self._get_progress_queue()
+        if not progress_queue:
+            self._log("No progress queue, handlers disabled")
             return None
 
-        progress_callback = self.progress_callback
         node_name = self.node_name
         session_id = self.session_id
+        log_func = self._log
 
-        async def on_init(event):
-            progress_callback(
-                event_type="opencode_init",
-                message=f"OpenCode execution started",
-                node_name=node_name,
-                details={
-                    "execution_id": event.id,
-                    "session_id": session_id,
-                },
+        def emit(evt_type: str, msg: str, details: dict = None):
+            try:
+                from backend.progress_tracker import ProgressEvent, ProgressEventType
+
+                event = ProgressEvent(
+                    session_id=session_id,
+                    event_type=ProgressEventType(evt_type),
+                    node_name=node_name,
+                    message=msg,
+                    details=details or {},
+                )
+                progress_queue.put_nowait(event)
+            except Exception as e:
+                log_func(f"emit error: {e}", "ERROR")
+
+        async def on_init(evt):
+            log_func(f"[Handler] on_init")
+            emit("opencode_init", "OpenCode started", {"id": getattr(evt, "id", None)})
+
+        async def on_stdout(msg):
+            text = msg.text.strip() if msg.text else ""
+            if not text:
+                return
+
+            if text.startswith("INFO"):
+                return
+
+            log_func(f"[stdout] {text[:200]}")
+
+            try:
+                data = json.loads(text)
+                evt_type = data.get("type", "unknown")
+                log_func(f"[JSON] type={evt_type}")
+
+                if evt_type == "thinking":
+                    content = data.get("content", "")[:500]
+                    emit("opencode_thinking", content, {"type": evt_type})
+                elif evt_type == "tool_use":
+                    tool = data.get("name", "unknown")
+                    emit(
+                        "opencode_tool",
+                        f"Using: {tool}",
+                        {"type": evt_type, "tool": tool},
+                    )
+                elif evt_type == "tool_result":
+                    emit("opencode_tool_result", "Tool completed", {"type": evt_type})
+                elif evt_type == "message":
+                    content = data.get("content", "")[:500]
+                    emit("opencode_message", content, {"type": evt_type})
+                else:
+                    emit("opencode_event", f"[{evt_type}]", {"type": evt_type})
+            except json.JSONDecodeError:
+                emit("opencode_stdout", text, {"ts": str(msg.timestamp)})
+
+        async def on_stderr(msg):
+            text = msg.text.strip() if msg.text else ""
+            if text:
+                log_func(f"[Handler] stderr: {text[:50]}...", "WARNING")
+                emit("opencode_stderr", text, {"ts": str(msg.timestamp)})
+
+        async def on_result(res):
+            log_func(f"[Handler] on_result")
+            emit("opencode_result", "Result", {"ts": str(res.timestamp)})
+
+        async def on_error(err):
+            log_func(f"[Handler] on_error: {err.name}", "ERROR")
+            emit("opencode_error", f"{err.name}: {err.value}", {"value": err.value})
+
+        async def on_execution_complete(evt):
+            log_func(f"[Handler] on_execution_complete")
+            emit(
+                "opencode_complete",
+                "Done",
+                {"ms": getattr(evt, "execution_time_in_millis", 0)},
             )
 
-        async def on_stdout(message):
-            text = message.text.strip() if message.text else ""
-            if text:
-                progress_callback(
-                    event_type="opencode_stdout",
-                    message=text,
-                    node_name=node_name,
-                    details={
-                        "timestamp": message.timestamp,
-                        "is_error": False,
-                    },
-                )
+        return ExecutionHandlers(
+            on_init=on_init,
+            on_stdout=on_stdout,
+            on_stderr=on_stderr,
+            on_result=on_result,
+            on_error=on_error,
+            on_execution_complete=on_execution_complete,
+        )
 
-        async def on_stderr(message):
-            text = message.text.strip() if message.text else ""
+    def _get_progress_queue(self):
+        try:
+            from backend.progress_tracker import get_progress_tracker
+
+            tracker = get_progress_tracker(self.session_id)
+            if tracker:
+                return tracker.queue
+        except Exception as e:
+            self._log(f"get queue error: {e}", "ERROR")
+        return None
+
+    def _create_streaming_handlers_with_lifecycle(self) -> ExecutionHandlers:
+        progress_callback = self.progress_callback
+        node_name = self.node_name
+        log_func = self._log
+        state = self
+
+        def _safe_callback(*args, **kwargs):
+            if not progress_callback:
+                return
+            try:
+                loop = asyncio.get_running_loop()
+                loop.call_soon(lambda: progress_callback(*args, **kwargs))
+            except Exception as e:
+                log_func(f"[Handler] callback error: {e}", "ERROR")
+
+        async def on_init(evt):
+            state._execution_id = evt.id
+            log_func(f"[Handler] on_init: execution_id={evt.id}")
+            _safe_callback(
+                event_type="opencode_init",
+                message="OpenCode execution started",
+                node_name=node_name,
+                details={"execution_id": evt.id},
+            )
+
+        async def on_stdout(msg):
+            text = msg.text.strip() if msg.text else ""
+            if not text:
+                return
+            _safe_callback(
+                event_type="opencode_stdout",
+                message=text,
+                node_name=node_name,
+                details={"timestamp": msg.timestamp},
+            )
+
+        async def on_stderr(msg):
+            text = msg.text.strip() if msg.text else ""
             if text:
-                progress_callback(
+                log_func(f"[Handler] stderr: {text}", "WARNING")
+                _safe_callback(
                     event_type="opencode_stderr",
                     message=text,
                     node_name=node_name,
-                    details={
-                        "timestamp": message.timestamp,
-                        "is_error": True,
-                    },
+                    details={"timestamp": msg.timestamp, "is_error": True},
                 )
 
-        async def on_result(result):
-            text = result.text if result.text else ""
-            progress_callback(
+        async def on_result(res):
+            state._execution_result = res
+            log_func(f"[Handler] on_result received")
+            _safe_callback(
                 event_type="opencode_result",
-                message="OpenCode execution result received",
+                message="Result received",
                 node_name=node_name,
-                details={
-                    "result_text": text[:500] if text else None,
-                    "timestamp": result.timestamp,
-                },
+                details={"timestamp": res.timestamp},
             )
 
-        async def on_error(error):
-            progress_callback(
+        async def on_error(err):
+            state._execution_error = f"{err.name}: {err.value}"
+            log_func(f"[Handler] on_error: {err.name}: {err.value}", "ERROR")
+            _safe_callback(
                 event_type="opencode_error",
-                message=f"OpenCode error: {error.name}: {error.value}",
+                message=f"Error: {err.name}",
                 node_name=node_name,
-                details={
-                    "error_name": error.name,
-                    "error_value": error.value,
-                    "traceback": error.traceback,
-                },
+                details={"error_name": err.name, "error_value": err.value},
             )
 
-        async def on_execution_complete(event):
-            progress_callback(
+        async def on_execution_complete(evt):
+            log_func(
+                f"[Handler] on_execution_complete: time={evt.execution_time_in_millis}ms"
+            )
+            _safe_callback(
                 event_type="opencode_complete",
-                message="OpenCode execution completed",
+                message="Execution completed",
                 node_name=node_name,
-                details={
-                    "execution_time_ms": event.execution_time_in_millis,
-                    "timestamp": event.timestamp,
-                },
+                details={"execution_time_ms": evt.execution_time_in_millis},
             )
 
         return ExecutionHandlers(

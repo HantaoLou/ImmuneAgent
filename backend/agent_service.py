@@ -61,21 +61,32 @@ def generate_session_id() -> str:
 
 
 def create_global_state(
-    message: str, session_id: str, progress_callback: Optional[Callable] = None
+    message: str,
+    session_id: str,
+    progress_callback: Optional[Callable] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> Any:
     if not AGENT_AVAILABLE:
         return None
 
     from agent.state import GlobalState, UserTaskType
 
-    # 创建沙盒目录路径
     sandbox_dir = f"/data/sessions/{session_id}"
+
+    uploaded_files = []
+    if attachments:
+        for att in attachments:
+            sandbox_path = att.get("sandboxPath")
+            if sandbox_path:
+                uploaded_files.append(sandbox_path)
+                print(f"[agent_service] Added uploaded file: {sandbox_path}")
 
     state = GlobalState(
         session_id=session_id,
         user_input=message,
         sandbox_dir=sandbox_dir,
         user_task_type=UserTaskType.GENERAL_QA,
+        uploaded_files=uploaded_files,
     )
 
     # 将callback设置到全局registry，而不是存储在state中
@@ -190,10 +201,6 @@ def collect_sandbox_output_files(sandbox_dir: str) -> List[Dict[str, Any]]:
     if not sandbox_path.exists():
         return files
 
-    output_dir = sandbox_path / "output"
-    if not output_dir.exists():
-        return files
-
     supported_extensions = {
         ".csv": "CSV Data",
         ".json": "JSON Data",
@@ -211,30 +218,43 @@ def collect_sandbox_output_files(sandbox_dir: str) -> List[Dict[str, Any]]:
         ".jpeg": "Image",
         ".svg": "Image",
         ".html": "HTML Report",
+        ".xlsx": "Excel File",
+        ".xls": "Excel File",
     }
 
+    scan_dirs = [
+        ("input", "Input File"),
+        ("output", "Output File"),
+    ]
+
     try:
-        for file_path in output_dir.rglob("*"):
-            if file_path.is_file():
-                file_name = file_path.name
-                ext = file_path.suffix.lower()
+        for dir_name, file_type_prefix in scan_dirs:
+            target_dir = sandbox_path / dir_name
+            if not target_dir.exists():
+                continue
 
-                if ext in supported_extensions or ext == "":
-                    file_size = file_path.stat().st_size
-                    rel_path = str(file_path.relative_to(output_dir))
+            for file_path in target_dir.rglob("*"):
+                if file_path.is_file():
+                    file_name = file_path.name
+                    ext = file_path.suffix.lower()
 
-                    files.append(
-                        {
-                            "name": file_name,
-                            "path": str(file_path),
-                            "relative_path": rel_path,
-                            "size": file_size,
-                            "size_formatted": _format_file_size(file_size),
-                            "type": supported_extensions.get(ext, "Unknown"),
-                            "extension": ext,
-                            "source": "local",
-                        }
-                    )
+                    if ext in supported_extensions or ext == "":
+                        file_size = file_path.stat().st_size
+                        rel_path = str(file_path.relative_to(target_dir))
+
+                        files.append(
+                            {
+                                "name": file_name,
+                                "path": str(file_path),
+                                "relative_path": f"{dir_name}/{rel_path}",
+                                "size": file_size,
+                                "size_formatted": _format_file_size(file_size),
+                                "type": supported_extensions.get(ext, "Unknown"),
+                                "extension": ext,
+                                "source": "local",
+                                "category": dir_name,
+                            }
+                        )
     except Exception as e:
         print(f"[collect_sandbox_output_files] Error: {e}")
 
@@ -355,8 +375,8 @@ async def collect_files_from_new_sandbox(session_id: str) -> List[Dict[str, Any]
         print(f"[collect_files_from_new_sandbox] Connected to sandbox")
 
         possible_paths = [
-            f"/data/sessions/{session_id}/output",
-            f"/data/sessions/{session_id}/output",
+            (f"/data/sessions/{session_id}/input", "input"),
+            (f"/data/sessions/{session_id}/output", "output"),
         ]
 
         supported_extensions = {
@@ -378,11 +398,10 @@ async def collect_files_from_new_sandbox(session_id: str) -> List[Dict[str, Any]
             ".html": "HTML Report",
         }
 
-        for sandbox_internal_dir in possible_paths:
+        for sandbox_internal_dir, category in possible_paths:
             print(f"[collect_files_from_new_sandbox] Checking: {sandbox_internal_dir}")
 
             try:
-                # 先用 ls 看看目录结构
                 ls_result = await sandbox.commands.run(
                     f"ls -la {sandbox_internal_dir} 2>&1 || echo 'NOT_FOUND'"
                 )
@@ -402,7 +421,9 @@ async def collect_files_from_new_sandbox(session_id: str) -> List[Dict[str, Any]
                 if not file_paths:
                     continue
 
-                print(f"[collect_files_from_new_sandbox] Found {len(file_paths)} files")
+                print(
+                    f"[collect_files_from_new_sandbox] Found {len(file_paths)} files in {category}"
+                )
 
                 for file_path in file_paths:
                     file_name = os.path.basename(file_path)
@@ -424,24 +445,22 @@ async def collect_files_from_new_sandbox(session_id: str) -> List[Dict[str, Any]
                             {
                                 "name": file_name,
                                 "path": file_path,
-                                "relative_path": rel_path,
+                                "relative_path": f"{category}/{rel_path}",
                                 "size": file_size,
                                 "size_formatted": _format_file_size(file_size),
                                 "type": supported_extensions.get(ext, "Unknown"),
                                 "extension": ext,
                                 "source": "remote",
+                                "category": category,
                             }
                         )
-
-                if files:
-                    print(
-                        f"[collect_files_from_new_sandbox] Returning {len(files)} files"
-                    )
-                    break
 
             except Exception as e:
                 print(f"[collect_files_from_new_sandbox] Error: {e}")
                 continue
+
+        if files:
+            print(f"[collect_files_from_new_sandbox] Total files: {len(files)}")
 
         try:
             await sandbox.kill()

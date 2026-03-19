@@ -1931,12 +1931,14 @@ class IterativeOpenCodeExecutorSync:
         max_iterations: int = 3,
         evaluation_criteria: Optional[EvaluationCriteria] = None,
         early_stop_on_success: bool = True,
+        progress_callback: Optional[callable] = None,
     ):
         self._executor = IterativeOpenCodeExecutor(
             config=config,
             max_iterations=max_iterations,
             evaluation_criteria=evaluation_criteria,
             early_stop_on_success=early_stop_on_success,
+            progress_callback=progress_callback,
         )
 
     def execute(self, input_data: Dict[str, Any]) -> IterativeExecutionResult:

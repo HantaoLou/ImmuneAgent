@@ -131,16 +131,33 @@ def _build_bundle_prompt(bundle: SubAgentBundle) -> str:
 
 def _get_progress_callback_by_session(session_id: str):
     """Get progress callback for session from global registry."""
+    if not session_id:
+        return None
+
     try:
         import sys
+        from pathlib import Path
 
         backend_dir = Path(__file__).parent.parent.parent.parent.parent / "backend"
+        project_root = backend_dir.parent
+
         if str(backend_dir) not in sys.path:
             sys.path.insert(0, str(backend_dir))
-        import backend.progress_tracker as pt_module
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
 
-        return pt_module.get_progress_callback(session_id)
-    except Exception:
+        from backend import progress_tracker as pt_module
+
+        callback = pt_module.get_progress_callback(session_id)
+        print(
+            f"[Orchestrator] Got callback for session {session_id}: {callback is not None}"
+        )
+        return callback
+    except Exception as e:
+        print(f"[Orchestrator] Failed to get callback: {e}")
+        import traceback
+
+        traceback.print_exc()
         return None
 
 
@@ -158,13 +175,17 @@ async def _run_bundle_async(
     session_id = global_state.session_id or "default"
     timeout = 600
 
+    progress_callback = _get_progress_callback_by_session(
+        global_state.session_id if global_state.session_id else None
+    )
+
     start_ts = time.time()
     result = await OpenCodeExecutor.execute(
         session_id=session_id,
         bundle_id=bundle.bundle_id,
         task=prompt,
         timeout=timeout,
-        progress_callback=_get_progress_callback_by_session(global_state.session_id),
+        progress_callback=progress_callback,
         node_name=f"orchestrator_{bundle.bundle_id}",
     )
     elapsed = time.time() - start_ts

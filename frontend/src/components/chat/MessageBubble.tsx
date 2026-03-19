@@ -10,7 +10,7 @@ import styles from './MessageBubble.module.css';
 
 interface MessageBubbleProps {
   message: Message;
-  onHITLConfirm?: (sessionId: string, feedback?: string, parameters?: Record<string, any>) => void;
+  onHITLConfirm?: (sessionId: string, feedback?: string, parameters?: Record<string, any>, taskMd?: string) => void;
   onHITLReject?: (sessionId: string, feedback: string) => void;
 }
 
@@ -29,10 +29,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onHITLCon
   });
 
   if (hasHITLRequest) {
-    console.log('[MessageBubble] Rendering HITLBubble');
+    console.log('[MessageBubble] Rendering HITLBubble with ExecutionLog');
     return (
       <div className={`${styles.messageWrapper} ${styles.agentWrapper}`}>
         <div className={styles.messageContainer}>
+          {hasExecutionLogs && (
+            <div className={styles.executionLogContainer}>
+              <ExecutionLog logs={message.executionLogs!} />
+            </div>
+          )}
           <HITLBubble
             hitlRequest={message.hitlRequest!}
             onConfirm={onHITLConfirm}

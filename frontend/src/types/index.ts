@@ -8,6 +8,8 @@ export interface FileAttachment {
   uploadTime: number;
   category: 'image' | 'document' | 'code' | 'data' | 'other';
   uploadProgress?: number;
+  sandboxPath?: string;
+  localPath?: string;
 }
 
 export interface LogEntry {

@@ -293,17 +293,22 @@ class GlobalState(BaseModel):
                 import sys
                 from pathlib import Path
 
-                # 添加backend到path以导入progress_tracker
                 backend_dir = Path(__file__).parent.parent / "backend"
+                project_root = backend_dir.parent
+
                 if str(backend_dir) not in sys.path:
                     sys.path.insert(0, str(backend_dir))
+                if str(project_root) not in sys.path:
+                    sys.path.insert(0, str(project_root))
 
-                # 使用完整的导入路径，确保导入的是同一个模块实例
-                import backend.progress_tracker as pt_module
+                from backend import progress_tracker as pt_module
 
                 callback = pt_module.get_progress_callback(self.session_id)
-            except (ImportError, AttributeError):
-                pass
+                print(
+                    f"[GlobalState.get_llm] Got callback for session {self.session_id}: {callback is not None}"
+                )
+            except (ImportError, AttributeError) as e:
+                print(f"[GlobalState.get_llm] Failed to get callback: {e}")
 
         return create_llm_with_thinking(
             purpose=purpose,

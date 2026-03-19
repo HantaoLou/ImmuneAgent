@@ -10,6 +10,28 @@
   padding: 0;
 }
 
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--accent-cyan, #00f0ff), var(--accent-purple, #b967ff));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-cyan, #00f0ff);
+}
+
+::-webkit-scrollbar-corner {
+  background: rgba(0, 0, 0, 0.3);
+}
+
 html,
 body {
   height: 100%;

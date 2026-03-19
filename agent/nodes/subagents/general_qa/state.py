@@ -27,17 +27,15 @@ class GeneralQAState(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    progress_callback: Optional[Callable] = Field(
-        default=None,
-        description="Progress callback function for real-time progress reporting",
-    )
-
+    # IMPORTANT: Do NOT store progress_callback in state - it cannot be serialized by LangGraph.
+    # The callback is retrieved dynamically from the global registry via session_id in get_llm().
     session_id: Optional[str] = Field(
         default=None, description="Session ID from GlobalState for progress tracking"
     )
 
     parent_state: Optional["GlobalState"] = Field(
         default=None,
+        exclude=True,
         description="Parent GlobalState reference for accessing shared data and callbacks",
     )
 
@@ -545,29 +543,39 @@ class GeneralQAState(BaseModel):
     def get_llm(
         self, purpose: str = "reasoning", node_name: Optional[str] = None, **kwargs
     ) -> Optional[Any]:
-        """
-        获取 LLM 实例（推荐方法）
-
-        复用父图的 get_llm 方法，如果父图不可用则使用本地 callback。
-
-        Args:
-            purpose: 模型用途，可选: "reasoning", "bioinformatics", "reasoning_advanced", "code"
-            node_name: 节点名称
-            **kwargs: 传递给 LLM 创建函数的其他参数
-
-        Returns:
-            LLM 实例，如果创建失败则返回 None
-        """
+        # [FIX] 优先使用 parent_state.get_llm()（会通过 session_id 从 registry 获取）
         if self.parent_state and hasattr(self.parent_state, "get_llm"):
             return self.parent_state.get_llm(
                 purpose=purpose, node_name=node_name, **kwargs
             )
 
+        # [FIX] Do NOT use self.progress_callback - it cannot be serialized by LangGraph.
+        # Retrieve callback dynamically from global registry via session_id.
+        progress_callback = None
+        if self.session_id:
+            try:
+                import sys
+                from pathlib import Path
+
+                backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+                project_root = backend_dir.parent
+
+                if str(backend_dir) not in sys.path:
+                    sys.path.insert(0, str(backend_dir))
+                if str(project_root) not in sys.path:
+                    sys.path.insert(0, str(project_root))
+
+                from backend import progress_tracker as pt_module
+
+                progress_callback = pt_module.get_progress_callback(self.session_id)
+            except (ImportError, AttributeError) as e:
+                print(f"[GeneralQAState.get_llm] 获取 callback 失败: {e}")
+
         from agent.utils.llm_factory import create_llm_with_thinking
 
         return create_llm_with_thinking(
             purpose=purpose,
-            progress_callback=self.progress_callback,
+            progress_callback=progress_callback,
             session_id=self.session_id,
             node_name=node_name,
             **kwargs,

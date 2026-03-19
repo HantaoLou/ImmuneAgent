@@ -13,6 +13,7 @@ import { InputPanel } from '@/components/chat/InputPanel';
 import { EmptyState } from '@/components/common/EmptyState';
 import { FileManager } from '@/components/files';
 import { resumeHITL } from '@/services/hitlService';
+import { parseSSEEventData } from '@/utils/sseParser';
 import styles from './page.module.css';
 
 export default function ChatPage() {
@@ -32,30 +33,38 @@ export default function ChatPage() {
     deleteSession,
     addMessage,
     updateMessage,
+    deleteMessage,
   } = useSessionStore();
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
 
   const handleProgress = useCallback((log: LogEntry) => {
-    executionLogsRef.current = [...executionLogsRef.current, log];
+    if (!activeSessionId || !agentMessageIdRef.current) return;
     
-    if (activeSessionId && agentMessageIdRef.current) {
-      updateMessage(activeSessionId, agentMessageIdRef.current, {
-        executionLogs: [...executionLogsRef.current],
-      });
-    }
+    const { sessions: currentSessions } = useSessionStore.getState();
+    const currentSession = currentSessions.find(s => s.id === activeSessionId);
+    const currentMessage = currentSession?.messages.find(m => m.id === agentMessageIdRef.current);
+    const currentLogs = currentMessage?.executionLogs || [];
+    
+    updateMessage(activeSessionId, agentMessageIdRef.current, {
+      executionLogs: [...currentLogs, log],
+    });
   }, [activeSessionId, updateMessage]);
 
   const handleComplete = useCallback((result: any) => {
     if (activeSessionId && agentMessageIdRef.current) {
+      const { sessions } = useSessionStore.getState();
+      const currentSession = sessions.find(s => s.id === activeSessionId);
+      const currentMessage = currentSession?.messages.find(m => m.id === agentMessageIdRef.current);
+      const currentLogs = currentMessage?.executionLogs || [];
+      
       const responseContent = result?.answer || result?.summary?.answer || result?.result?.merged_result?.message || 'Task completed';
       updateMessage(activeSessionId, agentMessageIdRef.current, {
         content: typeof responseContent === 'string' ? responseContent : JSON.stringify(responseContent),
         status: 'success',
-        executionLogs: [...executionLogsRef.current],
+        executionLogs: currentLogs,
       });
     }
-    executionLogsRef.current = [];
     agentMessageIdRef.current = null;
   }, [activeSessionId, updateMessage]);
 
@@ -82,12 +91,12 @@ export default function ChatPage() {
     agentMessageIdRef.current = null;
   }, [activeSessionId, updateMessage]);
 
-  const handleHITLConfirm = useCallback(async (sessionId: string, feedback?: string, parameters?: Record<string, any>) => {
+  const handleHITLConfirm = useCallback(async (sessionId: string, feedback?: string, parameters?: Record<string, any>, taskMd?: string) => {
     console.log('[page] handleHITLConfirm called:', sessionId);
     
     const { sessions: currentSessions } = useSessionStore.getState();
     const session = currentSessions.find(s => s.id === sessionId);
-    const hitlMessage = session?.messages.find(m => m.hitlRequest);
+    const hitlMessage = session?.messages.filter(m => m.hitlRequest).pop();
     const oldHitlId = hitlMessage?.hitlRequest?.hitl_id;
 
     if (!hitlMessage || !oldHitlId) {
@@ -97,6 +106,54 @@ export default function ChatPage() {
 
     console.log('[page] Found hitlMessage:', hitlMessage.id, 'hitl_id:', oldHitlId);
 
+    const agentMessageId = hitlMessage.id;
+
+    // 添加用户确认消息（在agent消息之前）
+    const userConfirmMessage = {
+      role: 'user' as const,
+      content: `user confirm the plan:\n${taskMd || hitlMessage.hitlRequest?.task_md || ''}`,
+      timestamp: Date.now(),
+      status: 'success' as const,
+    };
+    addMessage(sessionId, userConfirmMessage);
+
+    // 清除hitlRequest，保留executionLogs，设置为loading状态
+    updateMessage(sessionId, agentMessageId, {
+      hitlRequest: undefined,
+      status: 'loading' as const,
+    });
+    
+    // 设置 ref 指向原消息
+    agentMessageIdRef.current = agentMessageId;
+
+    // 进度回调
+    const handleResumeProgress = (event: MessageEvent) => {
+      console.log('[page] handleResumeProgress (confirm) called');
+      try {
+        const parsed = parseSSEEventData(event.data);
+        if (parsed.data.event_type) {
+          const logEntry: LogEntry = {
+            id: uuidv4(),
+            event_type: parsed.data.event_type,
+            message: parsed.data.message,
+            timestamp: parsed.data.timestamp,
+            node_name: parsed.data.node_name,
+            details: parsed.data.details,
+          };
+          // 从 store 获取最新日志并追加到原消息
+          const { sessions: latestSessions } = useSessionStore.getState();
+          const latestSession = latestSessions.find(s => s.id === sessionId);
+          const currentMessage = latestSession?.messages.find(m => m.id === agentMessageId);
+          const currentLogs = currentMessage?.executionLogs || [];
+          updateMessage(sessionId, agentMessageId, {
+            executionLogs: [...currentLogs, logEntry],
+          });
+        }
+      } catch (e) {
+        console.error('[page] Failed to parse resume progress (confirm):', e);
+      }
+    };
+
     try {
       const result = await resumeHITL({
         session_id: sessionId,
@@ -104,39 +161,44 @@ export default function ChatPage() {
         confirmed: true,
         feedback,
         parameters,
-      });
+      }, handleResumeProgress);
 
       console.log('[page] resumeHITL result:', result);
       console.log('[page] result.hitlRequest:', result.hitlRequest?.hitl_id);
 
       if (result.hitlRequest) {
         console.log('[page] New HITL request, updating message');
-        updateMessage(sessionId, hitlMessage.id, {
+        updateMessage(sessionId, agentMessageId, {
           hitlRequest: result.hitlRequest,
-          status: 'success',
+          status: 'success' as const,
         });
         antMessage.info('任务有新的确认请求');
       } else {
         console.log('[page] No new HITL, task complete');
-        updateMessage(sessionId, hitlMessage.id, {
-          hitlRequest: undefined,
+        updateMessage(sessionId, agentMessageId, {
           content: 'Task completed successfully',
-          status: 'success',
+          status: 'success' as const,
         });
         antMessage.success('任务已完成');
       }
     } catch (error: any) {
       console.error('[page] Failed to confirm HITL:', error);
+      updateMessage(sessionId, agentMessageId, {
+        content: error.message || '确认失败',
+        status: 'error' as const,
+      });
       antMessage.error('确认失败: ' + error.message);
+    } finally {
+      agentMessageIdRef.current = null;
     }
-  }, [updateMessage]);
+  }, [updateMessage, addMessage]);
 
   const handleHITLReject = useCallback(async (sessionId: string, feedback: string) => {
     console.log('[page] handleHITLReject called:', sessionId);
     
     const { sessions: currentSessions } = useSessionStore.getState();
     const session = currentSessions.find(s => s.id === sessionId);
-    const hitlMessage = session?.messages.find(m => m.hitlRequest);
+    const hitlMessage = session?.messages.filter(m => m.hitlRequest).pop();
     const oldHitlId = hitlMessage?.hitlRequest?.hitl_id;
 
     if (!hitlMessage || !oldHitlId) {
@@ -144,37 +206,90 @@ export default function ChatPage() {
       return;
     }
 
+    const agentMessageId = hitlMessage.id;
+
+    // 添加用户拒绝消息（在agent消息之前）
+    const userRejectMessage = {
+      role: 'user' as const,
+      content: `user reject the plan with feedback:\n${feedback}`,
+      timestamp: Date.now(),
+      status: 'success' as const,
+    };
+    addMessage(sessionId, userRejectMessage);
+
+    // 清除hitlRequest，保留executionLogs，设置为loading状态
+    updateMessage(sessionId, agentMessageId, {
+      hitlRequest: undefined,
+      status: 'loading' as const,
+    });
+    
+    // 设置 ref 指向原消息
+    agentMessageIdRef.current = agentMessageId;
+
+    // 进度回调
+    const handleResumeProgress = (event: MessageEvent) => {
+      console.log('[page] handleResumeProgress (reject) called');
+      try {
+        const parsed = parseSSEEventData(event.data);
+        if (parsed.data.event_type) {
+          const logEntry: LogEntry = {
+            id: uuidv4(),
+            event_type: parsed.data.event_type,
+            message: parsed.data.message,
+            timestamp: parsed.data.timestamp,
+            node_name: parsed.data.node_name,
+            details: parsed.data.details,
+          };
+          // 从 store 获取最新日志并追加到原消息
+          const { sessions: latestSessions } = useSessionStore.getState();
+          const latestSession = latestSessions.find(s => s.id === sessionId);
+          const currentMessage = latestSession?.messages.find(m => m.id === agentMessageId);
+          const currentLogs = currentMessage?.executionLogs || [];
+          updateMessage(sessionId, agentMessageId, {
+            executionLogs: [...currentLogs, logEntry],
+          });
+        }
+      } catch (e) {
+        console.error('[page] Failed to parse resume progress (reject):', e);
+      }
+    };
+
     try {
       const result = await resumeHITL({
         session_id: sessionId,
         hitl_id: oldHitlId,
         confirmed: false,
         feedback,
-      });
+      }, handleResumeProgress);
 
       console.log('[page] resumeHITL result:', result);
 
       if (result.hitlRequest) {
         console.log('[page] New HITL request after rejection');
-        updateMessage(sessionId, hitlMessage.id, {
+        updateMessage(sessionId, agentMessageId, {
           hitlRequest: result.hitlRequest,
-          status: 'success',
+          status: 'success' as const,
         });
         antMessage.info('任务有新的确认请求');
       } else {
         console.log('[page] Task updated');
-        updateMessage(sessionId, hitlMessage.id, {
-          hitlRequest: undefined,
-          content: `Task updated based on feedback: ${feedback}`,
-          status: 'success',
+        updateMessage(sessionId, agentMessageId, {
+          content: 'Task updated based on feedback',
+          status: 'success' as const,
         });
         antMessage.success('修改请求已提交');
       }
     } catch (error: any) {
       console.error('[page] Failed to reject HITL:', error);
+      updateMessage(sessionId, agentMessageId, {
+        content: error.message || '提交失败',
+        status: 'error' as const,
+      });
       antMessage.error('提交失败: ' + error.message);
+    } finally {
+      agentMessageIdRef.current = null;
     }
-  }, [updateMessage]);
+  }, [updateMessage, addMessage]);
 
   const { submitTask, isLoading, disconnect } = useChatStream({
     onProgress: handleProgress,

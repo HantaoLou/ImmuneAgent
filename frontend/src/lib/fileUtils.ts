@@ -100,34 +100,6 @@ export const fileUtils = {
   },
 
   validateFile(file: File): { valid: boolean; error?: string } {
-    const maxSizeMap: Record<FileCategory, number> = {
-      image: 5 * 1024 * 1024, // 5MB
-      document: 10 * 1024 * 1024, // 10MB
-      code: 2 * 1024 * 1024, // 2MB
-      data: 10 * 1024 * 1024, // 10MB
-      other: 5 * 1024 * 1024, // 5MB
-    };
-
-    const category = this.getCategory(file);
-    const maxSize = maxSizeMap[category];
-
-    if (file.size > maxSize) {
-      return {
-        valid: false,
-        error: `文件大小超出限制（最大 ${this.formatFileSize(maxSize)}）`,
-      };
-    }
-
-    const allowedExtensions = Object.keys(FILE_EXTENSION_MAP);
-    const extension = '.' + file.name.split('.').pop()?.toLowerCase();
-    
-    if (!allowedExtensions.includes(extension)) {
-      return {
-        valid: false,
-        error: '不支持的文件类型',
-      };
-    }
-
     return { valid: true };
   },
 

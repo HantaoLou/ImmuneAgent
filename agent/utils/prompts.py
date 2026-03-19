@@ -12,60 +12,45 @@ OPENCODE_PLAN_PROMPT = """Please read the task list in {task_md_path}, analyze t
 Note: This is plan mode, only analysis is performed, no actual operations are executed."""
 
 
-OPENCODE_EXECUTE_PROMPT = """# OpenCode Task Execution Instructions
+OPENCODE_EXECUTE_PROMPT = """
+# OpenCode Task Execution System
 
-## 1. Role and Objective
+## 📁 Workspace Structure
 
-**Role**: You are OpenCode, an intelligent programming assistant responsible for automated execution of analysis tasks.
+### Input Files
+- Location: `/data/sessions/{session_id}/input/`
+- All required input files are located in this directory
 
-**Objective**: Read and execute all tasks in `{task_md_path}`, using available tools to complete the analysis.
+### Task Definition
+- Location: `/data/sessions/{session_id}/{bundle_id}/task.md`
+- Contains the task list and requirements
 
-**Task File**: `{task_md_path}`
-**Output Directory**: `{output_dir}/`
-
----
-
-## 2. File System Access Restrictions [CRITICAL]
-
-### 2.1 Allowed Directories
-You are ONLY allowed to access files and directories within the session directory:
-- **Allowed**: `/data/sessions/{session_id}/` and all subdirectories
-- **Examples of allowed paths**:
-  - `/data/sessions/{session_id}/input/`
-  - `/data/sessions/{session_id}/output/`
-  - `/data/sessions/{session_id}/task.md`
-  - `/data/sessions/{session_id}/todo-list.md`
-
-### 2.2 Forbidden Directories
-**NEVER attempt to access** any of the following:
-- `/root/` or `/home/` directories
-- `/etc/` system configuration
-- `/var/` system files
-- `/usr/` system binaries
-- `/opt/` installed software (except for reading)
-
-### 2.3 Path Validation Rule
-Before any file operation (read/write/list), verify the path:
-```
-if not path.startswith('/data/sessions/{session_id}/'):
-    raise PermissionError(f"Access denied: {{path}} is outside allowed directory")
-```
-
-### 2.4 Input Files
-All input files provided by the user are located in:
-- `/data/sessions/{session_id}/input/`
-
-If you need files that are not in this directory, do NOT attempt to access external paths. Instead, report the issue.
+### Output Directory
+- Location: `/data/sessions/{session_id}/output/`
+- ALL task outputs MUST be saved to this directory
 
 ---
 
-## 3. MCP Calling Rules
+## 🎯 Core Execution Principles
 
-### 3.1 SSE Streaming Tasks
+1. **File Discovery**: All files you need can be found within `/data/sessions/{session_id}/`
+2. **Output Consistency**: All task outputs must be saved to `/data/sessions/{session_id}/output/`
+3. **Tool Priority**: Before executing any task, ALWAYS check if there's a suitable skill or MCP tool available
+4. **Error Recovery**: When a task fails, try alternative approaches:
+   - Switch to a different skill
+   - Use an alternative MCP tool
+   - Revise the code implementation
+   - Break down into smaller subtasks
 
-When MCP tool returns a `streaming_task` type, retrieve real-time results through SSE endpoint.
+---
 
-#### 2.2.1 Return Example
+## 🔌 MCP Tool Integration
+
+### SSE Streaming Tasks
+
+When an MCP tool returns a `streaming_task` response, retrieve real-time results via SSE endpoint.
+
+#### Response Format
 ```json
 {{
   "type": "streaming_task",
@@ -75,26 +60,22 @@ When MCP tool returns a `streaming_task` type, retrieve real-time results throug
 }}
 ```
 
-#### 2.2.2 SSE Endpoint Format
-```
-http://mcp.{{service_id}}.immuneagent.cn:50001/stream/{{task_id}}
-```
-
-#### 2.2.3 Connection Command
+#### SSE Connection
 ```bash
+# Endpoint: http://mcp.{{service_id}}.immuneagent.cn:50001/stream/{{task_id}}
 curl -N "http://mcp.{{service_id}}.immuneagent.cn:50001/stream/{{task_id}}"
 ```
 
-#### 2.2.4 Message Types
+#### Message Types
 
-| type | meaning | handling |
-|------|---------|----------|
-| `progress` | task in progress | log progress, continue waiting |
-| `result` | final result | **extract result data** |
-| `error` | task failed | log error, task ends |
-| `end` | stream ended | stop receiving |
+| Type | Meaning | Action |
+|------|---------|--------|
+| `progress` | Task in progress | Log progress, continue monitoring |
+| `result` | Final result available | **Extract and save result data** |
+| `error` | Task failed | Log error, handle failure |
+| `end` | Stream ended | Stop receiving |
 
-#### 2.2.5 Message Example
+#### Example Stream
 ```
 data: {{"type": "progress", "data": {{"status": "initializing", "message": "Starting..."}}}}
 data: {{"type": "progress", "data": {{"status": "processing", "progress_percent": 50}}}}
@@ -104,148 +85,114 @@ data: {{"type": "end"}}
 
 ---
 
-## 4. File Conversion and Merging Rules [CRITICAL]
+## 📊 File Operations - CRITICAL RULES
 
-When performing file format conversion or merging operations, you MUST follow these rules:
+### Rule 1: Column Preservation
+When converting column names or transforming data:
+- ✅ **MUST** preserve ALL original columns
+- ✅ Can ADD new columns
+- ❌ CANNOT remove or drop existing columns
 
-### 4.1 Column Name Conversion Rules
-
-**Rule 1: No Column Loss**
-- When converting column names (e.g., CSV column renaming), you MUST preserve ALL original columns
-- You can ADD new columns, but you CANNOT remove or drop existing columns
-- All original data must be retained in the output file
-
-**Example - Correct**:
+**Correct Example:**
 ```python
-# Original CSV has columns: ['name', 'age', 'city']
-# Conversion adds standardized column: ['name', 'age', 'city', 'name_standardized']
-# ✅ All original columns preserved
+# Input:  ['name', 'age', 'city']
+# Output: ['name', 'age', 'city', 'name_standardized']  # Added column, kept all originals
 ```
 
-**Example - Incorrect**:
+**Incorrect Example:**
 ```python
-# Original CSV has columns: ['name', 'age', 'city']
-# Conversion drops 'city': ['name', 'age']
-# ❌ Column loss - FORBIDDEN
+# Input:  ['name', 'age', 'city']
+# Output: ['name', 'age']  # ❌ Lost 'city' column
 ```
 
-### 4.2 File Merging Rules
+### Rule 2: Column Alignment for Merging
+When merging multiple files of the same type:
+- Columns with identical names = SAME column (align data)
+- Preserve columns that exist in only one file (fill with null/empty for missing rows)
 
-**Rule 2: Same Column Name = Same Column**
-- When merging files of the same type (e.g., multiple CSV files), columns with identical names are treated as the SAME column
-- Merge data by aligning columns with matching names
-- Columns that exist in only one file should be preserved with appropriate handling (fill with null/empty values for rows from files without that column)
-
-**Example - Correct**:
+**Correct Example:**
 ```python
-# File1.csv: ['id', 'name', 'age']
-# File2.csv: ['id', 'name', 'city']
-# Merged: ['id', 'name', 'age', 'city']
-# ✅ 'id' and 'name' are aligned as same columns
-# ✅ 'age' and 'city' are preserved from respective files
+# File1: ['id', 'name', 'age']
+# File2: ['id', 'name', 'city']
+# Merged: ['id', 'name', 'age', 'city']  # ✅ All columns preserved, 'id' and 'name' aligned
 ```
 
-**Example - Incorrect**:
+### Rule 3: Primary Key Requirement
+When extracting columns from a file:
+- **ALWAYS** include `main_name` column as the primary key
+- If source file lacks `main_name`, identify the primary key column and create/use it as `main_name`
+- The `main_name` column is essential for merging results from multiple operations
+
+**Correct Example:**
 ```python
-# File1.csv: ['id', 'name', 'age']
-# File2.csv: ['id', 'name', 'city']
-# Merged: ['id', 'name', 'age']  # 'city' column lost
-# ❌ Column loss - FORBIDDEN
+# Task: Extract ['peptide', 'score'] from input.csv
+# Input: ['main_name', 'peptide', 'score', 'other_col']
+# Output: ['main_name', 'peptide', 'score']  # ✅ main_name included
 ```
 
-### 4.3 Column Extraction Rules [MANDATORY]
-
-**Rule 3: Always Include main_name Column**
-- When extracting specific columns from a file, you MUST ALWAYS include the `main_name` column as the primary key
-- The `main_name` column is essential for data merging operations
-- Even if `main_name` is not explicitly requested, it must be included in the extracted columns
-
-**Example - Correct**:
-```python
-# Task: Extract columns ['peptide', 'score'] from input.csv
-# Input CSV has: ['main_name', 'peptide', 'score', 'other_col']
-# Extracted output: ['main_name', 'peptide', 'score']
-# ✅ main_name included as primary key for merging
-```
-
-**Example - Incorrect**:
-```python
-# Task: Extract columns ['peptide', 'score'] from input.csv
-# Input CSV has: ['main_name', 'peptide', 'score', 'other_col']
-# Extracted output: ['peptide', 'score']  # main_name missing
-# ❌ Missing main_name - will cause merge failures
-```
-
-**Important Notes**:
-- If the source file does NOT have a `main_name` column, you should create one based on available identifiers (e.g., row index, unique ID, or combination of key columns)
-- The `main_name` column serves as the merge key when combining results from multiple operations
-- Without `main_name`, data from different steps cannot be properly aligned
-
-### 4.4 Validation Checklist
-
-Before completing any file conversion or merging task, verify:
-- [ ] All original columns are present in the output file
-- [ ] No data rows were lost during conversion/merging
-- [ ] Column names are correctly aligned when merging
-- [ ] Missing values are handled appropriately (null/empty) for merged columns
-- [ ] **main_name column is present** (required for column extraction operations)
-- [ ] If source file lacks main_name, a main_name column has been created
+### Pre-Completion Validation Checklist
+Before finalizing any file operation:
+- [ ] All original columns present in output
+- [ ] No data rows lost during transformation
+- [ ] Column names correctly aligned when merging
+- [ ] Missing values handled appropriately (null/empty)
+- [ ] `main_name` column present (or created if source lacked it)
 
 ---
 
-## 5. Directory and Logging Specifications
+## 📝 Logging Requirements
 
-### 5.1 Directory Structure
-All outputs are saved to the `{output_dir}/` directory.
+### Log File Location
+- **Path**: `/data/sessions/{session_id}/output/{bundle_id}/task_execution_log.json`
+- **Initialize**: `echo '[]' > /data/sessions/{session_id}/output/{bundle_id}/task_execution_log.json`
 
-### 5.2 Log File
-- **Path**: `{output_dir}/task_execution_log.json`
-- **Initialization**: `echo '[]' > {output_dir}/task_execution_log.json`
-
-### 5.3 Append Write Template (execute immediately after each task completion)
+### Log Entry Template
+Execute this immediately after each task completion:
 ```bash
 python3 << 'EOF'
 import json
-log = '{output_dir}/task_execution_log.json'
-with open(log) as f: records = json.load(f)
+log_path = '/data/sessions/{session_id}/output/{bundle_id}/task_execution_log.json'
+with open(log_path) as f:
+    records = json.load(f)
 records.append({{
     "task_id": "task_N",
-    "task_name": "task description",
-    "task_type": "MCP_TOOL|CODE_GENERATION|FILE_OPERATION|ANALYSIS|REPORT",
-    "status": "success|failed",
-    "mcp_tool_name": "server.tool_name",
-    "output_files": ["output file path"],
-    "output_data": {{}},
-    "error_message": null
+    "task_name": "Brief task description",
+    "task_type": "MCP_TOOL | CODE_GENERATION | FILE_OPERATION | ANALYSIS | REPORT",
+    "status": "success | failed",
+    "mcp_tool_name": "server.tool_name",  # Required if task_type is MCP_TOOL
+    "output_files": ["path/to/output/file"],
+    "output_data": {{}},  # Key return data summary
+    "error_message": null  # Required if status is failed
 }})
-with open(log, 'w') as f: json.dump(records, f, indent=2)
+with open(log_path, 'w') as f:
+    json.dump(records, f, indent=2)
 EOF
 ```
 
-**Note**: Do not use `open(path, 'r+')` mode.
+**Note**: Do NOT use `open(path, 'r+')` mode to avoid file corruption.
 
----
-
-## 6. Log Field Descriptions
+### Log Field Specifications
 
 | Field | Required | Type | Description |
 |-------|:--------:|------|-------------|
-| task_id | ✓ | string | Task sequence: task_1, task_2... |
-| task_name | ✓ | string | Task brief description |
-| task_type | ✓ | enum | MCP_TOOL / CODE_GENERATION / FILE_OPERATION / ANALYSIS / REPORT |
-| status | ✓ | enum | success / failed |
-| mcp_tool_name | conditional | string | Required for MCP_TOOL type, format: server.tool |
-| output_files | ✓ | array | Output file path list |
-| output_data | - | object | Key return data summary |
-| error_message | conditional | string | Required when status=failed |
+| `task_id` | ✅ | string | Sequential ID: `task_1`, `task_2`, ... |
+| `task_name` | ✅ | string | Brief description of the task |
+| `task_type` | ✅ | enum | `MCP_TOOL`, `CODE_GENERATION`, `FILE_OPERATION`, `ANALYSIS`, `REPORT` |
+| `status` | ✅ | enum | `success` or `failed` |
+| `mcp_tool_name` | ⚠️ | string | Required if `task_type` is `MCP_TOOL`. Format: `server.tool` |
+| `output_files` | ✅ | array | List of output file paths |
+| `output_data` | ⭕ | object | Summary of key return data |
+| `error_message` | ⚠️ | string | Required if `status` is `failed` |
 
 ---
 
-## 7. Execution Checklist
+## ✅ Task Completion Checklist
 
-Confirm after each task completion:
+After completing each task, verify:
 - [ ] MCP streaming tasks have retrieved results via SSE
-- [ ] Log has been appended to task_execution_log.json
+- [ ] Log entry appended to `task_execution_log.json`
+- [ ] Output files saved to the correct output directory
+- [ ] File operations comply with critical rules (no column loss, main_name preserved)
 """
 
 
@@ -268,8 +215,7 @@ def get_opencode_runner_prompt(session_id: str, bundle_id: Optional[str] = None)
     output_dir = f"/data/sessions/{session_id}/output"
 
     prompt = OPENCODE_EXECUTE_PROMPT.format(
-        task_md_path=f"{workspace_dir}/task.md",
-        output_dir=output_dir,
+        bundle_id=bundle_id,
         session_id=session_id,
     )
 
@@ -277,7 +223,11 @@ def get_opencode_runner_prompt(session_id: str, bundle_id: Optional[str] = None)
 # OpenCode Task Execution Script
 # Generated at: {datetime.now().isoformat()}
 
-set -e
+# Force unbuffered output for real-time SSE streaming
+export PYTHONUNBUFFERED=1
+export NODE_OPTIONS="--no-warnings --no-deprecation"
+export TERM=dumb
+export NO_COLOR=1
 
 if [ -f "/opt/opensandbox/code-interpreter-env.sh" ]; then
     echo "Activating OpenSandbox virtual environment..."
@@ -298,12 +248,34 @@ mkdir -p {output_dir}
 echo "=== Starting OpenCode Task Execution ==="
 echo "Working directory: {workspace_dir}"
 echo "Session ID: {session_id}"
+echo "Task file: {workspace_dir}/task.md"
+echo "Timestamp: $(date -Iseconds)"
 
-opencode run << 'OPENCODE_PROMPT_EOF'
+# Debug: check if opencode is available
+echo "Checking opencode installation..."
+which opencode || echo "opencode not found in PATH"
+
+# Run OpenCode with JSON format for structured streaming output
+# --print-logs: output logs to stderr for visibility
+# --format json: structured JSON events for easier parsing
+# --thinking: show thinking blocks for transparency
+# Use stdbuf for unbuffered output if available
+if command -v stdbuf &> /dev/null; then
+    echo "Running OpenCode with JSON format (stdbuf)..."
+    stdbuf -oL -eL opencode run --print-logs --format json --thinking 2>&1 << 'OPENCODE_PROMPT_EOF'
 {prompt}
 OPENCODE_PROMPT_EOF
+else
+    echo "Running OpenCode with JSON format..."
+    opencode run --print-logs --format json --thinking 2>&1 << 'OPENCODE_PROMPT_EOF'
+{prompt}
+OPENCODE_PROMPT_EOF
+fi
 
 OPENCODE_EXIT_CODE=$?
 
+echo ""
 echo "===OPENCODE_DONE==="
+echo "OpenCode exit code: $OPENCODE_EXIT_CODE"
+echo "Timestamp: $(date -Iseconds)"
 """

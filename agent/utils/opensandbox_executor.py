@@ -1313,3 +1313,132 @@ def run_code_in_opensandbox_sync(
             return future.result()
     except RuntimeError:
         return _run_in_new_loop()
+
+
+async def save_file_to_opensandbox(
+    file_path: str,
+    content: bytes | str,
+    existing_sandbox_id: Optional[str] = None,
+    encoding: str = "utf-8",
+) -> Dict[str, Any]:
+    """
+    Save file to OpenSandbox using SDK's write_file.
+
+    If existing_sandbox_id is None or empty, creates a new sandbox for file saving.
+    The sandbox directory is determined by file_path, so sandbox ID doesn't matter.
+
+    Args:
+        file_path: Remote file path in sandbox
+        content: File content (bytes or string)
+        existing_sandbox_id: Existing sandbox ID to connect to (optional, creates new if None)
+        encoding: Encoding for string content (default: utf-8)
+
+    Returns:
+        Dict with success status and file path or error
+    """
+    try:
+        from opensandbox.sandbox import Sandbox
+    except ImportError as exc:
+        return {
+            "success": False,
+            "error": f"OpenSandbox SDK not available: {exc}",
+            "error_type": "ImportError",
+        }
+
+    try:
+        sandbox = None
+
+        if existing_sandbox_id:
+            try:
+                sandbox = await Sandbox.connect(
+                    existing_sandbox_id,
+                    connect_timeout=timedelta(seconds=30),
+                )
+                print(
+                    f"[save_file] Connected to existing sandbox: {existing_sandbox_id}"
+                )
+            except Exception as connect_exc:
+                print(
+                    f"[save_file] Failed to connect to existing sandbox: {connect_exc}, creating new one..."
+                )
+                sandbox = None
+
+        if not sandbox:
+            image = os.getenv(
+                "OPENSANDBOX_IMAGE",
+                "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.1",
+            )
+            connection_config = _get_connection_config()
+
+            create_kwargs = {
+                "timeout": timedelta(seconds=600),
+                "ready_timeout": timedelta(seconds=300),
+            }
+            if connection_config:
+                create_kwargs["connection_config"] = connection_config
+            create_kwargs["skip_health_check"] = True
+
+            sandbox = await Sandbox.create(image, **create_kwargs)
+            print(f"[save_file] Created new sandbox: {getattr(sandbox, 'id', 'N/A')}")
+
+        if isinstance(content, str):
+            content = content.encode(encoding)
+
+        await sandbox.files.write_file(file_path, content)
+
+        sandbox_id = getattr(sandbox, "id", None) or getattr(
+            sandbox, "sandbox_id", existing_sandbox_id or "new"
+        )
+
+        return {
+            "success": True,
+            "file_path": file_path,
+            "sandbox_id": sandbox_id,
+        }
+
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+        }
+
+
+def save_file_to_opensandbox_sync(
+    file_path: str,
+    content: bytes | str,
+    existing_sandbox_id: Optional[str] = None,
+    encoding: str = "utf-8",
+) -> Dict[str, Any]:
+    """
+    Sync wrapper for save_file_to_opensandbox.
+
+    Args:
+        file_path: Remote file path in sandbox
+        content: File content (bytes or string)
+        existing_sandbox_id: Existing sandbox ID to connect to (optional, creates new if None)
+        encoding: Encoding for string content (default: utf-8)
+
+    Returns:
+        Dict with success status and file path or error
+    """
+
+    def _run_in_new_loop():
+        return asyncio.run(
+            save_file_to_opensandbox(
+                file_path=file_path,
+                content=content,
+                existing_sandbox_id=existing_sandbox_id,
+                encoding=encoding,
+            )
+        )
+
+    try:
+        loop = asyncio.get_running_loop()
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(_run_in_new_loop)
+            return future.result(timeout=60)
+    except RuntimeError:
+        return _run_in_new_loop()

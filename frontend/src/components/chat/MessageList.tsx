@@ -7,7 +7,7 @@ import { LoadingTyping } from './LoadingTyping';
 
 interface MessageListProps {
   messages: Message[];
-  onHITLConfirm?: (sessionId: string, feedback?: string, parameters?: Record<string, any>) => void;
+  onHITLConfirm?: (sessionId: string, feedback?: string, parameters?: Record<string, any>, taskMd?: string) => void;
   onHITLReject?: (sessionId: string, feedback: string) => void;
 }
 

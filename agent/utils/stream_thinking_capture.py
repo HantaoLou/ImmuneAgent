@@ -13,7 +13,7 @@ import re
 def stream_with_thinking_capture(
     zhipu_client: Any,
     messages: List[Dict[str, str]],
-    model: str = "glm-4.5",
+    model: str = "glm-4.7",
     temperature: float = 0.1,
     progress_callback: Optional[Callable] = None,
     enable_thinking_prompt: bool = True,
@@ -169,7 +169,7 @@ def stream_with_thinking_capture(
 def invoke_with_thinking_capture(
     zhipu_client: Any,
     messages: List[Dict[str, str]],
-    model: str = "glm-4.5",
+    model: str = "glm-4.7",
     temperature: float = 0.1,
     progress_callback: Optional[Callable] = None,
     enable_thinking_prompt: bool = True,

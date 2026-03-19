@@ -96,11 +96,13 @@ class ResultEvaluatorState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # ========== SSE progress callback ==========
-    progress_callback: Optional[Callable] = Field(
-        default=None, description="Progress callback for SSE streaming"
-    )
+    # IMPORTANT: Do NOT store progress_callback in state - it cannot be serialized by LangGraph.
+    # The callback is retrieved dynamically from the global registry via session_id in get_llm().
     session_id: Optional[str] = Field(default=None, description="会话ID")
-    parent_state: Optional[Any] = Field(default=None, description="父状态引用")
+    # Note: exclude=True to avoid LangGraph serialization failure (circular reference to GlobalState)
+    parent_state: Optional[Any] = Field(
+        default=None, exclude=True, description="父状态引用"
+    )
 
     # ========== 输入 ==========
     # 用户原始输入
@@ -198,9 +200,10 @@ class ResultEvaluatorState(BaseModel):
 
         from agent.utils.llm_factory import create_llm_with_thinking
 
+        # Do NOT pass progress_callback - it cannot be serialized by LangGraph.
+        # The factory will retrieve it from the global registry using session_id.
         return create_llm_with_thinking(
             purpose=purpose,
-            progress_callback=self.progress_callback,
             session_id=self.session_id,
             node_name=node_name or "result_evaluator",
             **kwargs,

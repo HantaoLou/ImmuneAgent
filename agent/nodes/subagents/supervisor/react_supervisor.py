@@ -54,9 +54,8 @@ class ReactSupervisorState(BaseModel):
     execution_plan: Optional[str] = Field(
         default=None, description="Execution plan (if user provided a plan)"
     )
-    progress_callback: Optional[Any] = Field(
-        default=None, description="Progress callback for thinking capture"
-    )
+    # IMPORTANT: Do NOT store progress_callback in state - it cannot be serialized by LangGraph.
+    # The callback is retrieved dynamically from the global registry via session_id.
     session_id: Optional[str] = Field(
         default=None, description="Session ID for tracking"
     )

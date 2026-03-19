@@ -24,17 +24,15 @@ class ImmunityState(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    progress_callback: Optional[Callable] = Field(
-        default=None,
-        description="Progress callback function for real-time progress reporting",
-    )
-
+    # IMPORTANT: Do NOT store progress_callback in state - it cannot be serialized by LangGraph.
+    # The callback is retrieved dynamically from the global registry via session_id in get_llm().
     session_id: Optional[str] = Field(
         default=None, description="Session ID from GlobalState for progress tracking"
     )
 
     parent_state: Optional[Any] = Field(
         default=None,
+        exclude=True,
         description="Parent GlobalState reference for accessing shared data",
     )
 
@@ -154,7 +152,8 @@ class ImmunityState(BaseModel):
         """
         获取 LLM 实例（推荐方法）
 
-        复用父图的 get_llm 方法，如果父图不可用则使用本地 callback。
+        始终通过 session_id 从全局 registry 获取 progress_callback，
+        确保即使 self.progress_callback 为 None 也能正确获取。
 
         Args:
             purpose: 模型用途，可选: "reasoning", "bioinformatics", "reasoning_advanced", "code"
@@ -164,27 +163,33 @@ class ImmunityState(BaseModel):
         Returns:
             LLM 实例，如果创建失败则返回 None
         """
-        # [DEBUG] 检查状态
-        print(f"[ImmunityState.get_llm] 检查状态:")
-        print(f"  - parent_state 存在: {self.parent_state is not None}")
-        print(
-            f"  - parent_state.get_llm 存在: {hasattr(self.parent_state, 'get_llm') if self.parent_state else False}"
-        )
-        print(f"  - self.progress_callback 存在: {self.progress_callback is not None}")
-        print(f"  - self.session_id: {self.session_id}")
-
-        if self.parent_state and hasattr(self.parent_state, "get_llm"):
-            print(f"[ImmunityState.get_llm] 使用 parent_state.get_llm()")
-            return self.parent_state.get_llm(
-                purpose=purpose, node_name=node_name, **kwargs
-            )
-
-        print(f"[ImmunityState.get_llm] 使用 create_llm_with_thinking()")
         from utils.llm_factory import create_llm_with_thinking
+
+        # [FIX] Do NOT use self.progress_callback - it cannot be serialized by LangGraph.
+        # Retrieve callback dynamically from global registry via session_id.
+        progress_callback = None
+        if self.session_id:
+            try:
+                import sys
+                from pathlib import Path
+
+                backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+                project_root = backend_dir.parent
+
+                if str(backend_dir) not in sys.path:
+                    sys.path.insert(0, str(backend_dir))
+                if str(project_root) not in sys.path:
+                    sys.path.insert(0, str(project_root))
+
+                from backend import progress_tracker as pt_module
+
+                progress_callback = pt_module.get_progress_callback(self.session_id)
+            except (ImportError, AttributeError) as e:
+                print(f"[ImmunityState.get_llm] 获取 callback 失败: {e}")
 
         return create_llm_with_thinking(
             purpose=purpose,
-            progress_callback=self.progress_callback,
+            progress_callback=progress_callback,
             session_id=self.session_id,
             node_name=node_name,
             **kwargs,

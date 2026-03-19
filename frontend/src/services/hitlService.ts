@@ -84,7 +84,8 @@ export const resumeHITL = async (
           result = { success: true };
         }
 
-        if (onProgress && parsed.data.event_type) {
+        if (onProgress && parsed.data && parsed.data.event_type) {
+          console.log('[hitlService] Calling onProgress callback for event:', parsed.data.event_type);
           onProgress(new MessageEvent('message', { data: msg.data }));
         }
       } catch (e) {
@@ -102,6 +103,7 @@ export const resumeHITL = async (
       
       if (done) {
         console.log('[hitlService] Stream done, processing remaining buffer:', buffer.length);
+        console.log('[hitlService] Buffer content:', buffer.substring(0, 500));
         if (buffer.trim()) {
           const { messages } = parseSSELines(buffer, true);
           console.log('[hitlService] Final messages:', messages.length);
@@ -114,7 +116,11 @@ export const resumeHITL = async (
 
       const chunk = decoder.decode(value, { stream: true });
       console.log('[hitlService] Received chunk:', chunk.length, 'bytes');
+      console.log('[hitlService] Chunk content:', chunk.substring(0, 300));
       buffer += chunk;
+
+      console.log('[hitlService] Buffer contains \\n\\n:', buffer.includes('\n\n'));
+      console.log('[hitlService] Buffer contains \\r\\n\\r\\n:', buffer.includes('\r\n\r\n'));
       
       const { messages, remaining } = parseSSELines(buffer, false);
       console.log('[hitlService] Parsed messages:', messages.length, 'remaining:', remaining.length);

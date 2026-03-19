@@ -47,6 +47,41 @@ if str(agent_dir) not in sys.path:
 
 from state import GlobalState, UserTaskType
 
+
+def _get_progress_callback_by_session(session_id: Optional[str]) -> Optional[Any]:
+    """
+    Get progress callback from global registry by session_id
+
+    Args:
+        session_id: Session ID to look up
+
+    Returns:
+        Progress callback function if found, None otherwise
+    """
+    if not session_id:
+        return None
+
+    try:
+        backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+        project_root = backend_dir.parent
+
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+
+        from backend import progress_tracker as pt_module
+
+        callback = pt_module.get_progress_callback(session_id)
+        print(
+            f"[Supervisor] Got callback for session {session_id}: {callback is not None}"
+        )
+        return callback
+    except (ImportError, AttributeError) as e:
+        print(f"[Supervisor] Failed to get callback: {e}")
+        return None
+
+
 # LLM-related imports (using common LLM factory)
 try:
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -263,11 +298,11 @@ class SupervisorState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # SSE progress callback (from parent GlobalState)
-    progress_callback: Optional[Callable] = Field(
-        default=None, description="Progress callback for SSE streaming"
-    )
+    # IMPORTANT: Do NOT store progress_callback in state - it cannot be serialized by LangGraph.
+    # The callback is retrieved dynamically from the global registry via session_id in get_llm().
+    session_id: Optional[str] = Field(default=None, description="Unique session ID")
     parent_state: Optional[Any] = Field(
-        default=None, description="Parent GlobalState reference"
+        default=None, exclude=True, description="Parent GlobalState reference"
     )
 
     user_input: str = Field(description="User's original input")
@@ -287,7 +322,6 @@ class SupervisorState(BaseModel):
     )
 
     # Input preprocessing result fields
-    session_id: Optional[str] = Field(default=None, description="Unique session ID")
     preprocess_result: Optional[InputPreprocessResult] = Field(
         default=None, description="Input preprocessing result"
     )
@@ -319,9 +353,10 @@ class SupervisorState(BaseModel):
 
         from utils.llm_factory import create_llm_with_thinking
 
+        # Do NOT pass progress_callback - it cannot be serialized by LangGraph.
+        # The factory will retrieve it from the global registry using session_id.
         return create_llm_with_thinking(
             purpose=purpose,
-            progress_callback=self.progress_callback,
             session_id=self.session_id,
             node_name=node_name or "supervisor",
             **kwargs,
@@ -2555,8 +2590,8 @@ def supervisor_input_mapper(global_state: GlobalState) -> SupervisorState:
                 existing_file_analyses.append(fa)
 
     return SupervisorState(
-        # [HOT] 传递 progress_callback 和 parent_state，确保 SSE 推送正常工作
-        progress_callback=getattr(global_state, "progress_callback", None),
+        # [FIX] Do NOT pass progress_callback - it cannot be serialized by LangGraph.
+        # The callback is retrieved dynamically from global registry via session_id in get_llm().
         parent_state=global_state,
         user_input=global_state.user_input,
         user_task_type=None,  # Will be determined in subgraph

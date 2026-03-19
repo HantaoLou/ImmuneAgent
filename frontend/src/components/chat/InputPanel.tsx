@@ -84,6 +84,8 @@ export const InputPanel: React.FC<InputPanelProps> = ({
           sessionId: result.sessionId,
           uploadTime: Date.now(),
           category: fileUtils.getCategory(file),
+          sandboxPath: (result as any).sandboxPath,
+          localPath: (result as any).localPath,
         };
 
         newAttachments.push(attachment);

@@ -56,7 +56,7 @@ class ZhipuAIAdapter(BaseChatModel):
     支持超时后自动切换到备用模型（fallback models）。
     """
 
-    model: str = "glm-4.5"
+    model: str = "glm-4.7"
     temperature: float = 0.7
     api_key: Optional[str] = None
     zhipu_client: Optional[Any] = None
@@ -75,15 +75,15 @@ class ZhipuAIAdapter(BaseChatModel):
 
     # 默认的备用模型映射（主模型 -> 备用模型）
     DEFAULT_FALLBACK_MAP: ClassVar[Dict[str, List[str]]] = {
-        "glm-4.5": ["glm-4.5-air", "glm-4-plus"],
-        "glm-4.5-air": ["glm-4-plus"],
+        "glm-4.7": ["glm-4.7-air", "glm-4-plus"],
+        "glm-4.7-air": ["glm-4-plus"],
         "glm-4-plus": ["glm-4"],
         "glm-4": ["glm-4-flash"],
     }
 
     def __init__(
         self,
-        model: str = "glm-4.5",
+        model: str = "glm-4.7",
         temperature: float = 0.7,
         api_key: Optional[str] = None,
         timeout: int = 120,
@@ -101,7 +101,7 @@ class ZhipuAIAdapter(BaseChatModel):
         初始化 ZhipuAI 适配器
 
         Args:
-            model: 模型名称，默认为 "glm-4.5"
+            model: 模型名称，默认为 "glm-4.7"
             temperature: 温度参数，默认为 0.7
             api_key: API 密钥，如果不提供则从环境变量 ZHIPU_API_KEY 读取
             timeout: 请求超时时间（秒），默认 120
@@ -192,17 +192,23 @@ class ZhipuAIAdapter(BaseChatModel):
                 import sys
                 from pathlib import Path
 
-                # 添加backend到path以导入progress_tracker
                 backend_dir = Path(__file__).parent.parent.parent / "backend"
+                project_root = backend_dir.parent
+
                 if str(backend_dir) not in sys.path:
                     sys.path.insert(0, str(backend_dir))
+                if str(project_root) not in sys.path:
+                    sys.path.insert(0, str(project_root))
 
-                import backend.progress_tracker as pt_module
+                from backend import progress_tracker as pt_module
 
                 callback = pt_module.get_progress_callback(self.session_id)
+                print(
+                    f"[ZhipuAIAdapter] Got progress_callback for session {self.session_id}: {callback is not None}"
+                )
                 return callback
-            except (ImportError, AttributeError):
-                pass
+            except (ImportError, AttributeError) as e:
+                print(f"[ZhipuAIAdapter] Failed to get progress_callback: {e}")
 
         return None
 

@@ -2,10 +2,13 @@
 """
 Iterative Executor 子图构建
 
-构建 iterative_executor 子图，提供与 main_graph 的集成接口。
+构建 iterative_executor 子图
+提供与 main_graph 的集成接口。
 """
 
 from typing import TYPE_CHECKING
+import sys
+from pathlib import Path
 
 if TYPE_CHECKING:
     from state import GlobalState
@@ -25,6 +28,38 @@ from nodes.subagents.iterative_executor.output_mapper import (
 )
 
 
+def _get_progress_callback_by_session(session_id) -> Optional[Any]:
+    """
+    Get progress callback from global registry by session_id
+
+    Args:
+        session_id: Session ID to look up
+
+    Returns:
+        Progress callback function if found, None otherwise
+    """
+    if not session_id:
+        return None
+
+    try:
+        backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+        project_root = backend_dir.parent
+
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+
+        from backend import progress_tracker as pt_module
+
+        return pt_module.get_progress_callback(session_id)
+    except (ImportError, AttributeError) as e:
+        print(f"[IterativeExecutor] Failed to get progress callback: {e}")
+        return None
+
+
+# ============================================================================
+# 子图节点函数
 # ============================================================================
 # 子图节点函数
 # ============================================================================
@@ -178,11 +213,15 @@ def _execute_internal(state: IterativeExecutorState) -> IterativeExecutorState:
             early_stop_on_success=state.early_stop_on_success,
         )
 
+        # [FIX] Get progress_callback from global registry via session_id
+        progress_callback = _get_progress_callback_by_session(state.session_id)
+
         # 创建执行器
         executor = IterativeOpenCodeExecutor(
             config=config,
             max_iterations=state.max_iterations,
             evaluation_criteria=evaluation_criteria,
+            progress_callback=progress_callback,
         )
 
         # 准备输入数据

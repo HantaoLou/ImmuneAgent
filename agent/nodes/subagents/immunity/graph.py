@@ -45,16 +45,25 @@ def get_progress_callback_by_session(session_id: Optional[str]) -> Optional[Any]
         return None
 
     try:
-        # 添加backend到path以导入progress_tracker
         backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+        project_root = backend_dir.parent
+
         if str(backend_dir) not in sys.path:
             sys.path.insert(0, str(backend_dir))
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
 
-        import backend.progress_tracker as pt_module
+        from backend import progress_tracker as pt_module
 
-        return pt_module.get_progress_callback(session_id)
-    except (ImportError, AttributeError):
+        callback = pt_module.get_progress_callback(session_id)
+        print(
+            f"[Immunity] Got callback for session {session_id}: {callback is not None}"
+        )
+        return callback
+    except (ImportError, AttributeError) as e:
+        print(f"[Immunity] Failed to get callback: {e}")
         return None
+
 
 # Mem0 记忆管理
 try:
@@ -229,34 +238,32 @@ def _get_llm_with_callback(state, purpose="bioinformatics"):
 
     Returns:
          LLM实例（带或不带progress_callback）
-     """
-     # [DEBUG] 检查 session_id 是否可用
-     has_session_id = hasattr(state, "session_id") and state.session_id
-     has_parent_state = hasattr(state, "parent_state") and state.parent_state
-     has_get_llm = hasattr(state, "get_llm") and callable(
-         getattr(state, "get_llm", None)
-     )
+    """
+    # [DEBUG] 检查 session_id 是否可用
+    has_session_id = hasattr(state, "session_id") and state.session_id
+    has_parent_state = hasattr(state, "parent_state") and state.parent_state
+    has_get_llm = hasattr(state, "get_llm") and callable(
+        getattr(state, "get_llm", None)
+    )
 
-     print(f"[Immunity] _get_llm_with_callback 状态检查:")
-     print(f"  - has_session_id: {has_session_id}")
-     print(f"  - has_parent_state: {has_parent_state}")
-     print(f"  - has_get_llm: {has_get_llm}")
+    print(f"[Immunity] _get_llm_with_callback 状态检查:")
+    print(f"  - has_session_id: {has_session_id}")
+    print(f"  - has_parent_state: {has_parent_state}")
+    print(f"  - has_get_llm: {has_get_llm}")
 
-     # [HOT] 优先使用 state.get_llm() 方法
-     if has_get_llm:
-         print(f"[Immunity] 使用 state.get_llm() 方法")
-         return state.get_llm(purpose=purpose, node_name="immunity")
+    # [HOT] 优先使用 state.get_llm() 方法
+    if has_get_llm:
+        print(f"[Immunity] 使用 state.get_llm() 方法")
+        return state.get_llm(purpose=purpose, node_name="immunity")
 
-     # [FALLBACK] 如果没有 get_llm 方法，通过session_id获取 callback 并创建 LLM
+    # [FALLBACK] 如果没有 get_llm 方法，通过session_id获取 callback 并创建 LLM
     progress_callback = None
     session_id = None
     if has_session_id:
         session_id = state.session_id
     elif has_parent_state:
         session_id = getattr(state.parent_state, "session_id", None)
-        print(
-            f"[Immunity] 从 parent_state 获取: session_id={session_id}"
-        )
+        print(f"[Immunity] 从 parent_state 获取: session_id={session_id}")
 
     # 通过session_id从全局registry获取callback
     if session_id:
@@ -264,12 +271,15 @@ def _get_llm_with_callback(state, purpose="bioinformatics"):
             import sys
             from pathlib import Path
 
-            # 添加backend到path以导入progress_tracker
             backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+            project_root = backend_dir.parent
+
             if str(backend_dir) not in sys.path:
                 sys.path.insert(0, str(backend_dir))
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
 
-            import backend.progress_tracker as pt_module
+            from backend import progress_tracker as pt_module
 
             progress_callback = pt_module.get_progress_callback(session_id)
             print(
@@ -1996,9 +2006,7 @@ def immunity_input_mapper(global_state: GlobalState) -> ImmunityState:
     local_sandbox_dir = global_state.sandbox_dir or ""
 
     # [DEBUG] 检查 global_state 中的 progress_callback
-    has_progress_callback = (
-        global_state.session_id
-    )
+    has_progress_callback = global_state.session_id
     has_session_id = hasattr(global_state, "session_id") and global_state.session_id
     print(f"[Immunity] immunity_input_mapper 状态检查:")
     print(f"  - global_state.progress_callback: {has_progress_callback}")
@@ -2012,9 +2020,9 @@ def immunity_input_mapper(global_state: GlobalState) -> ImmunityState:
         sandbox_dir=sandbox_data_dir,  # 主路径：沙盒服务器路径
         local_sandbox_dir=local_sandbox_dir,  # 回退路径：本地路径
         parent_state=global_state,
-        # [HOT] 传递progress_callback和session_id，确保SSE消息能推送到前端
-        progress_callback=getattr(global_state, "progress_callback", None),
-        session_id=getattr(global_state, "session_id", None),
+        # [FIX] Do NOT pass progress_callback - it cannot be serialized by LangGraph.
+        # The callback is retrieved dynamically from global registry via session_id in get_llm().
+        session_id=global_state.session_id,
         # Mem0 缓存相关字段初始化
         cache_hit=False,
         skip_immunity_stages=False,
@@ -2023,9 +2031,6 @@ def immunity_input_mapper(global_state: GlobalState) -> ImmunityState:
 
     # [DEBUG] 检查 immunity_state 创建后的状态
     print(f"[Immunity] ImmunityState 创建后:")
-    print(
-        f"  - immunity_state.progress_callback: {immunity_state.progress_callback is not None}"
-    )
     print(f"  - immunity_state.session_id: {immunity_state.session_id}")
     print(f"  - immunity_state.parent_state: {immunity_state.parent_state is not None}")
 

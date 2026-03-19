@@ -55,7 +55,11 @@ export const ExecutionLog: React.FC<ExecutionLogProps> = ({ logs, defaultExpande
 
   useEffect(() => {
     if (logListRef.current && expanded) {
-      logListRef.current.scrollTop = logListRef.current.scrollHeight;
+      const element = logListRef.current;
+      const isAtBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 50;
+      if (isAtBottom) {
+        element.scrollTop = element.scrollHeight;
+      }
     }
   }, [logs, expanded]);
 

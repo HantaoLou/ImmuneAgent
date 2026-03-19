@@ -10992,7 +10992,7 @@ def build_general_qa_subgraph():
 
 def general_qa_input_mapper(global_state: Any) -> GeneralQAState:
     """
-    Map main graph state to General QA subgraph state
+    Map main graph state into General QA subgraph state
 
     Args:
         global_state: Main graph global state
@@ -11004,8 +11004,9 @@ def general_qa_input_mapper(global_state: Any) -> GeneralQAState:
 
     return GeneralQAState(
         user_input=global_state.user_input,
-        progress_callback=getattr(global_state, "progress_callback", None),
-        session_id=getattr(global_state, "session_id", None),
+        # [FIX] Do NOT pass progress_callback - it cannot be serialized by LangGraph.
+        # The callback is retrieved dynamically from global registry via session_id in get_llm().
+        session_id=global_state.session_id,
         parent_state=global_state,
     )
 

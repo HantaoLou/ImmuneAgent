@@ -10,12 +10,46 @@ Default: Simplified version (better for most use cases)
 """
 
 import os
+import sys
+from pathlib import Path
+from typing import Any, Optional, Callable
 
 # Configuration flag
 USE_SIMPLIFIED_QA = os.getenv("USE_SIMPLIFIED_QA", "true").lower() == "true"
 
 # Always import state
 from agent.nodes.subagents.general_qa.state import GeneralQAState
+
+
+def _get_progress_callback_by_session(session_id: Optional[str]) -> Optional[Callable]:
+    """
+    Get progress callback from global registry by session_id
+
+    Args:
+        session_id: Session ID to look up
+
+    Returns:
+        Progress callback function if found, None otherwise
+    """
+    if not session_id:
+        return None
+
+    try:
+        backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+        project_root = backend_dir.parent
+
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+
+        from backend import progress_tracker as pt_module
+
+        return pt_module.get_progress_callback(session_id)
+    except (ImportError, AttributeError) as e:
+        print(f"[GeneralQA] Failed to get callback: {e}")
+        return None
+
 
 # Conditional import based on configuration
 if USE_SIMPLIFIED_QA:
@@ -31,11 +65,11 @@ if USE_SIMPLIFIED_QA:
 
     def general_qa_input_mapper(global_state):
         """Map main graph state to General QA subgraph state"""
-        # [HOT] 传递progress_callback和session_id，确保SSE消息能推送到前端
         return GeneralQAState(
             user_input=global_state.user_input,
-            progress_callback=getattr(global_state, "progress_callback", None),
-            session_id=getattr(global_state, "session_id", None),
+            # [FIX] Do NOT pass progress_callback - it cannot be serialized by LangGraph.
+            # The callback is retrieved dynamically from global registry via session_id in get_llm().
+            session_id=global_state.session_id,
         )
 
     def general_qa_output_mapper(general_qa_state, global_state):
@@ -83,14 +117,17 @@ if USE_SIMPLIFIED_QA:
                     import sys
                     from pathlib import Path
 
-                    # 添加backend到path以导入progress_tracker
                     backend_dir = (
                         Path(__file__).parent.parent.parent.parent.parent / "backend"
                     )
+                    project_root = backend_dir.parent
+
                     if str(backend_dir) not in sys.path:
                         sys.path.insert(0, str(backend_dir))
+                    if str(project_root) not in sys.path:
+                        sys.path.insert(0, str(project_root))
 
-                    import backend.progress_tracker as pt_module
+                    from backend import progress_tracker as pt_module
 
                     progress_callback = pt_module.get_progress_callback(
                         global_state.session_id

@@ -95,6 +95,10 @@
   text-align: left;
 }
 
+.executionLogContainer {
+  margin-bottom: 0.75rem;
+}
+
 @keyframes fadeInUp {
   from {
     opacity: 0;

@@ -42,126 +42,77 @@ from .state import ResultEvaluatorState, TaskResultSummary, ToolOutputSummary
 # ===================== Helper Functions =====================
 
 
-def _save_report(content: str, report_type: str, sandbox_dir: str) -> str:
+def _get_progress_callback_by_session(session_id: Optional[str]) -> Optional[Any]:
     """
-    Save report to file
+    Get progress callback from global registry by session_id
 
     Args:
-        content: Report content
-        report_type: Report type
-        sandbox_dir: Sandbox directory
+        session_id: Session ID to look up
 
     Returns:
-        Saved file path
+        Progress callback function if found, None otherwise
     """
+    if not session_id:
+        return None
+
     try:
-        reports_dir = Path(sandbox_dir) / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
+        from pathlib import Path
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_file = reports_dir / f"{report_type}_{timestamp}.md"
+        backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+        project_root = backend_dir.parent
 
-        with open(report_file, "w", encoding="utf-8") as f:
-            f.write(content)
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
 
-        print(f"📄 {report_type} report saved to: {report_file}")
-        return str(report_file)
-    except Exception as e:
-        print(f"[WARN] Failed to save report: {e}")
-        return ""
+        from backend import progress_tracker as pt_module
+
+        callback = pt_module.get_progress_callback(session_id)
+        print(
+            f"[ResultEvaluator] Got callback for session {session_id}: {callback is not None}"
+        )
+        return callback
+    except (ImportError, AttributeError) as e:
+        print(f"[ResultEvaluator] Failed to get callback: {e}")
+        return None
 
 
-def _upload_report_to_opensandbox(
+def _save_report_to_opensandbox(
     content: str,
     report_type: str,
-    session_id: str,
-    opensandbox_id: str,
+    opensandbox_id: Optional[str],
+    sandbox_dir: str,
 ) -> str:
     """
-    Upload report to OpenSandbox
+    Save report to OpenSandbox using opensandbox_executor.
 
     Args:
         content: Report content
         report_type: Report type (e.g., "result_evaluation", "analysis_report")
-        session_id: Session ID for path construction
-        opensandbox_id: OpenSandbox instance ID
+        opensandbox_id: OpenSandbox instance ID to connect to (None to create new sandbox)
+        sandbox_dir: Sandbox directory base path
 
     Returns:
         Remote file path if successful, empty string otherwise
     """
-    import asyncio
-
-    try:
-        from opensandbox.sandbox import Sandbox
-        from datetime import timedelta
-    except ImportError:
-        print(f"  [ReportUpload] OpenSandbox SDK not available, skipping upload")
-        return ""
+    from utils.opensandbox_executor import save_file_to_opensandbox_sync
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     ext = "txt" if report_type == "analysis_report" else "md"
-    remote_file_path = (
-        f"/data/sessions/{session_id}/output/reports/{report_type}_{timestamp}.{ext}"
+    remote_file_path = f"{sandbox_dir}/output/reports/{report_type}_{timestamp}.{ext}"
+
+    result = save_file_to_opensandbox_sync(
+        file_path=remote_file_path,
+        content=content,
+        existing_sandbox_id=opensandbox_id,
     )
 
-    async def _upload():
-        try:
-            sandbox = await Sandbox.connect(
-                opensandbox_id,
-                connect_timeout=timedelta(seconds=10),
-            )
-            await sandbox.files.write_file(remote_file_path, content.encode("utf-8"))
-            return remote_file_path
-        except Exception as e:
-            print(f"  [ReportUpload] Failed: {e}")
-            return ""
-
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, _upload())
-                result_path = future.result(timeout=30)
-        else:
-            result_path = loop.run_until_complete(_upload())
-
-        if result_path:
-            print(f"  [ReportUpload] ✅ {report_type} uploaded: {result_path}")
-            return result_path
-        return ""
-    except Exception as e:
-        print(f"  [ReportUpload] ❌ Exception: {e}")
-        return ""
-
-
-def _save_txt_report(content: str, report_type: str, sandbox_dir: str) -> str:
-    """
-    Save TXT format report to file
-
-    Args:
-        content: Report content
-        report_type: Report type
-        sandbox_dir: Sandbox directory
-
-    Returns:
-        Saved file path
-    """
-    try:
-        reports_dir = Path(sandbox_dir) / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_file = reports_dir / f"{report_type}_{timestamp}.txt"
-
-        with open(report_file, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        print(f"📄 {report_type} TXT report saved to: {report_file}")
-        return str(report_file)
-    except Exception as e:
-        print(f"[WARN] Failed to save TXT report: {e}")
+    if result.get("success"):
+        print(f"  [ReportSave] ✅ {report_type} saved to: {remote_file_path}")
+        return remote_file_path
+    else:
+        print(f"  [ReportSave] ❌ Failed to save {report_type}: {result.get('error')}")
         return ""
 
 
@@ -1487,54 +1438,41 @@ Please output the summary paragraph directly without any additional content.
         state.detailed_report = detailed_report
         state.summary_report = summary_text
 
-        # Get opensandbox_id for uploading reports
+        # Get opensandbox_id for saving reports
         opensandbox_id = None
         if state.parent_state:
             merged_result = getattr(state.parent_state, "merged_result", None) or {}
             opensandbox_id = merged_result.get("opensandbox_id")
 
-        # Save Markdown report to local
-        report_path = _save_report(
-            detailed_report, "result_evaluation", state.sandbox_dir
-        )
-        state.report_path = report_path
-
-        # ========== Generate TXT format analysis report ==========
-        txt_report = _generate_txt_analysis_report(state, llm)
-        state.txt_report = txt_report
-
-        # Save TXT report to local
-        txt_report_path = _save_txt_report(
-            txt_report, "analysis_report", state.sandbox_dir
-        )
-        state.txt_report_path = txt_report_path
-
-        # ========== Upload reports to OpenSandbox ==========
         remote_report_path = ""
         remote_txt_report_path = ""
 
-        if opensandbox_id and state.session_id:
-            print(f"  [ReportUpload] Uploading reports to OpenSandbox...")
-            print(f"  [ReportUpload] opensandbox_id: {opensandbox_id}")
-            print(f"  [ReportUpload] session_id: {state.session_id}")
+        if state.session_id and state.sandbox_dir:
+            print(f"  [ReportSave] Saving reports to OpenSandbox...")
+            print(
+                f"  [ReportSave] opensandbox_id: {opensandbox_id or 'will create new'}"
+            )
+            print(f"  [ReportSave] sandbox_dir: {state.sandbox_dir}")
 
-            # Upload markdown report
-            remote_report_path = _upload_report_to_opensandbox(
+            remote_report_path = _save_report_to_opensandbox(
                 content=detailed_report,
                 report_type="result_evaluation",
-                session_id=state.session_id,
                 opensandbox_id=opensandbox_id,
+                sandbox_dir=state.sandbox_dir,
             )
+            state.report_path = remote_report_path
 
-            # Upload TXT report
-            remote_txt_report_path = _upload_report_to_opensandbox(
+            txt_report = _generate_txt_analysis_report(state, llm)
+            state.txt_report = txt_report
+
+            remote_txt_report_path = _save_report_to_opensandbox(
                 content=txt_report,
                 report_type="analysis_report",
-                session_id=state.session_id,
                 opensandbox_id=opensandbox_id,
+                sandbox_dir=state.sandbox_dir,
             )
+            state.txt_report_path = remote_txt_report_path
 
-            # Update output files with remote paths
             if remote_report_path and remote_report_path not in state.output_files:
                 state.output_files.append(remote_report_path)
             if (
@@ -1542,14 +1480,22 @@ Please output the summary paragraph directly without any additional content.
                 and remote_txt_report_path not in state.output_files
             ):
                 state.output_files.append(remote_txt_report_path)
+        else:
+            print(
+                f"  [ReportSave] ⚠️ Missing session_id or sandbox_dir, reports not saved to remote"
+            )
+            print(
+                f"  [ReportSave] session_id: {state.session_id}, sandbox_dir: {state.sandbox_dir}"
+            )
+
+            txt_report = _generate_txt_analysis_report(state, llm)
+            state.txt_report = txt_report
 
         print(f"[SUCCESS] Report generation completed")
-        print(f"  - Markdown report path: {report_path}")
-        print(f"  - TXT analysis report path: {txt_report_path}")
         if remote_report_path:
-            print(f"  - Remote MD report path: {remote_report_path}")
+            print(f"  - MD report saved to: {remote_report_path}")
         if remote_txt_report_path:
-            print(f"  - Remote TXT report path: {remote_txt_report_path}")
+            print(f"  - TXT report saved to: {remote_txt_report_path}")
 
     except Exception as e:
         print(f"[WARN] Report generation failed: {e}")
@@ -1727,8 +1673,8 @@ def result_evaluator_input_mapper(global_state: GlobalState) -> ResultEvaluatorS
     )
 
     return ResultEvaluatorState(
-        # [HOT] Pass progress_callback to ensure SSE push works correctly
-        progress_callback=getattr(global_state, "progress_callback", None),
+        # [FIX] Do NOT pass progress_callback - it cannot be serialized by LangGraph.
+        # The callback is retrieved dynamically from global registry via session_id in get_llm().
         user_input=global_state.user_input,
         execution_plan=execution_plan,
         deep_research=deep_research,

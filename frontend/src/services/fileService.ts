@@ -185,8 +185,7 @@ class FileService {
   private useLocalMode: boolean;
 
   constructor() {
-    this.useLocalMode = process.env.NODE_ENV === 'development' || 
-                        process.env.NEXT_PUBLIC_USE_LOCAL_FILES === 'true';
+    this.useLocalMode = process.env.NEXT_PUBLIC_USE_LOCAL_FILES === 'true';
   }
 
   async upload(params: UploadFileRequest): Promise<UploadFileResponse> {
@@ -238,7 +237,9 @@ class FileService {
   }
 
   async getSandboxFiles(sessionId: string): Promise<SandboxFilesResponse> {
-    const response = await api.get<SandboxFilesResponse>(`/api/sessions/${sessionId}/files`);
+    const response = await api.get<SandboxFilesResponse>(`/api/sessions/${sessionId}/files`, {
+      timeout: 0,
+    });
     return response.data;
   }
 

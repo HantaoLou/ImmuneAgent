@@ -27,6 +27,41 @@ from pathlib import Path
 logger = logging.getLogger("supervisor_refactored")
 logger.setLevel(logging.DEBUG)
 
+
+def _get_progress_callback_by_session(session_id: Optional[str]) -> Optional[Any]:
+    """
+    Get progress callback from global registry by session_id
+
+    Args:
+        session_id: Session ID to look up
+
+    Returns:
+        Progress callback function if found, None otherwise
+    """
+    if not session_id:
+        return None
+
+    try:
+        backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+        project_root = backend_dir.parent
+
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+
+        from backend import progress_tracker as pt_module
+
+        callback = pt_module.get_progress_callback(session_id)
+        print(
+            f"[SupervisorRefactored] Got callback for session {session_id}: {callback is not None}"
+        )
+        return callback
+    except (ImportError, AttributeError) as e:
+        print(f"[SupervisorRefactored] Failed to get callback: {e}")
+        return None
+
+
 # 确保日志目录存在
 LOG_DIR = Path(__file__).parent.parent.parent.parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -220,9 +255,9 @@ class SupervisorState(BaseModel):
         from_attributes=True,
     )
 
-    progress_callback: Optional[Callable] = Field(
-        default=None, description="进度回调函数，用于实时推送执行进度"
-    )
+    # IMPORTANT: Do NOT store progress_callback in state - it cannot be serialized by LangGraph.
+    # The callback is retrieved dynamically from the global registry via session_id.
+    session_id: Optional[str] = Field(default=None, description="唯一会话 ID")
 
     user_input: str = Field(description="用户原始输入")
     user_task_type: Optional[UserTaskType] = Field(
@@ -626,6 +661,9 @@ def _call_iterative_executor(
 
         config = OpenCodeConfig.from_env()
 
+        # [FIX] 获取 progress_callback 用于实时推送
+        progress_callback = _get_progress_callback_by_session(state.session_id)
+
         # 使用同步包装器 IterativeOpenCodeExecutorSync
         executor = IterativeOpenCodeExecutorSync(
             config=config,
@@ -635,6 +673,7 @@ def _call_iterative_executor(
                 early_stop_on_success=True,
             ),
             early_stop_on_success=True,
+            progress_callback=progress_callback,
         )
 
         # 准备输入数据
@@ -1898,7 +1937,8 @@ def build_params_node(state: SupervisorState) -> SupervisorState:
     # 1. 重新获取 LLM 提取结果
     logger.debug("  重新获取 LLM 提取结果...")
     llm_result = _llm_extract_structured_input(
-        state.user_input, progress_callback=get_progress_callback_by_session(state.session_id)
+        state.user_input,
+        progress_callback=get_progress_callback_by_session(state.session_id),
     )
 
     # 2. 构建参数表
@@ -2166,7 +2206,8 @@ def supervisor_input_mapper(global_state: GlobalState) -> SupervisorState:
         opensandbox_id=global_state.opensandbox_id,
         extracted_parameters=global_state.extracted_parameters,
         file_analyses=existing_file_analyses,
-        progress_callback=getattr(global_state, "progress_callback", None),
+        # [FIX] Do NOT pass progress_callback - it cannot be serialized by LangGraph.
+        # The callback is retrieved dynamically from global registry via session_id.
     )
 
 

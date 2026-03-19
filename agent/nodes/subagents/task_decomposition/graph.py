@@ -44,6 +44,41 @@ if str(agent_dir) not in sys.path:
 
 from state import GlobalState, SubTask, UserTaskType
 
+
+def _get_progress_callback_by_session(session_id: Optional[str]) -> Optional[Any]:
+    """
+    Get progress callback from global registry by session_id
+
+    Args:
+        session_id: Session ID to look up
+
+    Returns:
+        Progress callback function if found, None otherwise
+    """
+    if not session_id:
+        return None
+
+    try:
+        backend_dir = Path(__file__).parent.parent.parent.parent / "backend"
+        project_root = backend_dir.parent
+
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+
+        from backend import progress_tracker as pt_module
+
+        callback = pt_module.get_progress_callback(session_id)
+        print(
+            f"[TaskDecomposition] Got callback for session {session_id}: {callback is not None}"
+        )
+        return callback
+    except (ImportError, AttributeError) as e:
+        print(f"[TaskDecomposition] Failed to get callback: {e}")
+        return None
+
+
 try:
     from langchain_core.messages import HumanMessage, SystemMessage
     from utils.llm_factory import create_reasoning_advanced_llm
@@ -61,9 +96,10 @@ class TaskDecompositionState(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    progress_callback: Optional[Callable] = Field(default=None)
+    # IMPORTANT: Do NOT store progress_callback in state - it cannot be serialized by LangGraph.
+    # The callback is retrieved dynamically from the global registry via session_id in get_llm().
     session_id: Optional[str] = Field(default=None)
-    parent_state: Optional[Any] = Field(default=None)
+    parent_state: Optional[Any] = Field(default=None, exclude=True)
 
     user_input: str = Field(description="User's original input")
     execution_plan: Optional[str] = Field(default=None)
@@ -84,9 +120,10 @@ class TaskDecompositionState(BaseModel):
             )
         from utils.llm_factory import create_llm_with_thinking
 
+        # Do NOT pass progress_callback - it cannot be serialized by LangGraph.
+        # The factory will retrieve it from the global registry using session_id.
         return create_llm_with_thinking(
             purpose=purpose,
-            progress_callback=self.progress_callback,
             session_id=self.session_id,
             node_name=node_name or "task_decomposition",
             **kwargs,
@@ -541,8 +578,9 @@ def task_decomposition_input_mapper(
         required_service_ids=[],
         filtered_tools=[],
         subtasks=[],
-        progress_callback=getattr(global_state, "progress_callback", None),
-        session_id=getattr(global_state, "session_id", None),
+        # [FIX] Do NOT pass progress_callback - it cannot be serialized by LangGraph.
+        # The callback is retrieved dynamically from global registry via session_id in get_llm().
+        session_id=global_state.session_id,
         parent_state=global_state,
     )
 

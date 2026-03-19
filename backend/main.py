@@ -5,7 +5,7 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
@@ -29,8 +29,33 @@ from progress_tracker import (
     remove_progress_tracker,
     ProgressEventType,
     ProgressEvent,
+    set_progress_callback as set_progress_callback_local,
+    get_progress_callback as get_progress_callback_local,
+    _global_callbacks,
+    _global_trackers,
 )
 from session_storage import get_session_storage
+
+# [CRITICAL] 同步 backend.progress_tracker 和 progress_tracker 的全局状态
+# agent 代码通过 `from backend import progress_tracker` 导入
+# 需要确保两个模块实例共享同一个 _global_callbacks 字典
+import sys
+from pathlib import Path
+
+_project_root = Path(__file__).parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+try:
+    import backend.progress_tracker as _pt_module
+
+    # 共享同一个字典实例
+    _pt_module._global_callbacks = _global_callbacks
+    _pt_module._global_trackers = _global_trackers
+    print(
+        f"[main.py] Synced progress_tracker modules, callbacks registry id: {id(_global_callbacks)}"
+    )
+except ImportError as e:
+    print(f"[main.py] Warning: Could not sync progress_tracker modules: {e}")
 
 _session_metadata_cache = {}
 _current_opensandbox_id = None
@@ -80,6 +105,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
+    attachments: Optional[List[Dict[str, Any]]] = None
 
 
 class ChatResponse(BaseModel):
@@ -131,6 +157,12 @@ async def chat(request: ChatRequest):
             tracker = create_progress_tracker(session_id)
             progress_callback = tracker.create_callback()
 
+            # [CRITICAL] 注册 progress_callback 到全局 registry
+            # 使用已同步的模块（注意：_global_callbacks 已在顶部同步）
+            _global_callbacks[session_id] = progress_callback
+            print(f"[chat] Registered progress callback for session: {session_id}")
+            print(f"[chat] Total callbacks in registry: {len(_global_callbacks)}")
+
             yield {
                 "event": "status",
                 "data": json.dumps(
@@ -144,8 +176,13 @@ async def chat(request: ChatRequest):
 
             await asyncio.sleep(0.1)
 
-            # 创建状态，传入进度回调
-            state = create_global_state(request.message, session_id, progress_callback)
+            # 创建状态，传入进度回调和附件
+            state = create_global_state(
+                request.message,
+                session_id,
+                progress_callback,
+                attachments=request.attachments,
+            )
 
             yield {
                 "event": "status",
@@ -365,24 +402,11 @@ async def chat_resume(request: HITLResumeRequest):
         # 关键修复：重新设置 progress_callback 到全局 registry
         # 因为 resume_agent 不经过 invoke_agent_sync，不会设置 progress_callback
         progress_callback = tracker.create_callback()
-        from progress_tracker import set_progress_callback
 
-        set_progress_callback(session_id, progress_callback)
+        # [CRITICAL] 使用已同步的 _global_callbacks 字典
+        _global_callbacks[session_id] = progress_callback
         print(f"[chat_resume] Set progress callback for session: {session_id}")
-
-        # 关键修复：重新设置 progress_callback 到全局 registry
-        # 因为 resume_agent 不经过 invoke_agent_sync，不会设置 progress_callback
-        try:
-            progress_callback = tracker.create_callback()
-            from progress_tracker import set_progress_callback
-
-            set_progress_callback(session_id, progress_callback)
-            print(f"[chat_resume] Set progress callback for session: {session_id}")
-        except Exception as e:
-            print(f"[chat_resume] ERROR setting progress callback: {e}")
-            import traceback
-
-            traceback.print_exc()
+        print(f"[chat_resume] Total callbacks in registry: {len(_global_callbacks)}")
 
         print(f"[chat_resume] Tracker found and active: {tracker._active}")
         print(f"[chat_resume] ========== Resume Request Continuing ==========")
@@ -704,7 +728,23 @@ async def chat_submit(request: ChatRequest):
     async def run_agent_background():
         try:
             progress_callback = tracker.create_callback()
-            state = create_global_state(request.message, session_id, progress_callback)
+
+            # [CRITICAL] 注册 progress_callback 到全局 registry
+            # 使用已同步的 _global_callbacks 字典（顶部已同步）
+            _global_callbacks[session_id] = progress_callback
+            print(
+                f"[chat_submit] Registered progress callback for session: {session_id}"
+            )
+            print(
+                f"[chat_submit] Total callbacks in registry: {len(_global_callbacks)}"
+            )
+
+            state = create_global_state(
+                request.message,
+                session_id,
+                progress_callback,
+                attachments=request.attachments,
+            )
             result = await asyncio.to_thread(invoke_agent_sync, state)
 
             # 关键修复：检查是否是 HITL 中断
@@ -1317,6 +1357,183 @@ async def preview_session_file(session_id: str, file_path: str, max_lines: int =
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+
+
+@app.post("/api/files/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    sessionId: str = Form(...),
+):
+    """
+    Upload file to OpenSandbox for a session.
+
+    Uses agent.utils.opensandbox_executor.save_file_to_opensandbox to save
+    the file directly to the sandbox environment.
+
+    Args:
+        file: The file to upload
+        sessionId: The session ID
+
+    Returns:
+        {
+            "fileId": "unique file id",
+            "url": "access url",
+            "filename": "original filename",
+            "size": file size in bytes,
+            "mimeType": "content type",
+            "sessionId": "session id",
+            "uploadTime": "ISO timestamp",
+            "sandboxPath": "path in sandbox"
+        }
+    """
+    from datetime import datetime
+    import sys
+    import os
+
+    agent_dir = os.path.join(os.path.dirname(__file__), "..", "agent")
+    if agent_dir not in sys.path:
+        sys.path.insert(0, agent_dir)
+
+    from utils.opensandbox_executor import save_file_to_opensandbox
+
+    file_id = str(uuid.uuid4())
+    upload_time = datetime.utcnow().isoformat() + "Z"
+
+    content = await file.read()
+    file_size = len(content)
+    filename = file.filename or "unnamed"
+    mime_type = file.content_type or "application/octet-stream"
+
+    safe_filename = "".join(c if c.isalnum() or c in "._- " else "_" for c in filename)
+    sandbox_path = f"/data/sessions/{sessionId}/input/{safe_filename}"
+
+    metadata = get_session_metadata(sessionId)
+    existing_sandbox_id = metadata.get("opensandbox_id")
+
+    print(f"[upload_file] Uploading {filename} to sandbox path: {sandbox_path}")
+    print(f"[upload_file] Existing sandbox ID: {existing_sandbox_id}")
+
+    result = await save_file_to_opensandbox(
+        file_path=sandbox_path,
+        content=content,
+        existing_sandbox_id=existing_sandbox_id,
+    )
+
+    if not result.get("success"):
+        print(f"[upload_file] Failed: {result.get('error')}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload file to sandbox: {result.get('error')}",
+        )
+
+    print(f"[upload_file] Success: {sandbox_path}")
+
+    return {
+        "fileId": file_id,
+        "url": f"/api/files/download/{file_id}",
+        "filename": filename,
+        "size": file_size,
+        "mimeType": mime_type,
+        "sessionId": sessionId,
+        "uploadTime": upload_time,
+        "sandboxPath": sandbox_path,
+        "sandboxId": result.get("sandbox_id"),
+    }
+
+
+@app.get("/api/files/download/{file_id}")
+async def download_uploaded_file(file_id: str, sessionId: str = ""):
+    """
+    Download an uploaded file by file ID from sandbox.
+
+    Args:
+        file_id: The file ID returned from upload
+        sessionId: Session ID
+
+    Returns:
+        File content
+    """
+    from fastapi.responses import Response
+    import base64
+
+    local_upload_base = Path(f"./sandbox/sessions/{sessionId}/input")
+    if local_upload_base.exists():
+        for f in local_upload_base.iterdir():
+            if f.name == file_id or f.stem == file_id:
+                ext = f.suffix.lower()
+                content_type = _get_content_type(ext)
+                return FileResponse(
+                    path=str(f),
+                    media_type=content_type,
+                    filename=f.name,
+                )
+
+    metadata = get_session_metadata(sessionId) if sessionId else {}
+    sandbox_id = metadata.get("opensandbox_id")
+
+    if sandbox_id:
+        try:
+            import sys
+            import os
+
+            agent_dir = os.path.join(os.path.dirname(__file__), "..", "agent")
+            if agent_dir not in sys.path:
+                sys.path.insert(0, agent_dir)
+
+            from utils.opensandbox_helper import OpenSandboxHelper
+
+            helper = OpenSandboxHelper()
+
+            sandbox_path = f"/data/sessions/{sessionId}/input/{file_id}"
+            try:
+                content = await helper.read_file(sandbox_path, sandbox_id=sandbox_id)
+            except Exception:
+                content = None
+
+            if not content:
+                for suffix in [
+                    "",
+                    ".csv",
+                    ".xlsx",
+                    ".xls",
+                    ".txt",
+                    ".json",
+                    ".pdf",
+                    ".png",
+                    ".jpg",
+                    ".jpeg",
+                ]:
+                    try:
+                        content = await helper.read_file(
+                            f"/data/sessions/{sessionId}/input/{file_id}{suffix}",
+                            sandbox_id=sandbox_id,
+                        )
+                        if content:
+                            sandbox_path = (
+                                f"/data/sessions/{sessionId}/input/{file_id}{suffix}"
+                            )
+                            break
+                    except Exception:
+                        continue
+
+            if content:
+                filename = sandbox_path.split("/")[-1]
+                ext = os.path.splitext(filename)[1].lower()
+                content_type = _get_content_type(ext)
+                return Response(
+                    content=content
+                    if isinstance(content, bytes)
+                    else content.encode("utf-8"),
+                    media_type=content_type,
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{filename}"'
+                    },
+                )
+
+        except Exception as e:
+            print(f"[download_uploaded_file] Error reading from sandbox: {e}")
+
+    raise HTTPException(status_code=404, detail=f"File not found: {file_id}")
 
 
 @app.get("/")

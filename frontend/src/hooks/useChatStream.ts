@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import api from '@/services/api';
-import { LogEntry, HITLRequest } from '@/types';
+import { LogEntry, HITLRequest, FileAttachment } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
 import { parseSSEEventData, SSEEventData } from '@/utils/sseParser';
 
@@ -9,6 +9,15 @@ interface UseChatStreamOptions {
   onComplete?: (result: any) => void;
   onError?: (error: string) => void;
   onHITLRequest?: (hitlRequest: HITLRequest) => void;
+}
+
+interface FileAttachmentInfo {
+  id: string;
+  name: string;
+  sandboxPath?: string;
+  localPath?: string;
+  mimeType: string;
+  size: number;
 }
 
 export const useChatStream = (options?: UseChatStreamOptions) => {
@@ -70,18 +79,32 @@ export const useChatStream = (options?: UseChatStreamOptions) => {
     }
   }, []);
 
-  const submitTask = useCallback(async (message: string, sessionId?: string) => {
+  const submitTask = useCallback(async (
+    message: string,
+    sessionId?: string,
+    attachments?: FileAttachment[]
+  ) => {
     if (isLoading) return;
 
     logsRef.current = [];
     setIsLoading(true);
 
-    console.log('[useChatStream] submitTask called:', { message, sessionId, isLoading });
+    console.log('[useChatStream] submitTask called:', { message, sessionId, isLoading, attachments });
 
     try {
+      const fileAttachments: FileAttachmentInfo[] = (attachments || []).map(a => ({
+        id: a.id,
+        name: a.name,
+        sandboxPath: (a as any).sandboxPath,
+        localPath: (a as any).localPath,
+        mimeType: a.type,
+        size: a.size,
+      }));
+
       const response = await api.post('/api/chat/submit', {
         message,
         session_id: sessionId,
+        attachments: fileAttachments.length > 0 ? fileAttachments : undefined,
       });
 
       const { session_id } = response.data;
