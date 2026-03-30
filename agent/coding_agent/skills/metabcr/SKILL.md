@@ -1,43 +1,71 @@
 ---
 name: metabcr
-description: MetaBCR antibody-antigen binding and neutralization prediction. Returns synchronous dict (no streaming). Use when predicting BCR/antibody functional activity against flu, SARS, RSV, or HIV antigens.
+description: MetaBCR antibody-antigen binding prediction. Synchronous response. Use for predicting antibody binding affinity to antigens (flu, SARS, RSV, HIV).
 ---
 
-## MetaBCR Antibody-Antigen Functional Prediction
+## MetaBCR Antibody-Antigen Binding Prediction
 
-**Response mode**: Synchronous return (not streaming_task)
+**Response mode**: Synchronous dict (NOT streaming_task)
 
-MetaBCR predicts antibody-antigen binding affinity (bind) and neutralization activity (neu). Supports 4 viruses: flu, sars, rsv, hiv.
+## Tools
 
----
+| Tool | Description |
+|------|-------------|
+| `metabcr` | Antibody-antigen binding prediction via deep learning ensemble |
 
-## Tool Parameters
-
-Tool name: `metabcr` (flat parameter passing)
+## Key Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `antibody_file` | str | **required** | Antibody CSV file path (must contain sequence columns) |
-| `antigen_file` | str | **required** | Antigen CSV file path |
+| `antibody_file` | str | **required** | CSV file path with antibody sequences (heavy_chain + light_chain columns) |
+| `antigen_file` | str | **required** | CSV file path with antigen sequences (variant_name + variant_seq columns) |
 | `antigen_name` | str | `"flu"` | Antigen type: `flu` / `sars` / `rsv` / `hiv` |
 | `task_name` | str | `"bind"` | Prediction task: `bind` (binding) or `neu` (neutralization) |
-| `config_date` | str | `"250312"` | Model config date stamp |
-| `output_file_path` | str | `null` | Output directory path (optional) |
+| `config_date` | str | `"250312"` | Model config date stamp (must match antigen-task combination) |
+| `output_file_path` | str | null | Output directory — pass an ABSOLUTE path (the working directory) so results are saved there |
 
----
+## Input Format
 
-## Return Value
+**CSV** with columns:
+- `heavy_chain` (aliases: Heavy, VH)
+- `light_chain` (aliases: Light, VL)
+- `sequence_id` (optional)
 
-Tools yield progress updates then a final result dict:
-```json
-{"type": "result", "status": "success", "output_file": "...", "session_id": "...", "total_antibodies": 50}
-```
+## Output
 
----
+Returns `{"type": "result", "status": "success", "output_file": "<path>", "total_antibodies": N}`.
+Output CSV is written to `<output_file_path>/MetaBcr/<task_name>/`.
 
-## Constraints
+## RSV Binding/Neutralization Prediction
 
-1. `antigen_name` only supports `flu` / `sars` / `rsv` / `hiv`
-2. `antibody_file` must contain antibody sequence columns (Heavy and Light chains)
-3. Each antibody row is combined with each antigen sequence for prediction
-4. Not all antigens support `neu` task — verify compatibility
+IMPORTANT: Always use `os.getcwd()` or `$(pwd)` to get the absolute working directory and pass it as `output_file_path`.
+
+### RSV Binding (bash: WD=$(pwd))
+metabcr(antibody_file="/abs/path/rsv_abs.csv", antigen_file="/abs/path/rsv_antigens.csv", antigen_name="rsv", task_name="bind", config_date="250224", output_file_path="/abs/path/to/output/dir/")
+
+### RSV Neutralization
+metabcr(antibody_file="/abs/path/rsv_abs.csv", antigen_file="/abs/path/rsv_antigens.csv", antigen_name="rsv", task_name="neu", config_date="250225", output_file_path="/abs/path/to/output/dir/")
+
+## Available Antigen Sequences
+Pre-built antigen files in `config/antigens/`:
+- rsv_antigens.csv — RSV-A and RSV-B F protein (574 aa)
+- flu_antigens.csv — 41 influenza HA variants (565-566 aa)
+- sars_antigens.csv — 24 SARS-CoV-2 RBD variants (222-223 aa)
+
+Full sequence catalog: config/antigen_sequences.json
+
+## Model Config Dates
+| Antigen | Bind | Neu |
+|---------|------|-----|
+| flu | 250312 | 240905 |
+| sars | 0611 | 1024 |
+| rsv | 250224 | 250225 |
+
+## Gotchas
+
+1. Response is synchronous — do NOT poll streaming URLs
+2. Requires PAIRED heavy/light chain sequences. Single-chain predictions are not supported.
+3. Prediction accuracy varies by antigen type — flu models are most mature
+4. Ensemble model recommended for best accuracy (default)
+5. Input from IgBLAST AIRR output needs column renaming (v_call→VH sequence, not gene name)
+6. Always pass the correct config_date for the antigen-task combination — using the wrong date will fail with a config_not_found error

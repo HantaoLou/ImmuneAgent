@@ -12,57 +12,190 @@ OPENCODE_PLAN_PROMPT = """Please read the task list in {task_md_path}, analyze t
 Note: This is plan mode, only analysis is performed, no actual operations are executed."""
 
 
-OPENCODE_EXECUTE_PROMPT = """
-# OpenCode Task Execution System
+OPENCODE_EXECUTE_PROMPT = """# Task Executor
 
-## 📁 Workspace Structure
+## Role
+Execute all tasks defined in `task.md`.
 
-### Input Files
-- Location: `/data/sessions/{session_id}/input/`
-- All required input files are located in this directory
+## Instructions
+1. Read and execute ALL tasks from `task.md`
+2. Follow the rules in `AGENTS.md` for logging and file operations
+3. Use MCP tools when available; fall back to code generation only when no suitable tool exists
+4. After EACH task completion, append a log entry to `task_execution_log.json`
 
-### Task Definition
-- Location: `/data/sessions/{session_id}/{bundle_id}/task.md`
-- Contains the task list and requirements
+## Output Directory
+Save all outputs to: `{output_dir}/`
+"""
 
-### Output Directory
-- Location: `/data/sessions/{session_id}/output/`
-- ALL task outputs MUST be saved to this directory
+
+OPENCODE_AGENTS_CONTENT = """# Task Execution Rules
+
+## MANDATORY: Task Execution Log (HIGHEST PRIORITY)
+
+**You MUST write a log entry for EVERY task you execute.**
+**Immediately after completing each task (success or failure), run the script below.**
+
+- Log path: `{log_path}`
+- The file is pre-initialized as `[]`. Append one JSON object per task.
+- **Note**: Full OpenCode JSON output is automatically saved to `opencode.log` in the same directory.
+
+### Log Entry Format
+
+| Field | Required | Description |
+|-------|:--------:|-------------|
+| `task_id` | Yes | Sequential: `task_1`, `task_2`, ... |
+| `task_name` | Yes | Brief description |
+| `task_type` | Yes | `MCP_TOOL`, `CODE_GENERATION`, `FILE_OPERATION`, `ANALYSIS`, `REPORT` |
+| `status` | Yes | `success` or `failed` |
+| `mcp_tool_name` | No | Required if type is `MCP_TOOL` |
+| `output_files` | Yes | Output file paths |
+| `output_data` | No | Key result data summary |
+| `error_message` | No | Required if `status` is `failed` |
+
+### Append Log Entry Script
+
+```bash
+python3 << 'EOF'
+import json
+from datetime import datetime
+log_path = '{log_path}'
+with open(log_path) as f:
+    records = json.load(f)
+
+records.append({{
+    "task_id": "task_N",
+    "task_name": "Brief description",
+    "task_type": "MCP_TOOL | CODE_GENERATION | FILE_OPERATION | ANALYSIS | REPORT",
+    "status": "success | failed",
+    "mcp_tool_name": "server.tool_name",
+    "output_files": ["path/to/output/file"],
+    "output_data": {{}},
+    "error_message": null,
+    "timestamp": datetime.now().isoformat()
+}})
+with open(log_path, 'w') as f:
+    json.dump(records, f, indent=2, ensure_ascii=False)
+print(f"Log written: {{len(records)}} records total")
+EOF
+```
 
 ---
 
-## 🎯 Core Execution Principles
+## Input Data Directory (CRITICAL)
 
-### CRITICAL SECURITY CONSTRAINT
+**User-provided data files are located in:**
+- `/data/sessions/{session_id}/input/`
 
-**Directory Access Restriction:**
-- **NEVER** attempt to access ANY directories outside `/data/sessions/`
-- **NEVER** read, write, or execute files in system directories (e.g., `/*` `/etc/`, `/usr/`, `/root/`, `/home/`)
-- **NEVER** use absolute paths that do not start with `/data/sessions/`
-- **ONLY** work within your designated session directory: `/data/sessions/{session_id}/`
+**When processing data:**
+1. ALWAYS check for input files in `/data/sessions/{session_id}/input/` first
+2. Use the provided data files from this directory (e.g., CSV, FASTA, JSON, etc.)
+3. DO NOT generate mock/synthetic data unless explicitly requested
+4. If the required data file is not found in `/data/sessions/{session_id}/input/`, report the issue instead of creating fake data
 
-**Violation of this rule will cause task failure and security errors.**
-
-### Standard Principles
-
-1. **File Discovery**: All files you need can ONLY be found within `/data/sessions/{session_id}/`
-2. **Output Consistency**: All task outputs MUST be saved to `/data/sessions/{session_id}/output/`
-3. **Tool Priority**: Before executing any task, ALWAYS check if there's a suitable skill or MCP tool available
-4. **Error Recovery**: When a task fails, try alternative approaches:
-   - Switch to a different skill
-   - Use an alternative MCP tool
-   - Revise the code implementation
-   - Break down into smaller subtasks
+**Common input file paths:**
+- `/data/sessions/{session_id}/input/data.csv`
+- `/data/sessions/{session_id}/input/sequences.fasta`
+- `/data/sessions/{session_id}/input/config.json`
+- `/data/sessions/{session_id}/input/` (for all uploaded files)
 
 ---
 
-## 🔌 MCP Tool Integration
+## Security Constraint
 
-### SSE Streaming Tasks
+- Only access files under `/data/sessions/{session_id}/`
+- Never access system directories (`/etc/`, `/usr/`, `/root/`, `/home/`)
+- Save all outputs to `{output_dir}/`
 
-When an MCP tool returns a `streaming_task` response, retrieve real-time results via SSE endpoint.
+---
 
-#### Response Format
+## Memory Optimization (CRITICAL)
+
+**The sandbox memory limit is 16GB with 2-hour timeout. Scripts may be killed if they exceed this limit.**
+
+**Actual available memory**: After system and runtime overhead, you have approximately **15GB** for data processing.
+
+### Memory-Safe Practices
+
+1. **Process Data in Chunks**
+   ```python
+   # ❌ BAD: Load entire file into memory
+   df = pd.read_csv("large_file.csv")  # May OOM
+   
+   # ✅ GOOD: Read in chunks
+   for chunk in pd.read_csv("large_file.csv", chunksize=10000):
+       process(chunk)
+   ```
+
+2. **Avoid Loading Large Files Completely**
+   - Use `chunksize` parameter in pandas
+   - Use generators instead of lists
+   - Process line-by-line when possible
+
+3. **Memory-Efficient Visualization**
+   ```python
+   # ❌ BAD: Create huge plots with millions of points
+   plt.plot(x_millions, y_millions)
+   
+   # ✅ GOOD: Sample or aggregate data first
+   df_sample = df.sample(n=10000)  # Sample 10k points
+   plt.plot(df_sample['x'], df_sample['y'])
+   
+   # Or aggregate
+   df_agg = df.groupby('category').agg({{'value': 'mean'}})
+   ```
+
+4. **Clear Unused Variables**
+   ```python
+   import gc
+   del large_dataframe
+   gc.collect()
+   ```
+
+5. **Check File Size Before Loading**
+   ```bash
+   # Check file size first
+   ls -lh large_file.csv
+   # If > 100MB, use chunked reading
+   ```
+
+### Memory Warning Signs
+
+If you see "killed due to memory constraints":
+- The script used too much memory
+- Switch to chunked processing
+- Reduce data size (sampling, filtering)
+- Avoid loading multiple large files simultaneously
+
+**⚠️ ALWAYS prefer memory-efficient approaches over convenience.**
+
+---
+
+## File Operations Rules
+
+### Rule 1: Column Preservation
+- MUST preserve ALL original columns
+- CAN add new columns
+- CANNOT remove or drop existing columns
+
+### Rule 2: Column Alignment for Merging
+- Identical column names = SAME column (align data)
+- Preserve columns unique to one file (fill null/empty for missing rows)
+
+### Rule 3: Primary Key Requirement
+- ALWAYS include `main_name` column as the primary key
+- If source file lacks `main_name`, identify the PK column and alias it
+
+---
+
+## MCP Tool Integration
+
+### Streaming Task Flow (CRITICAL)
+
+**IMPORTANT: When an MCP tool returns a `streaming_task` response, the task is NOT complete yet.**
+
+You MUST connect to the SSE endpoint and wait for the final `result`, `error`, or `end` message before proceeding to the next task.
+
+**Step 1: Recognize Streaming Task Response**
 ```json
 {{
   "type": "streaming_task",
@@ -72,171 +205,117 @@ When an MCP tool returns a `streaming_task` response, retrieve real-time results
 }}
 ```
 
-#### SSE Connection
+**Step 2: Connect to SSE Endpoint and Wait for Completion**
 ```bash
-# Endpoint: http://mcp.{{service_id}}.immuneagent.cn:50001/stream/{{task_id}}
+# Use curl to connect and monitor the SSE stream
 curl -N "http://mcp.{{service_id}}.immuneagent.cn:50001/stream/{{task_id}}"
 ```
 
-#### Message Types
+**Step 3: Monitor Until Task Completes**
 
-| Type | Meaning | Action |
-|------|---------|--------|
-| `progress` | Task in progress | Log progress, continue monitoring |
-| `result` | Final result available | **Extract and save result data** |
-| `error` | Task failed | Log error, handle failure |
-| `end` | Stream ended | Stop receiving |
+The SSE stream will emit messages. Continue reading until you see a completion signal:
 
-#### Example Stream
+| Type | Meaning | Required Action |
+|------|---------|-----------------|
+| `progress` | Task in progress | **Continue monitoring** - do NOT proceed yet |
+| `result` | Final result available | **Task complete** - extract data, proceed to next task |
+| `error` | Task failed | **Task failed** - handle error, then proceed |
+| `end` | Stream ended | **Task complete** - stop receiving |
+
+**Example SSE Session:**
 ```
-data: {{"type": "progress", "data": {{"status": "initializing", "message": "Starting..."}}}}
-data: {{"type": "progress", "data": {{"status": "processing", "progress_percent": 50}}}}
-data: {{"type": "result", "status": "success", "output_file": "/path/to/result.csv", "total": 100}}
-data: {{"type": "end"}}
+# Connection established, monitoring...
+data: {{"type":"progress","percent":25,"message":"Processing..."}}
+data: {{"type":"progress","percent":50,"message":"Still working..."}}
+data: {{"type":"progress","percent":75,"message":"Almost done..."}}
+data: {{"type":"result","data":{{...}}}}  # <- NOW task is complete
+data: {{"type":"end"}}                     # <- Stream closing
 ```
+
+**⚠️ CRITICAL RULE: Do NOT proceed to the next task until you receive `result`, `error`, or `end`.**
+
+**Step 4: After Completion**
+1. Extract result data from the `result` message
+2. Save output files as needed
+3. Append log entry to `task_execution_log.json`
+4. NOW you can proceed to the next task
+
+### Non-Streaming MCP Tools
+
+For MCP tools that return immediate results (not `streaming_task`), the task is complete upon receiving the response. Proceed normally.
 
 ---
 
-## 📊 File Operations - CRITICAL RULES
+## Background Task Handling (CRITICAL)
 
-### Rule 1: Column Preservation
-When converting column names or transforming data:
-- ✅ **MUST** preserve ALL original columns
-- ✅ Can ADD new columns
-- ❌ CANNOT remove or drop existing columns
+**When using `task` tool with `run_in_background=true`, you MUST call `background_output` to retrieve results.**
 
-**Correct Example:**
-```python
-# Input:  ['name', 'age', 'city']
-# Output: ['name', 'age', 'city', 'name_standardized']  # Added column, kept all originals
-```
+### ✅ Correct Pattern
 
-**Incorrect Example:**
-```python
-# Input:  ['name', 'age', 'city']
-# Output: ['name', 'age']  # ❌ Lost 'city' column
-```
-
-### Rule 2: Column Alignment for Merging
-When merging multiple files of the same type:
-- Columns with identical names = SAME column (align data)
-- Preserve columns that exist in only one file (fill with null/empty for missing rows)
-
-**Correct Example:**
-```python
-# File1: ['id', 'name', 'age']
-# File2: ['id', 'name', 'city']
-# Merged: ['id', 'name', 'age', 'city']  # ✅ All columns preserved, 'id' and 'name' aligned
-```
-
-### Rule 3: Primary Key Requirement
-When extracting columns from a file:
-- **ALWAYS** include `main_name` column as the primary key
-- If source file lacks `main_name`, identify the primary key column and create/use it as `main_name`
-- The `main_name` column is essential for merging results from multiple operations
-
-**Correct Example:**
-```python
-# Task: Extract ['peptide', 'score'] from input.csv
-# Input: ['main_name', 'peptide', 'score', 'other_col']
-# Output: ['main_name', 'peptide', 'score']  # ✅ main_name included
-```
-
-### Pre-Completion Validation Checklist
-Before finalizing any file operation:
-- [ ] All original columns present in output
-- [ ] No data rows lost during transformation
-- [ ] Column names correctly aligned when merging
-- [ ] Missing values handled appropriately (null/empty)
-- [ ] `main_name` column present (or created if source lacked it)
-
----
-
-## 📝 Logging Requirements
-
-### Log File Location
-- **Path**: `/data/sessions/{session_id}/output/{bundle_id}/task_execution_log.json`
-- **Initialize**: `echo '[]' > /data/sessions/{session_id}/output/{bundle_id}/task_execution_log.json`
-
-### Log Entry Template
-Execute this immediately after each task completion:
-```bash
-python3 << 'EOF'
-import json
-log_path = '/data/sessions/{session_id}/output/{bundle_id}/task_execution_log.json'
-with open(log_path) as f:
-    records = json.load(f)
-records.append({{
-    "task_id": "task_N",
-    "task_name": "Brief task description",
-    "task_type": "MCP_TOOL | CODE_GENERATION | FILE_OPERATION | ANALYSIS | REPORT",
-    "status": "success | failed",
-    "mcp_tool_name": "server.tool_name",  # Required if task_type is MCP_TOOL
-    "output_files": ["path/to/output/file"],
-    "output_data": {{}},  # Key return data summary
-    "error_message": null  # Required if status is failed
+```typescript
+// Step 1: Launch background task
+task({{
+  subagent_type: "explore",
+  description: "Find patterns",
+  prompt: "...",
+  run_in_background: true
 }})
-with open(log_path, 'w') as f:
-    json.dump(records, f, indent=2)
-EOF
+// → Returns: "Background Task ID: bg_xxx\nStatus: pending..."
+
+// Step 2: IMMEDIATELY call background_output to wait for results
+background_output({{
+  task_id: "bg_xxx",
+  block: true,
+  timeout: 60000
+}})
 ```
 
-**Note**: Do NOT use `open(path, 'r+')` mode to avoid file corruption.
+### ❌ Wrong Patterns
 
-### Log Field Specifications
+1. **Only saying "waiting" without calling tool:**
+   ```
+   "Waiting for background task to complete..."
+   // ❌ WRONG - no tool call, execution will stop
+   ```
 
-| Field | Required | Type | Description |
-|-------|:--------:|------|-------------|
-| `task_id` | ✅ | string | Sequential ID: `task_1`, `task_2`, ... |
-| `task_name` | ✅ | string | Brief description of the task |
-| `task_type` | ✅ | enum | `MCP_TOOL`, `CODE_GENERATION`, `FILE_OPERATION`, `ANALYSIS`, `REPORT` |
-| `status` | ✅ | enum | `success` or `failed` |
-| `input_parameters` | ⚠️ | object | Input parameters of the task |
-| `mcp_tool_name` | ⚠️ | string | Required if `task_type` is `MCP_TOOL`. Format: `server.tool` |
-| `output_files` | ✅ | array | List of output file paths |
-| `output_data` | ⭕ | object | Summary of key return data |
-| `error_message` | ⚠️ | string | Required if `status` is `failed` |
+2. **Starting multiple tasks without polling:**
+   ```typescript
+   task({{ ..., run_in_background: true }})  // bg_1
+   task({{ ..., run_in_background: true }})  // bg_2
+   // ❌ WRONG - must call background_output for each
+   ```
+
+### Correct Multi-Task Pattern
+
+```typescript
+// Launch tasks
+const r1 = task({{ ..., run_in_background: true }})
+const r2 = task({{ ..., run_in_background: true }})
+
+// Poll each one
+background_output({{ task_id: "bg_1", block: true }})
+background_output({{ task_id: "bg_2", block: true }})
+```
+
+**⚠️ NEVER say "waiting for results" without calling `background_output` tool.**
 
 ---
 
-## ✅ Task Completion Checklist
+## Task Completion Checklist
 
 After completing each task, verify:
-- [ ] MCP streaming tasks have retrieved results via SSE
-- [ ] Log entry appended to `task_execution_log.json`
+- [ ] **Log entry appended to `task_execution_log.json` (MANDATORY)**
+- [ ] **MCP streaming tasks: waited for `result`/`error`/`end` message before proceeding**
 - [ ] Output files saved to the correct output directory
-- [ ] File operations comply with critical rules (no column loss, main_name preserved)
+- [ ] File operations comply with rules (no column loss, main_name preserved)
+
+**Note**: All OpenCode JSON output is automatically captured in `opencode.log` - no manual event collection needed.
+
+**⚠️ NEVER skip to the next task while an MCP streaming task is still in progress.**
 """
 
 
-def get_opencode_runner_prompt(session_id: str, bundle_id: Optional[str] = None) -> str:
-    """
-    Get OpenCode execution prompt
-
-    Args:
-        session_id: Session ID for path construction
-        bundle_id: Optional bundle ID for workspace isolation
-
-    Returns:
-        Formatted prompt string
-    """
-    if bundle_id:
-        workspace_dir = f"/data/sessions/{session_id}/{bundle_id}"
-    else:
-        workspace_dir = f"/data/sessions/{session_id}"
-
-    output_dir = f"/data/sessions/{session_id}/output"
-
-    prompt = OPENCODE_EXECUTE_PROMPT.format(
-        bundle_id=bundle_id,
-        session_id=session_id,
-    )
-
-    return f"""#!/bin/bash
-# OpenCode Task Execution Script
-# Generated at: {datetime.now().isoformat()}
-
-# Force unbuffered output for real-time SSE streaming
+_RUNNER_ENV_BLOCK = """\
 export PYTHONUNBUFFERED=1
 export NODE_OPTIONS="--no-warnings --no-deprecation"
 export TERM=dumb
@@ -245,50 +324,103 @@ export NO_COLOR=1
 if [ -f "/opt/opensandbox/code-interpreter-env.sh" ]; then
     echo "Activating OpenSandbox virtual environment..."
     source /opt/opensandbox/code-interpreter-env.sh python 3.13 2>/dev/null || true
-fi
+fi"""
 
-cd {workspace_dir}
 
+_RUNNER_SETUP_BLOCK = """\
 # Create OpenCode XDG directories
-mkdir -p {workspace_dir}/opencode/data
-mkdir -p {workspace_dir}/opencode/config/opencode
-mkdir -p {workspace_dir}/opencode/state
-mkdir -p {workspace_dir}/opencode/bin
+mkdir -p "$WORK_DIR/opencode/data"
+mkdir -p "$WORK_DIR/opencode/config/opencode"
+mkdir -p "$WORK_DIR/opencode/state"
+mkdir -p "$WORK_DIR/opencode/bin"
 
-# Create output directory (shared across bundles)
-mkdir -p {output_dir}
+# Create output and log directories
+mkdir -p "$OUTPUT_DIR"
+mkdir -p "$LOG_DIR"
+echo '[]' > "$LOG_DIR/task_execution_log.json"
+
+# Initialize opencode.log (clear if exists)
+: > "$LOG_DIR/opencode.log"
+
+# Create AGENTS.md in WORK_DIR root (opencode reads from working directory)
+cat > "$WORK_DIR/AGENTS.md" << 'AGENTS_EOF'
+{agents_content}
+AGENTS_EOF
 
 echo "=== Starting OpenCode Task Execution ==="
-echo "Working directory: {workspace_dir}"
-echo "Session ID: {session_id}"
-echo "Task file: {workspace_dir}/task.md"
+echo "Working directory: $WORK_DIR"
+echo "Session ID: $SESSION_ID"
+echo "Task file: $WORK_DIR/task.md"
 echo "Timestamp: $(date -Iseconds)"
+"""
 
-# Debug: check if opencode is available
-echo "Checking opencode installation..."
-which opencode || echo "opencode not found in PATH"
 
-# Run OpenCode with JSON format for structured streaming output
-# --print-logs: output logs to stderr for visibility
-# --format json: structured JSON events for easier parsing
-# --thinking: show thinking blocks for transparency
-# Use stdbuf for unbuffered output if available
-if command -v stdbuf &> /dev/null; then
-    echo "Running OpenCode with JSON format (stdbuf)..."
-    stdbuf -oL -eL opencode run --print-logs --format json --thinking 2>&1 << 'OPENCODE_PROMPT_EOF'
-{prompt}
-OPENCODE_PROMPT_EOF
-else
-    echo "Running OpenCode with JSON format..."
-    opencode run --print-logs --format json --thinking 2>&1 << 'OPENCODE_PROMPT_EOF'
-{prompt}
-OPENCODE_PROMPT_EOF
-fi
+_RUNNER_EXEC_BLOCK = """\
+# Execute OpenCode and capture all JSON output (append mode to prevent overwrites)
+echo "=== Starting OpenCode (output logged to $LOG_DIR/opencode.log) ==="
 
-OPENCODE_EXIT_CODE=$?
+# Execute with explicit instructions to read AGENTS.md first
+opencode run "ulw Execute all tasks in task.md.don't ask for more information from user." --file "$WORK_DIR/task.md" --format json 2>&1 | tee -a "$LOG_DIR/opencode.log"
+
+OPENCODE_EXIT_CODE=${PIPESTATUS[0]}
 
 echo ""
 echo "===OPENCODE_DONE==="
 echo "OpenCode exit code: $OPENCODE_EXIT_CODE"
+echo "OpenCode log: $LOG_DIR/opencode.log"
 echo "Timestamp: $(date -Iseconds)"
+"""
+
+
+def get_opencode_runner_prompt(session_id: str, bundle_id: Optional[str] = None) -> str:
+    """
+    Generate the OpenCode runner shell script.
+
+    Prerequisites:
+    - task.md must be written by sandbox before calling this function
+
+    Args:
+        session_id: Session ID for path construction
+        bundle_id: Optional bundle ID for workspace isolation
+
+    Returns:
+        Complete runner shell script as a string
+    """
+    if bundle_id:
+        workspace_dir = f"/data/sessions/{session_id}/{bundle_id}"
+        output_dir = f"/data/sessions/{session_id}/output/{bundle_id}"
+        log_dir = f"/data/sessions/{session_id}/output/{bundle_id}"
+    else:
+        workspace_dir = f"/data/sessions/{session_id}"
+        output_dir = f"/data/sessions/{session_id}/output"
+        log_dir = f"/data/sessions/{session_id}/output"
+
+    # AGENTS.md content
+    agents_content = OPENCODE_AGENTS_CONTENT.format(
+        log_path=f"{log_dir}/task_execution_log.json",
+        output_dir=output_dir,
+        session_id=session_id,
+    )
+
+    # Main prompt (simplified, AGENTS.md will be auto-loaded by OpenCode)
+    prompt = OPENCODE_EXECUTE_PROMPT.format(output_dir=output_dir)
+
+    return f"""#!/bin/bash
+# OpenCode Task Execution Script
+# Generated at: {datetime.now().isoformat()}
+
+{_RUNNER_ENV_BLOCK}
+
+cd {workspace_dir}
+
+WORK_DIR="{workspace_dir}"
+OUTPUT_DIR="{output_dir}"
+LOG_DIR="{log_dir}"
+SESSION_ID="{session_id}"
+
+{_RUNNER_SETUP_BLOCK.format(agents_content=agents_content)}
+
+which opencode || echo "opencode not found in PATH"
+
+{_RUNNER_EXEC_BLOCK}
 """
