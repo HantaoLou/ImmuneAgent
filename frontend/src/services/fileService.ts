@@ -2,6 +2,40 @@ import api from './api';
 import { FileAttachment, SandboxFile, SandboxFilesResponse } from '@/types';
 import { fileStorage } from '@/lib/fileStorage';
 import { fileUtils } from '@/lib/fileUtils';
+import { v4 as uuidv4 } from 'uuid';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Files larger than this threshold will be uploaded in chunks */
+const CHUNKED_UPLOAD_THRESHOLD = 5 * 1024 * 1024; // 5 MB
+/** Size of each chunk */
+const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract a human-readable error message from an axios error.
+ * FastAPI validation errors arrive as arrays of objects in `response.data.detail`,
+ * so we need to handle objects/arrays carefully — String() alone gives "[object Object]".
+ */
+function extractErrorMessage(err: any): string {
+  const raw = err?.response?.data?.detail ?? err?.message ?? err?.code;
+  if (raw === undefined || raw === null) return String(err);
+  if (typeof raw === 'string') return raw;
+  try {
+    return JSON.stringify(raw);
+  } catch {
+    return String(raw);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 /**
  * File Upload API
@@ -21,17 +55,26 @@ export interface UploadFileResponse {
   mimeType: string;
   sessionId: string;
   uploadTime: string;
+  sandboxPath?: string;
+  sandboxId?: string;
+  chunks?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Direct (single-request) upload — used for files ≤ threshold
+// ---------------------------------------------------------------------------
 
 export const uploadFile = async (params: UploadFileRequest): Promise<UploadFileResponse> => {
   const formData = new FormData();
   formData.append('file', params.file);
   formData.append('sessionId', params.sessionId);
 
+  // NOTE: Do NOT set Content-Type manually — axios auto-detects FormData and
+  // sets the correct multipart/form-data header WITH the boundary string.
+  // A manual 'multipart/form-data' without boundary causes the server to fail
+  // to parse the body, resulting in empty file data.
   const response = await api.post<UploadFileResponse>('/api/files/upload', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
+    timeout: 0,
     onUploadProgress: (progressEvent) => {
       if (progressEvent.total && params.onProgress) {
         const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -41,6 +84,89 @@ export const uploadFile = async (params: UploadFileRequest): Promise<UploadFileR
   });
 
   return response.data;
+};
+
+// ---------------------------------------------------------------------------
+// Chunked upload — used for files > threshold
+// POST /api/files/upload-chunk  (per chunk)
+// POST /api/files/upload-complete  (finalise)
+// ---------------------------------------------------------------------------
+
+export const uploadFileChunked = async (
+  params: UploadFileRequest,
+): Promise<UploadFileResponse> => {
+  const { file, sessionId, onProgress } = params;
+  const uploadId = uuidv4();
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+  console.info(
+    `[uploadChunked] Starting chunked upload: "${file.name}" (${(file.size / 1024 / 1024).toFixed(1)} MB, ${totalChunks} chunks, uploadId=${uploadId})`,
+  );
+
+  // 1. Upload each chunk sequentially
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+    const start = chunkIndex * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, file.size);
+    const chunkBlob = file.slice(start, end);
+
+    const formData = new FormData();
+    formData.append('chunk_index', String(chunkIndex));
+    formData.append('total_chunks', String(totalChunks));
+    formData.append('upload_id', uploadId);
+    formData.append('sessionId', sessionId);
+    formData.append('filename', file.name);
+    formData.append('file', chunkBlob, file.name);
+
+    try {
+    await api.post('/api/files/upload-chunk', formData, {
+      timeout: 0, // no timeout for chunk uploads
+    });
+    } catch (err: any) {
+      const detail = extractErrorMessage(err);
+      console.error(
+        `[uploadChunked] Chunk ${chunkIndex + 1}/${totalChunks} failed for "${file.name}" (uploadId=${uploadId}):`,
+        detail,
+      );
+      throw new Error(
+        `Chunk ${chunkIndex + 1}/${totalChunks} upload failed: ${detail}`,
+      );
+    }
+
+    // Report progress based on completed chunks
+    if (onProgress) {
+      const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+      onProgress(progress);
+    }
+  }
+
+  // 2. Notify backend to assemble chunks
+  console.info(`[uploadChunked] All ${totalChunks} chunks uploaded, requesting assembly for "${file.name}"...`);
+
+  try {
+    const completeResponse = await api.post<UploadFileResponse>(
+      '/api/files/upload-complete',
+      {
+        upload_id: uploadId,
+        session_id: sessionId,
+        filename: file.name,
+      },
+      {
+        timeout: 300000, // 5 min — assembly of large files takes time
+      },
+    );
+
+    console.info(
+      `[uploadChunked] Assembly complete: "${file.name}" -> ${completeResponse.data.sandboxPath}`,
+    );
+    return completeResponse.data;
+  } catch (err: any) {
+    const detail = extractErrorMessage(err);
+    console.error(
+      `[uploadChunked] Assembly failed for "${file.name}" (uploadId=${uploadId}, ${totalChunks} chunks uploaded):`,
+      detail,
+    );
+    throw new Error(`File assembly failed: ${detail}`);
+  }
 };
 
 /**
@@ -191,6 +317,10 @@ class FileService {
   async upload(params: UploadFileRequest): Promise<UploadFileResponse> {
     if (this.useLocalMode) {
       return uploadFileLocal(params);
+    }
+    // Route to chunked upload for files larger than threshold
+    if (params.file.size > CHUNKED_UPLOAD_THRESHOLD) {
+      return uploadFileChunked(params);
     }
     return uploadFile(params);
   }

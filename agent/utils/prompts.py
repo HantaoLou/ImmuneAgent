@@ -48,6 +48,7 @@ OPENCODE_AGENTS_CONTENT = """# Task Execution Rules
 | `task_type` | Yes | `MCP_TOOL`, `CODE_GENERATION`, `FILE_OPERATION`, `ANALYSIS`, `REPORT` |
 | `status` | Yes | `success` or `failed` |
 | `mcp_tool_name` | No | Required if type is `MCP_TOOL` |
+| `input_params` | YES | Input parameters |
 | `output_files` | Yes | Output file paths |
 | `output_data` | No | Key result data summary |
 | `error_message` | No | Required if `status` is `failed` |
@@ -189,9 +190,13 @@ If you see "killed due to memory constraints":
 
 ## MCP Tool Integration
 
+### MCP Tool Lookup (CRITICAL)
+
+**NEVER use `skill_mcp` tool to look up or invoke MCP tools.**
+
 ### Streaming Task Flow (CRITICAL)
 
-**IMPORTANT: When an MCP tool returns a `streaming_task` response, the task is NOT complete yet.**
+**IMPORTANT: When an MCP tool returns a `streaming_task` response, the task is NOT complete yet.** 
 
 You MUST connect to the SSE endpoint and wait for the final `result`, `error`, or `end` message before proceeding to the next task.
 
@@ -248,9 +253,31 @@ For MCP tools that return immediate results (not `streaming_task`), the task is 
 
 ## Background Task Handling (CRITICAL)
 
-**When using `task` tool with `run_in_background=true`, you MUST call `background_output` to retrieve results.**
+**⚠️ `run_in_background` parameter is REQUIRED for ALL `task` tool calls.**
 
-### ✅ Correct Pattern
+**Two usage modes:**
+- **Task Delegation** → `run_in_background=false` (wait for completion)
+- **Parallel Exploration** → `run_in_background=true` (async, must call `background_output`)
+
+### Mode 1: Task Delegation (run_in_background=false)
+
+Use this when you need the result immediately.
+
+```typescript
+// Direct delegation - waits for completion
+const result = task({{
+  subagent_type: "explore",
+  description: "Find patterns",
+  prompt: "...",
+  load_skills: [],
+  run_in_background: false
+}})
+// → Returns the full task result directly
+```
+
+### Mode 2: Parallel Exploration (run_in_background=true)
+
+Use this for parallel research. **MUST call `background_output` to retrieve results.**
 
 ```typescript
 // Step 1: Launch background task
@@ -258,6 +285,7 @@ task({{
   subagent_type: "explore",
   description: "Find patterns",
   prompt: "...",
+  load_skills: [],
   run_in_background: true
 }})
 // → Returns: "Background Task ID: bg_xxx\nStatus: pending..."
@@ -272,27 +300,37 @@ background_output({{
 
 ### ❌ Wrong Patterns
 
-1. **Only saying "waiting" without calling tool:**
-   ```
-   "Waiting for background task to complete..."
-   // ❌ WRONG - no tool call, execution will stop
-   ```
+1. **Missing run_in_background parameter (CRITICAL ERROR):**
+    ```typescript
+    task({{
+      subagent_type: "explore",
+      prompt: "..."
+    }})
+    // ❌ WRONG - Missing REQUIRED run_in_background parameter
+    // Error: "Invalid arguments: 'run_in_background' parameter is REQUIRED"
+    ```
 
-2. **Starting multiple tasks without polling:**
-   ```typescript
-   task({{ ..., run_in_background: true }})  // bg_1
-   task({{ ..., run_in_background: true }})  // bg_2
-   // ❌ WRONG - must call background_output for each
-   ```
+2. **Only saying "waiting" without calling tool:**
+    ```
+    "Waiting for background task to complete..."
+    // ❌ WRONG - no tool call, execution will stop
+    ```
 
-### Correct Multi-Task Pattern
+3. **Starting multiple tasks without polling:**
+    ```typescript
+    task({{ subagent_type: "explore", ..., run_in_background: true }})  // bg_1
+    task({{ subagent_type: "librarian", ..., run_in_background: true }})  // bg_2
+    // ❌ WRONG - must call background_output for each
+    ```
+
+### Correct Multi-Task Pattern (Parallel)
 
 ```typescript
-// Launch tasks
-const r1 = task({{ ..., run_in_background: true }})
-const r2 = task({{ ..., run_in_background: true }})
+// Launch multiple background tasks in parallel
+const r1 = task({{ subagent_type: "explore", ..., run_in_background: true }})
+const r2 = task({{ subagent_type: "librarian", ..., run_in_background: true }})
 
-// Poll each one
+// Poll each one to get results
 background_output({{ task_id: "bg_1", block: true }})
 background_output({{ task_id: "bg_2", block: true }})
 ```

@@ -1,0 +1,114 @@
+{
+  "providers": {
+    "zai": {
+      "name": "zai",
+      "display_name": "ZAI",
+      "model_id": "glm-4.6",
+      "api_key_env": "ZHIPUAI_API_KEY",
+      "provider_type": "zhipuai",
+      "api_endpoint": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "env_vars": {
+        "ZHIPUAI_API_KEY": "{{API_KEY}}",
+        "ZHIPU_API_KEY": "{{API_KEY}}",
+        "OPENAI_API_KEY": "not-used",
+        "ANTHROPIC_API_KEY": "not-used"
+      },
+      "opencode_config": {
+        "provider": {
+          "zhipuai": {
+            "api": "https://open.bigmodel.cn/api/coding/paas/v4"
+          }
+        },
+        "model": "glm-4.6"
+      },
+      "coding_helper_auth": "zhipuai {{API_KEY}}"
+    },
+    "qwen": {
+      "name": "qwen",
+      "display_name": "alibaba",
+      "model_id": "qwen3.5-plus",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "provider_type": "alibaba",
+      "api_endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "env_vars": {
+        "DASHSCOPE_API_KEY": "{{API_KEY}}",
+        "OPENAI_API_KEY": "not-used",
+        "ANTHROPIC_API_KEY": "not-used"
+      },
+      "opencode_config": {
+        "provider": {
+          "alibaba-cn": {
+            "api": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+          }
+        },
+        "model": "alibaba-cn/qwen3.5-plus"
+      }
+    },
+    "kimi": {
+      "name": "kimi",
+      "display_name": "Moonshot AI",
+      "model_id": "moonshot-v1-128k",
+      "api_key_env": "MOONSHOT_API_KEY",
+      "provider_type": "openai",
+      "api_endpoint": "https://api.moonshot.cn/v1",
+      "env_vars": {
+        "MOONSHOT_API_KEY": "{{API_KEY}}",
+        "OPENAI_API_KEY": "{{API_KEY}}",
+        "ANTHROPIC_API_KEY": "not-used"
+      },
+      "opencode_config": {
+        "provider": {
+          "openai": {
+            "api": "https://api.moonshot.cn/v1"
+          }
+        },
+        "model": "moonshot-v1-128k"
+      }
+    },
+    "claude": {
+      "name": "claude",
+      "display_name": "Anthropic Claude",
+      "model_id": "claude-3-5-sonnet-20241022",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "provider_type": "anthropic",
+      "api_endpoint": "https://api.anthropic.com/v1",
+      "env_vars": {
+        "ANTHROPIC_API_KEY": "{{API_KEY}}",
+        "OPENAI_API_KEY": "not-used",
+        "ZHIPUAI_API_KEY": "not-used"
+      },
+      "opencode_config": {
+        "provider": {
+          "anthropic": {
+            "api": "https://api.anthropic.com/v1"
+          }
+        },
+        "model": "claude-3-5-sonnet-20241022"
+      },
+      "coding_helper_auth": "anthropic {{API_KEY}}"
+    },
+    "openai": {
+      "name": "openai",
+      "display_name": "OpenAI GPT",
+      "model_id": "gpt-4o",
+      "api_key_env": "OPENAI_API_KEY",
+      "provider_type": "openai",
+      "api_endpoint": "https://api.openai.com/v1",
+      "env_vars": {
+        "OPENAI_API_KEY": "{{API_KEY}}",
+        "ANTHROPIC_API_KEY": "not-used",
+        "ZHIPUAI_API_KEY": "not-used"
+      },
+      "opencode_config": {
+        "provider": {
+          "openai": {
+            "api": "https://api.openai.com/v1"
+          }
+        },
+        "model": "gpt-4o"
+      },
+      "coding_helper_auth": "openai {{API_KEY}}"
+    }
+  },
+  "default_provider": "qwen"
+}

@@ -168,7 +168,7 @@ async def _run_bundle_async(
 ) -> Dict:
     """Execute a bundle as a single sub-agent session."""
     bundle_output_dir = os.path.join(output_base, bundle.bundle_id)
-    os.makedirs(bundle_output_dir, exist_ok=True)
+    # Note: Don't create directory on host - runner.sh creates it inside sandbox
 
     prompt = _build_bundle_prompt(bundle)
 
@@ -223,7 +223,7 @@ async def orchestrator_node(state: GlobalState) -> GlobalState:
         agent_name = "bioinformatics"
 
     output_dir = os.path.join(state.sandbox_dir, "output")
-    os.makedirs(output_dir, exist_ok=True)
+    # Note: Don't create directory on host - runner.sh creates it inside sandbox
 
     report_info(
         state,

@@ -100,6 +100,13 @@ export const fileUtils = {
   },
 
   validateFile(file: File): { valid: boolean; error?: string } {
+    const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
+    if (file.size > MAX_FILE_SIZE) {
+      return {
+        valid: false,
+        error: `File size (${this.formatFileSize(file.size)}) exceeds 2GB limit`,
+      };
+    }
     return { valid: true };
   },
 

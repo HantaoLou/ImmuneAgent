@@ -92,7 +92,9 @@ export const InputPanel: React.FC<InputPanelProps> = ({
         newAttachments.push(attachment);
         message.success(`File ${file.name} uploaded successfully`);
       } catch (error) {
-        message.error(`File ${file.name} upload failed`);
+        console.error(`[InputPanel] File upload failed for "${file.name}":`, error);
+        const detail = (error as any)?.message || String(error);
+        message.error(`${file.name} upload failed: ${detail}`);
       } finally {
         setUploadingCount(prev => prev - 1);
       }

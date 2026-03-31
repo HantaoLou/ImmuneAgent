@@ -15,6 +15,9 @@ import asyncio
 import threading
 
 from config import CORS_ORIGINS, API_HOST, API_PORT, API_RELOAD
+import shutil
+import time as _time
+import time as _time_module
 from checkpointer import get_checkpointer
 from agent_service import (
     AGENT_AVAILABLE,
@@ -1481,6 +1484,313 @@ async def upload_file(
         "sandboxPath": sandbox_path,
         "sandboxId": result.get("sandbox_id"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Chunked Upload Support for Large Files
+# ---------------------------------------------------------------------------
+
+_active_uploads: Dict[str, dict] = {}
+CHUNKED_UPLOAD_DIR = os.getenv(
+    "CHUNKED_UPLOAD_DIR", os.path.join(tempfile.gettempdir(), "chunked_uploads")
+)
+MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
+CHUNK_SIZE_LIMIT = 10 * 1024 * 1024  # 10MB per chunk max
+STALE_UPLOAD_TIMEOUT = 30 * 60  # 30 minutes
+MAX_CONCURRENT_UPLOADS = 100
+
+os.makedirs(CHUNKED_UPLOAD_DIR, exist_ok=True)
+
+
+class UploadCompleteRequest(BaseModel):
+    upload_id: str
+    session_id: str
+    filename: str
+
+
+def _cleanup_stale_uploads_sync():
+    """Remove stale upload temp directories."""
+    current_time = _time.time()
+    stale_ids = []
+    for uid in list(_active_uploads.keys()):
+        state = _active_uploads[uid]
+        if current_time - state.get("last_activity", 0) > STALE_UPLOAD_TIMEOUT:
+            stale_ids.append(uid)
+
+    for uid in stale_ids:
+        _active_uploads.pop(uid, None)
+        upload_dir = os.path.join(CHUNKED_UPLOAD_DIR, uid)
+        if os.path.exists(upload_dir):
+            try:
+                shutil.rmtree(upload_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+    # Also scan disk for orphaned directories
+    if os.path.exists(CHUNKED_UPLOAD_DIR):
+        for entry in os.listdir(CHUNKED_UPLOAD_DIR):
+            entry_path = os.path.join(CHUNKED_UPLOAD_DIR, entry)
+            if os.path.isdir(entry_path):
+                try:
+                    dir_mtime = os.path.getmtime(entry_path)
+                    if current_time - dir_mtime > STALE_UPLOAD_TIMEOUT:
+                        shutil.rmtree(entry_path, ignore_errors=True)
+                except Exception:
+                    pass
+
+
+async def _periodic_cleanup():
+    """Background task to clean up stale chunked upload temp files."""
+    while True:
+        await asyncio.sleep(30 * 60)
+        try:
+            _cleanup_stale_uploads_sync()
+        except Exception as e:
+            print(f"[periodic_cleanup] Error: {e}")
+
+
+@app.on_event("startup")
+async def _startup_chunked_cleanup():
+    """Start background cleanup task on app startup."""
+    asyncio.create_task(_periodic_cleanup())
+    print("[startup] Chunked upload cleanup task started")
+
+
+@app.post("/api/files/upload-chunk")
+async def upload_file_chunk(
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    upload_id: str = Form(...),
+    sessionId: str = Form(...),
+    filename: str = Form(...),
+    file: UploadFile = File(...),
+):
+    """
+    Upload a single chunk of a large file.
+
+    The frontend splits large files into chunks and uploads each one separately.
+    After all chunks are uploaded, the frontend calls /api/files/upload-complete
+    to assemble them and write to sandbox.
+
+    Args:
+        chunk_index: 0-based index of this chunk
+        total_chunks: Total number of chunks
+        upload_id: Unique upload session ID (UUID)
+        sessionId: Bio-agent session ID
+        filename: Original filename
+        file: The chunk binary data
+
+    Returns:
+        Progress info for this upload
+    """
+    if chunk_index < 0 or chunk_index >= total_chunks:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid chunk_index {chunk_index} for total_chunks {total_chunks}",
+        )
+
+    if not upload_id or not sessionId or not filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required fields: upload_id, sessionId, filename",
+        )
+
+    # Check concurrent upload limit
+    if len(_active_uploads) >= MAX_CONCURRENT_UPLOADS:
+        _cleanup_stale_uploads_sync()
+        if len(_active_uploads) >= MAX_CONCURRENT_UPLOADS:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many concurrent uploads. Please try again later.",
+            )
+
+    # Read chunk data
+    chunk_data = await file.read()
+    if not chunk_data:
+        raise HTTPException(status_code=400, detail="Empty chunk data")
+
+    if len(chunk_data) > CHUNK_SIZE_LIMIT * 2:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Chunk size {len(chunk_data)} exceeds limit",
+        )
+
+    # Create upload directory
+    upload_dir = os.path.join(CHUNKED_UPLOAD_DIR, upload_id)
+    chunks_dir = os.path.join(upload_dir, "chunks")
+    os.makedirs(chunks_dir, exist_ok=True)
+
+    # Save chunk to temp file
+    chunk_path = os.path.join(chunks_dir, f"chunk_{chunk_index:06d}")
+    try:
+        with open(chunk_path, "wb") as f:
+            f.write(chunk_data)
+    except IOError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save chunk: {str(e)}")
+
+    # Track progress
+    current_time = _time.time()
+    if upload_id not in _active_uploads:
+        _active_uploads[upload_id] = {
+            "upload_id": upload_id,
+            "session_id": sessionId,
+            "filename": filename,
+            "total_chunks": total_chunks,
+            "uploaded_chunks": set(),
+            "created_at": current_time,
+            "last_activity": current_time,
+        }
+
+    upload_state = _active_uploads[upload_id]
+    upload_state["uploaded_chunks"].add(chunk_index)
+    upload_state["last_activity"] = current_time
+    upload_state["filename"] = filename
+    upload_state["session_id"] = sessionId
+    upload_state["total_chunks"] = total_chunks
+
+    return {
+        "chunk_index": chunk_index,
+        "total_chunks": total_chunks,
+        "uploaded_count": len(upload_state["uploaded_chunks"]),
+        "status": "ok",
+        "upload_id": upload_id,
+    }
+
+
+@app.post("/api/files/upload-complete")
+async def upload_complete(request: UploadCompleteRequest):
+    """
+    Complete a chunked upload by assembling all chunks into the final file.
+
+    Args:
+        request: UploadCompleteRequest with upload_id, session_id, filename
+
+    Returns:
+        Final file info with sandbox path
+    """
+    upload_id = request.upload_id
+    session_id = request.session_id
+    filename = request.filename
+
+    if upload_id not in _active_uploads:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Upload session {upload_id} not found. It may have expired.",
+        )
+
+    upload_state = _active_uploads[upload_id]
+    total_chunks = upload_state["total_chunks"]
+    uploaded_chunks = upload_state["uploaded_chunks"]
+
+    if len(uploaded_chunks) != total_chunks:
+        missing = sorted(set(range(total_chunks)) - uploaded_chunks)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing chunks: {missing}. Expected {total_chunks}, got {len(uploaded_chunks)}.",
+        )
+
+    upload_dir = os.path.join(CHUNKED_UPLOAD_DIR, upload_id)
+    chunks_dir = os.path.join(upload_dir, "chunks")
+
+    try:
+        # Assemble all chunks in order
+        assembled_content = bytearray()
+        for i in range(total_chunks):
+            chunk_path = os.path.join(chunks_dir, f"chunk_{i:06d}")
+            if not os.path.exists(chunk_path):
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Chunk {i} file not found at {chunk_path}",
+                )
+            with open(chunk_path, "rb") as f:
+                assembled_content.extend(f.read())
+
+        total_size = len(assembled_content)
+        if total_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Assembled file size ({total_size} bytes) exceeds limit ({MAX_FILE_SIZE} bytes)",
+            )
+
+        print(
+            f"[upload_complete] Assembled {total_size} bytes from {total_chunks} chunks for {filename}"
+        )
+
+        # Get session metadata for sandbox ID
+        metadata = get_session_metadata(session_id)
+        existing_sandbox_id = metadata.get("opensandbox_id")
+
+        # Sanitize filename
+        safe_filename = "".join(
+            c if c.isalnum() or c in "._- " else "_" for c in filename
+        )
+        sandbox_path = f"/data/sessions/{session_id}/input/{safe_filename}"
+
+        print(
+            f"[upload_complete] Writing to sandbox: {sandbox_path}, sandbox_id: {existing_sandbox_id}"
+        )
+
+        # Write assembled content to sandbox
+        import sys as _sys
+
+        agent_dir = os.path.join(os.path.dirname(__file__), "..", "agent")
+        if agent_dir not in _sys.path:
+            _sys.path.insert(0, agent_dir)
+
+        from utils.opensandbox_executor import save_file_to_opensandbox
+
+        result = await save_file_to_opensandbox(
+            file_path=sandbox_path,
+            content=bytes(assembled_content),
+            existing_sandbox_id=existing_sandbox_id,
+        )
+
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to write file to sandbox: {result.get('error')}",
+            )
+
+        # Clean up temp directory
+        try:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+        except Exception as cleanup_err:
+            print(f"[upload_complete] Warning: cleanup failed: {cleanup_err}")
+
+        _active_uploads.pop(upload_id, None)
+
+        file_id = str(uuid.uuid4())
+        from datetime import datetime as _dt
+
+        upload_time = _dt.utcnow().isoformat() + "Z"
+
+        print(f"[upload_complete] Done: {filename} -> {sandbox_path}")
+
+        return {
+            "fileId": file_id,
+            "url": f"/api/files/download/{file_id}",
+            "filename": filename,
+            "size": total_size,
+            "mimeType": "application/octet-stream",
+            "sessionId": session_id,
+            "uploadTime": upload_time,
+            "sandboxPath": sandbox_path,
+            "sandboxId": result.get("sandbox_id"),
+            "chunks": total_chunks,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            if os.path.exists(os.path.join(CHUNKED_UPLOAD_DIR, upload_id)):
+                shutil.rmtree(
+                    os.path.join(CHUNKED_UPLOAD_DIR, upload_id), ignore_errors=True
+                )
+        except Exception:
+            pass
+        _active_uploads.pop(upload_id, None)
+        raise HTTPException(status_code=500, detail=f"Upload assembly failed: {str(e)}")
 
 
 @app.get("/api/files/download/{file_id}")

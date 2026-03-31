@@ -31,10 +31,61 @@ if load_dotenv is not None and find_dotenv is not None:
 logger = logging.getLogger(__name__)
 
 
+def _load_model_providers_config() -> Dict[str, Any]:
+    """
+    加载模型提供者配置文件
+
+    Returns:
+        Dict[str, Any]: 包含所有 provider 配置的字典
+    """
+    config_path = Path(__file__).parent.parent / "config" / "model_providers.json"
+
+    if config_path.exists():
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    # 如果配置文件不存在，返回空字典（向后兼容）
+    logger.warning(f"模型配置文件不存在: {config_path}")
+    return {}
+
+
+def _get_provider_config(provider_name: str) -> Optional[Dict[str, Any]]:
+    """
+    根据提供商名称获取配置
+
+    Args:
+        provider_name: 提供商名称（如 'zai', 'qwen', 'kimi'）
+
+    Returns:
+        Optional[Dict[str, Any]]: 提供商配置，如果不存在则返回 None
+    """
+    config = _load_model_providers_config()
+    providers = config.get("providers", {})
+
+    # 支持大小写不敏感的查找
+    for key, value in providers.items():
+        if key.lower() == provider_name.lower():
+            return value
+
+    return None
+
+
 @dataclass
 class OpenCodeConfig:
-    model_provider: str = "glm-4.7"
-    api_key: str = field(default_factory=lambda: os.getenv("ZHIPUAI_API_KEY") or "")
+    # 提供商名称（如 'zai', 'qwen', 'kimi', 'claude', 'openai'）
+    # 如果为空，则从环境变量或配置文件中获取默认提供商
+    provider: str = ""
+
+    # 模型 ID（可选，如果不指定则使用提供商的默认模型）
+    model_id: Optional[str] = None
+
+    # API Key（可选，如果不指定则从提供商的 api_key_env 环境变量获取）
+    api_key: Optional[str] = None
+
+    # 向后兼容：保留 model_provider 字段
+    # 如果设置了 model_provider，会自动推断 provider 和 model_id
+    model_provider: Optional[str] = None
+
     sandbox_domain: str = field(
         default_factory=lambda: os.getenv("SANDBOX_DOMAIN")
         or os.getenv("OPENSANDBOX_DOMAIN")
@@ -62,6 +113,56 @@ class OpenCodeConfig:
         == "true"
     )
 
+    def __post_init__(self):
+        # 如果没有指定 provider，尝试从 model_provider 推断
+        if not self.provider and self.model_provider:
+            model_lower = self.model_provider.lower()
+            if "glm" in model_lower:
+                self.provider = "zai"
+            elif "qwen" in model_lower or "dashscope" in model_lower:
+                self.provider = "qwen"
+            elif "moonshot" in model_lower or "kimi" in model_lower:
+                self.provider = "kimi"
+            elif "claude" in model_lower or "anthropic" in model_lower:
+                self.provider = "claude"
+            elif "gpt" in model_lower or "openai" in model_lower:
+                self.provider = "openai"
+
+        # 如果仍然没有 provider，使用默认提供商
+        if not self.provider:
+            config = _load_model_providers_config()
+            self.provider = config.get("default_provider", "zai")
+
+        # 获取提供商配置
+        provider_config = _get_provider_config(self.provider)
+
+        if provider_config:
+            # 如果没有指定 model_id，使用提供商的默认模型
+            if not self.model_id:
+                self.model_id = provider_config.get("model_id", "glm-4.6")
+
+            # 如果没有指定 api_key，从提供商的 api_key_env 环境变量获取
+            if not self.api_key:
+                api_key_env = provider_config.get("api_key_env", "")
+                self.api_key = os.getenv(api_key_env, "") or ""
+
+            # 将 model_provider 设置为模型 ID（向后兼容）
+            if not self.model_provider and self.model_id:
+                self.model_provider = self.model_id
+        else:
+            # 如果找不到提供商配置，降级使用 model_provider 和 ZHIPUAI_API_KEY
+            logger.warning(f"未找到提供商 '{self.provider}' 的配置，使用向后兼容模式")
+            if not self.model_provider:
+                self.model_provider = "glm-4.6"
+            if not self.api_key:
+                self.api_key = os.getenv("ZHIPUAI_API_KEY", "") or ""
+
+    @property
+    def provider_config(self) -> Dict[str, Any]:
+        """获取当前提供商的完整配置"""
+        config = _get_provider_config(self.provider)
+        return config or {}
+
 
 class OpenCodeExecutor:
     def __init__(
@@ -72,7 +173,10 @@ class OpenCodeExecutor:
         iteration: int = 0,
         timeout: int = 600,
         config: Optional[OpenCodeConfig] = None,
-        progress_callback: Optional[Callable] = None,
+        provider: Optional[str] = None,  # 新增：直接指定提供商
+        model_id: Optional[str] = None,  # 新增：直接指定模型 ID
+        api_key: Optional[str] = None,  # 新增：直接指定 API Key
+        progress_callback: Optional[Callable[[str, str, dict], None]] = None,
         node_name: str = "opencode_executor",
     ):
         self.session_id = session_id
@@ -80,7 +184,20 @@ class OpenCodeExecutor:
         self.task = task
         self.iteration = iteration
         self.timeout = timeout
-        self.config = config or OpenCodeConfig()
+
+        # 如果没有传入 config，创建一个新的配置
+        if config is None:
+            # 如果直接传入了 provider/model_id/api_key，使用它们
+            if provider or model_id or api_key:
+                config = OpenCodeConfig(
+                    provider=provider or "",
+                    model_id=model_id,
+                    api_key=api_key,
+                )
+            else:
+                config = OpenCodeConfig()
+
+        self.config = config
         self.sandbox: Sandbox | None = None
         self._logs: list[str] = []
         self.progress_callback = progress_callback
@@ -106,7 +223,10 @@ class OpenCodeExecutor:
         iteration: int = 0,
         timeout: int = 600,
         config: Optional[OpenCodeConfig] = None,
-        progress_callback: Optional[Callable] = None,
+        provider: Optional[str] = None,  # 新增：直接指定提供商
+        model_id: Optional[str] = None,  # 新增：直接指定模型 ID
+        api_key: Optional[str] = None,  # 新增：直接指定 API Key
+        progress_callback: Optional[Callable[[str, str, dict], None]] = None,
         node_name: str = "opencode_executor",
     ) -> Dict[str, Any]:
         executor = cls(
@@ -116,6 +236,9 @@ class OpenCodeExecutor:
             iteration,
             timeout,
             config,
+            provider,
+            model_id,
+            api_key,
             progress_callback,
             node_name,
         )
@@ -263,52 +386,40 @@ class OpenCodeExecutor:
                 if result.error:
                     raise RuntimeError(f"OpenCode 安装失败: {result.error}")
 
-        # 安装 coding-helper 工具
-        self._log("安装 coding-helper 工具...")
-        coding_helper_result = await self.sandbox.commands.run(
-            "npm install -g coding-helper"
-        )  # type: ignore
-        if coding_helper_result.error:
-            self._log(
-                f"coding-helper 安装警告: {coding_helper_result.error}", "WARNING"
-            )
-        else:
-            self._log("coding-helper 工具安装完成")
-
-        # 配置 GLM Coding Plan
-        self._log("配置 GLM Coding Plan...")
-        coding_plan_result = await self.sandbox.commands.run(
-            "coding-helper auth glm_coding_plan_china " + self.config.api_key
-        )  # type: ignore
-        if coding_plan_result.error:
-            self._log(
-                f"GLM Coding Plan 配置警告: {coding_plan_result.error}", "WARNING"
-            )
-        else:
-            self._log("GLM Coding Plan 配置完成")
-
         await self._configure_opencode()
         self._log("OpenCode 配置完成")
 
     async def _configure_opencode(self, workspace_dir: str = "/workspace"):
         self._log("配置 OpenCode 参数")
 
-        model_lower = self.config.model_provider.lower()
         opencode_config: dict = {"$schema": "https://opencode.ai/config.json"}
 
         # 添加 oh-my-opencode 插件配置
         opencode_config["plugin"] = ["oh-my-opencode@latest"]
         self._log("已配置 oh-my-opencode 插件")
 
-        if "glm" in model_lower:
-            version = model_lower.replace("glm-", "").replace("glm", "")
-            model_id = f"glm-{version}" if version else "glm-5"
-            opencode_config["provider"] = {  # type: ignore
-                "zhipuai": {"api": "https://open.bigmodel.cn/api/coding/paas/v4"}
-            }
-            opencode_config["model"] = f"zhipuai/{model_id}"
+        # 从提供商配置中获取 OpenCode 配置
+        provider_config = self.config.provider_config
+
+        if provider_config:
+            opencode_config.update(provider_config.get("opencode_config", {}))
+            self._log(f"使用提供商配置: {self.config.provider}")
         else:
-            opencode_config["model"] = self.config.model_provider
+            # 降级到硬编码逻辑（向后兼容）
+            self._log("使用向后兼容模式配置模型")
+            model_lower = (
+                self.config.model_provider.lower() if self.config.model_provider else ""
+            )
+
+            if "glm" in model_lower:
+                version = model_lower.replace("glm-", "").replace("glm", "")
+                model_id = f"glm-{version}" if version else "glm-5"
+                opencode_config["provider"] = {
+                    "zhipuai": {"api": "https://open.bigmodel.cn/api/coding/paas/v4"}
+                }
+                opencode_config["model"] = f"zhipuai/{model_id}"
+            else:
+                opencode_config["model"] = self.config.model_provider or "glm-4.6"
 
         mcp_servers = self._build_mcp_servers_config()
         if mcp_servers:
@@ -1136,20 +1247,35 @@ class OpenCodeExecutor:
             "R_LIBS_USER": f"{self.workspace_dir}/R/library",
         }
 
-        model_lower = self.config.model_provider.lower()
+        # 从提供商配置中获取环境变量
+        provider_config = self.config.provider_config
 
-        if "glm" in model_lower and self.config.api_key:
-            env["ZHIPUAI_API_KEY"] = self.config.api_key
-            env["ZHIPU_API_KEY"] = self.config.api_key
-            env["OPENAI_API_KEY"] = "not-used"
-            env["ANTHROPIC_API_KEY"] = "not-used"
-        elif "claude" in model_lower and self.config.api_key:
-            env["ANTHROPIC_API_KEY"] = self.config.api_key
-            env["OPENAI_API_KEY"] = "not-used"
-        elif "gpt" in model_lower or "openai" in model_lower:
-            if self.config.api_key:
-                env["OPENAI_API_KEY"] = self.config.api_key
-            env["ANTHROPIC_API_KEY"] = "not-used"
+        if provider_config and self.config.api_key:
+            # 使用配置文件中的环境变量
+            env_vars_template = provider_config.get("env_vars", {})
+            for key, value in env_vars_template.items():
+                # 替换 {{API_KEY}} 占位符
+                env[key] = value.replace("{{API_KEY}}", self.config.api_key)
+            self._log(f"使用提供商环境变量配置: {self.config.provider}")
+        else:
+            # 降级到硬编码逻辑（向后兼容）
+            self._log("使用向后兼容模式配置环境变量")
+            model_lower = (
+                self.config.model_provider.lower() if self.config.model_provider else ""
+            )
+
+            if "glm" in model_lower and self.config.api_key:
+                env["ZHIPUAI_API_KEY"] = self.config.api_key
+                env["ZHIPU_API_KEY"] = self.config.api_key
+                env["OPENAI_API_KEY"] = "not-used"
+                env["ANTHROPIC_API_KEY"] = "not-used"
+            elif "claude" in model_lower and self.config.api_key:
+                env["ANTHROPIC_API_KEY"] = self.config.api_key
+                env["OPENAI_API_KEY"] = "not-used"
+            elif "gpt" in model_lower or "openai" in model_lower:
+                if self.config.api_key:
+                    env["OPENAI_API_KEY"] = self.config.api_key
+                env["ANTHROPIC_API_KEY"] = "not-used"
 
         return env
 

@@ -47,5 +47,12 @@
         "enabled": true,
         "oauth": false,
         "timeout": 36000000
+    },
+    "alphafold3": {
+        "type": "remote",
+        "url": "http://mcp.af3.immuneagent.cn:50001/sse",
+        "enabled": true,
+        "oauth": false,
+        "timeout": 36000000
     }
 }
