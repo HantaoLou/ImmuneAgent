@@ -96,7 +96,7 @@ class OpenCodeConfig:
         or "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.1"
     )
     sandbox_timeout_seconds: int = field(
-        default_factory=lambda: int(os.getenv("SANDBOX_TIMEOUT_SECONDS", "7200"))
+        default_factory=lambda: int(os.getenv("SANDBOX_TIMEOUT_SECONDS", "18000"))
     )
     sandbox_ready_timeout_seconds: int = field(
         default_factory=lambda: int(
@@ -443,8 +443,41 @@ class OpenCodeExecutor:
 
         self._log(f"配置文件已写入: {config_path}")
 
+        # 写入 oh-my-opencode 配置
+        await self._write_oh_my_opencode_config(self.workspace_dir)
+
         # 复制 OpenCode skills 到沙盒
         await self._copy_skills_to_sandbox()
+
+    async def _write_oh_my_opencode_config(self, workspace_dir: str):
+        """
+        写入 oh-my-opencode 配置到项目级目录
+
+        在 {workspace_dir}/.opencode/oh-my-opencode.jsonc 中创建配置文件，
+        用于控制 OpenCode 的并行任务数量等行为。
+
+        Args:
+            workspace_dir: 沙盒内的工作目录路径
+        """
+        config_dir = f"{workspace_dir}/.opencode"
+        await self.sandbox.commands.run(f"mkdir -p {config_dir}")  # type: ignore
+
+        # 配置内容（简化：只设置全局并发限制）
+        omo_config = {
+            "$schema": "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json",
+            "background_task": {
+                "defaultConcurrency": 3,  # 全局并发限制：所有模型/提供商最多 3 个任务
+            },
+        }
+
+        # 写入配置文件
+        config_path = f"{config_dir}/oh-my-opencode.jsonc"
+        await self.sandbox.files.write_file(
+            config_path, json.dumps(omo_config, indent=2, ensure_ascii=False)
+        )  # type: ignore
+
+        self._log(f"oh-my-opencode 配置已写入: {config_path}")
+        self._log(f"全局并发限制: default = 3")
 
     async def _copy_skills_to_sandbox(self) -> None:
         """

@@ -398,7 +398,7 @@ _RUNNER_EXEC_BLOCK = """\
 echo "=== Starting OpenCode (output logged to $LOG_DIR/opencode.log) ==="
 
 # Execute with explicit instructions to read AGENTS.md first
-opencode run "ulw Execute all tasks in task.md.don't ask for more information from user." --file "$WORK_DIR/task.md" --format json 2>&1 | tee -a "$LOG_DIR/opencode.log"
+opencode run "ulw Execute all tasks in task.md.don't ask for more information from user.Don't stop until all tasks are completed." --file "$WORK_DIR/task.md" --format json 2>&1 | tee -a "$LOG_DIR/opencode.log"
 
 OPENCODE_EXIT_CODE=${PIPESTATUS[0]}
 

@@ -15,13 +15,12 @@
       },
       "opencode_config": {
         "provider": {
-          "zhipuai": {
+          "zhipuai-coding-plan": {
             "api": "https://open.bigmodel.cn/api/coding/paas/v4"
           }
         },
-        "model": "glm-4.6"
-      },
-      "coding_helper_auth": "zhipuai {{API_KEY}}"
+        "model": "zhipuai-coding-plan/glm-5.1"
+      }
     },
     "qwen": {
       "name": "qwen",

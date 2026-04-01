@@ -20,21 +20,21 @@
         "oauth": false,
         "timeout": 36000000
     },
-    "bcell": {
+    "b_cell_analysis": {
         "type": "remote",
         "url": "http://mcp.bcell.immuneagent.cn:50001/sse",
         "enabled": true,
         "oauth": false,
         "timeout": 36000000
     },
-    "tcell": {
+    "t_cell_analysis": {
         "type": "remote",
         "url": "http://mcp.tcell.immuneagent.cn:50001/sse",
         "enabled": true,
         "oauth": false,
         "timeout": 36000000
     },
-    "immune": {
+    "immune_analysis": {
         "type": "remote",
         "url": "http://mcp.immune.immuneagent.cn:50001/sse",
         "enabled": true,
