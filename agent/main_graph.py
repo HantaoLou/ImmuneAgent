@@ -33,7 +33,7 @@ from enum import Enum
 
 
 class TaskCategory(str, Enum):
-    """任务分类枚举"""
+    """Task category enumeration"""
 
     IMMUNITY = "immunity"
     GENERAL_QA = "general_qa"
@@ -182,7 +182,7 @@ except Exception as e:
 
 
 async def init_node(state: GlobalState) -> GlobalState:
-    """初始化节点"""
+    """Initialize node"""
     if not state.session_id:
         state.session_id = str(uuid.uuid4())[:8]
 
@@ -217,9 +217,9 @@ async def init_node(state: GlobalState) -> GlobalState:
 
 
 def classify_node(state: GlobalState) -> GlobalState:
-    """任务分类节点"""
+    """Task classification node"""
     print(f"\n{'=' * 60}")
-    print("[Classify] 开始任务分类...")
+    print("[Classify] Starting task classification...")
     print(f"{'=' * 60}")
 
     user_input = state.user_input
@@ -227,7 +227,7 @@ def classify_node(state: GlobalState) -> GlobalState:
     llm = state.get_llm(purpose="reasoning", node_name="classify")
 
     if not llm:
-        print("[Classify] LLM 不可用，默认分类为 general_qa")
+        print("[Classify] LLM unavailable, defaulting to general_qa")
         state.supervisor_decision = TaskCategory.GENERAL_QA.value
         return state
 
@@ -240,7 +240,7 @@ def classify_node(state: GlobalState) -> GlobalState:
             HumanMessage(content=user_prompt),
         ]
 
-        print("[Classify] 调用 LLM 进行分类...")
+        print("[Classify] Calling LLM for classification...")
         response = llm.invoke(messages)
 
         # Extract content from response - handle different response formats
@@ -299,18 +299,18 @@ def classify_node(state: GlobalState) -> GlobalState:
         try:
             category = TaskCategory(category_str)
         except ValueError:
-            print(f"[Classify] 未知的分类: {category_str}，默认为 general_qa")
+            print(f"[Classify] Unknown category: {category_str}, defaulting to general_qa")
             category = TaskCategory.GENERAL_QA
 
         state.supervisor_decision = category.value
-        state.supervisor_reasoning = f"置信度: {confidence}, 原因: {reason}"
+        state.supervisor_reasoning = f"Confidence: {confidence}, Reason: {reason}"
 
-        print(f"[Classify] 分类结果: {category.value}")
-        print(f"[Classify] 置信度: {confidence}")
-        print(f"[Classify] 原因: {reason}")
+        print(f"[Classify] Classification result: {category.value}")
+        print(f"[Classify] Confidence: {confidence}")
+        print(f"[Classify] Reason: {reason}")
 
     except Exception as e:
-        print(f"[Classify] 分类失败: {e}")
+        print(f"[Classify] Classification failed: {e}")
         state.supervisor_decision = TaskCategory.GENERAL_QA.value
 
     print(f"{'=' * 60}")
@@ -318,7 +318,7 @@ def classify_node(state: GlobalState) -> GlobalState:
 
 
 def classify_router(state: GlobalState) -> str:
-    """根据分类结果路由到不同分支"""
+    """Route to different branches based on classification result"""
     decision = state.supervisor_decision or TaskCategory.GENERAL_QA.value
 
     if decision == TaskCategory.IMMUNITY.value:
@@ -332,9 +332,9 @@ def classify_router(state: GlobalState) -> str:
 
 
 async def immunity_node(state: GlobalState) -> GlobalState:
-    """Immunity 子图节点"""
+    """Immunity subgraph node"""
     print(f"\n{'=' * 60}")
-    print("[Immunity] 启动 Immunity 子图...")
+    print("[Immunity] Starting Immunity subgraph...")
     print(f"{'=' * 60}")
 
     try:
@@ -347,7 +347,7 @@ async def immunity_node(state: GlobalState) -> GlobalState:
         immunity_graph = build_immunity_subgraph()
         immunity_state = immunity_input_mapper(state)
 
-        print("[Immunity] 执行 Immunity 子图...")
+        print("[Immunity] Executing Immunity subgraph...")
         result = immunity_graph.invoke(immunity_state)
 
         if isinstance(result, dict):
@@ -364,25 +364,25 @@ async def immunity_node(state: GlobalState) -> GlobalState:
         )
         if execution_plan:
             state.execution_plan = execution_plan
-            print(f"[Immunity] 获取到执行计划，长度: {len(execution_plan)}")
+            print(f"[Immunity] Got execution plan, length: {len(execution_plan)}")
 
-        print(f"[Immunity] Immunity 子图完成")
+        print(f"[Immunity] Immunity subgraph completed")
 
     except Exception as e:
-        print(f"[Immunity] Immunity 子图执行失败: {e}")
+        print(f"[Immunity] Immunity subgraph execution failed: {e}")
         import traceback
 
         traceback.print_exc()
-        state.execution_plan = f"Immunity 子图执行失败: {str(e)}"
+        state.execution_plan = f"Immunity subgraph execution failed: {str(e)}"
 
     print(f"{'=' * 60}")
     return state
 
 
 def task_decomposition_node(state: GlobalState) -> GlobalState:
-    """Task Decomposition 子图节点"""
+    """Task Decomposition subgraph node"""
     print(f"\n{'=' * 60}")
-    print("[TaskDecomposition] 启动 Task Decomposition 子图...")
+    print("[TaskDecomposition] Starting Task Decomposition subgraph...")
     print(f"{'=' * 60}")
 
     try:
@@ -395,7 +395,7 @@ def task_decomposition_node(state: GlobalState) -> GlobalState:
         td_graph = build_task_decomposition_subgraph()
         td_state = task_decomposition_input_mapper(state)
 
-        print("[TaskDecomposition] 执行 Task Decomposition 子图...")
+        print("[TaskDecomposition] Executing Task Decomposition subgraph...")
         result = td_graph.invoke(td_state)
 
         if isinstance(result, dict):
@@ -407,10 +407,10 @@ def task_decomposition_node(state: GlobalState) -> GlobalState:
 
         state = task_decomposition_output_mapper(td_state, state)
 
-        print(f"[TaskDecomposition] Task Decomposition 子图完成")
+        print(f"[TaskDecomposition] Task Decomposition subgraph completed")
 
     except Exception as e:
-        print(f"[TaskDecomposition] Task Decomposition 子图执行失败: {e}")
+        print(f"[TaskDecomposition] Task Decomposition subgraph execution failed: {e}")
         import traceback
 
         traceback.print_exc()
@@ -474,9 +474,9 @@ def generate_task_router(state: GlobalState) -> str:
 
 
 def result_evaluator_node(state: GlobalState) -> GlobalState:
-    """Result Evaluator 子图节点"""
+    """Result Evaluator subgraph node"""
     print(f"\n{'=' * 60}")
-    print("[ResultEvaluator] 启动 Result Evaluator 子图...")
+    print("[ResultEvaluator] Starting Result Evaluator subgraph...")
     print(f"{'=' * 60}")
 
     try:
@@ -489,7 +489,7 @@ def result_evaluator_node(state: GlobalState) -> GlobalState:
         evaluator_graph = build_result_evaluator_subgraph()
         evaluator_state = result_evaluator_input_mapper(state)
 
-        print("[ResultEvaluator] 执行 Result Evaluator 子图...")
+        print("[ResultEvaluator] Executing Result Evaluator subgraph...")
         result = evaluator_graph.invoke(evaluator_state)
 
         if isinstance(result, dict):
@@ -504,10 +504,10 @@ def result_evaluator_node(state: GlobalState) -> GlobalState:
         evaluation = state.merged_result.get("result_evaluation", {})
         state.merged_result["evaluate_result"] = evaluation
 
-        print(f"[ResultEvaluator] Result Evaluator 子图完成")
+        print(f"[ResultEvaluator] Result Evaluator subgraph completed")
 
     except Exception as e:
-        print(f"[ResultEvaluator] Result Evaluator 子图执行失败: {e}")
+        print(f"[ResultEvaluator] Result Evaluator subgraph execution failed: {e}")
         import traceback
 
         traceback.print_exc()
@@ -517,9 +517,9 @@ def result_evaluator_node(state: GlobalState) -> GlobalState:
 
 
 async def general_qa_node(state: GlobalState) -> GlobalState:
-    """General QA 子图节点"""
+    """General QA subgraph node"""
     print(f"\n{'=' * 60}")
-    print("[GeneralQA] 启动 General QA 子图...")
+    print("[GeneralQA] Starting General QA subgraph...")
     print(f"{'=' * 60}")
 
     try:
@@ -532,7 +532,7 @@ async def general_qa_node(state: GlobalState) -> GlobalState:
         qa_graph = build_general_qa_subgraph()
         qa_state = general_qa_input_mapper(state)
 
-        print("[GeneralQA] 执行 General QA 子图...")
+        print("[GeneralQA] Executing General QA subgraph...")
         result = qa_graph.invoke(qa_state)
 
         if isinstance(result, dict):
@@ -556,10 +556,10 @@ async def general_qa_node(state: GlobalState) -> GlobalState:
 
         state = general_qa_output_mapper(qa_state, state)
 
-        print(f"[GeneralQA] General QA 子图完成")
+        print(f"[GeneralQA] General QA subgraph completed")
 
     except Exception as e:
-        print(f"[GeneralQA] General QA 子图执行失败: {e}")
+        print(f"[GeneralQA] General QA subgraph execution failed: {e}")
         import traceback
 
         traceback.print_exc()
@@ -569,9 +569,9 @@ async def general_qa_node(state: GlobalState) -> GlobalState:
 
 
 def extract_answer_node(state: GlobalState) -> GlobalState:
-    """提取答案节点"""
+    """Extract answer node"""
     print(f"\n{'=' * 60}")
-    print("[ExtractAnswer] 提取答案...")
+    print("[ExtractAnswer] Extracting answer...")
     print(f"{'=' * 60}")
 
     answer = state.merged_result.get("general_qa_answer")
@@ -581,10 +581,10 @@ def extract_answer_node(state: GlobalState) -> GlobalState:
 
     if answer:
         state.merged_result["final_answer"] = str(answer)
-        print(f"[ExtractAnswer] 提取到答案: {str(answer)[:200]}...")
+        print(f"[ExtractAnswer] Extracted answer: {str(answer)[:200]}...")
     else:
-        state.merged_result["final_answer"] = "未能获取到答案"
-        print(f"[ExtractAnswer] 未能提取到答案")
+        state.merged_result["final_answer"] = "Failed to retrieve answer"
+        print(f"[ExtractAnswer] Failed to extract answer")
 
     print(f"{'=' * 60}")
     return state
@@ -729,7 +729,7 @@ def model_training_node(state: GlobalState) -> GlobalState:
 
 
 def _parse_json_response(response_text: str) -> Dict[str, Any]:
-    """解析 JSON 响应"""
+    """Parse JSON response"""
     import re
 
     text = response_text.strip()
@@ -782,18 +782,18 @@ def _parse_json_response(response_text: str) -> Dict[str, Any]:
         if json_match:
             return json.loads(json_match)
     except (json.JSONDecodeError, Exception) as e:
-        print(f"[WARN] JSON 解析失败: {e}")
-        print(f"[WARN] 原始响应: {text[:200]}...")
+        print(f"[WARN] JSON parsing failed: {e}")
+        print(f"[WARN] Raw response: {text[:200]}...")
 
     return {
         "category": "general_qa",
         "confidence": 0.5,
-        "reason": "解析失败，使用默认分类",
+        "reason": "Parsing failed, using default classification",
     }
 
 
 def build_main_graph(checkpointer=None):
-    """构建主图
+    """Build main graph
 
     Args:
         checkpointer: Checkpoint saver for state persistence (required for HITL)
@@ -803,7 +803,7 @@ def build_main_graph(checkpointer=None):
     """
     graph = StateGraph(GlobalState)
 
-    # 添加节点
+    # Add nodes
     graph.add_node("init", init_node)
     graph.add_node("classify", classify_node)
     graph.add_node("immunity", immunity_node)
@@ -816,11 +816,11 @@ def build_main_graph(checkpointer=None):
     graph.add_node("generate_task", generate_task_node_wrapper)
     graph.add_node("hitl", hitl_node_wrapper)
 
-    # 添加边
+    # Add edges
     graph.add_edge(START, "init")
     graph.add_edge("init", "classify")
 
-    # 分类路由
+    # Classification routing
     graph.add_conditional_edges(
         "classify",
         classify_router,
@@ -853,21 +853,21 @@ def build_main_graph(checkpointer=None):
     graph.add_edge("orchestrator", "result_evaluator")
     graph.add_edge("result_evaluator", END)
 
-    # General QA 分支流程
+    # General QA branch flow
     graph.add_edge("general_qa", "extract_answer")
     graph.add_edge("extract_answer", END)
 
     # Model Training branch flow: generate_task => hitl => (confirmed) orchestrator => result_evaluator => END
     graph.add_edge("model_training", "generate_task")
 
-    # 使用 checkpointer 编译图（如果提供）
+    # Compile graph with checkpointer (if provided)
     if checkpointer:
         return graph.compile(checkpointer=checkpointer)
     return graph.compile()
 
 
 async def run_agent_async(user_input: str, **kwargs) -> GlobalState:
-    """异步运行 agent"""
+    """Run agent asynchronously"""
     graph = build_main_graph()
 
     initial_state = GlobalState(
@@ -887,7 +887,7 @@ async def run_agent_async(user_input: str, **kwargs) -> GlobalState:
 
 
 def run_agent(user_input: str, **kwargs) -> GlobalState:
-    """同步运行 agent"""
+    """Run agent synchronously"""
     graph = build_main_graph()
 
     initial_state = GlobalState(
@@ -922,8 +922,8 @@ if __name__ == "__main__":
     import asyncio
 
     async def main():
-        test_input = "请帮我分析 TCR 序列的功能特征"
+        test_input = "Please help me analyze the functional features of TCR sequences"
         result = await run_agent_async(test_input)
-        print(f"\n最终结果: {result.merged_result.get('final_answer', 'No result')}")
+        print(f"\nFinal result: {result.merged_result.get('final_answer', 'No result')}")
 
     asyncio.run(main())

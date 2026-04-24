@@ -301,7 +301,7 @@ async def generate_task_node(state: GlobalState) -> GlobalState:
 
     llm = state.get_llm(purpose="reasoning_advanced", node_name="generate_task")
 
-    # Debug: 检查 LLM 创建时的 progress_callback
+    # Debug: Check progress_callback during LLM creation
     print(f"[GenerateTask] Created LLM with type: {type(llm)}")
     if hasattr(llm, "progress_callback"):
         print(

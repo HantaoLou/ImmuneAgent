@@ -33,10 +33,10 @@ logger = logging.getLogger(__name__)
 
 def _load_model_providers_config() -> Dict[str, Any]:
     """
-    加载模型提供者配置文件
+    Load model provider configuration file.
 
     Returns:
-        Dict[str, Any]: 包含所有 provider 配置的字典
+        Dict[str, Any]: Dictionary containing all provider configurations
     """
     config_path = Path(__file__).parent.parent / "config" / "model_providers.json"
 
@@ -44,25 +44,25 @@ def _load_model_providers_config() -> Dict[str, Any]:
         with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    # 如果配置文件不存在，返回空字典（向后兼容）
-    logger.warning(f"模型配置文件不存在: {config_path}")
+    # If config file does not exist, return empty dict (backward compatible)
+    logger.warning(f"Model config file not found: {config_path}")
     return {}
 
 
 def _get_provider_config(provider_name: str) -> Optional[Dict[str, Any]]:
     """
-    根据提供商名称获取配置
+    Get configuration by provider name.
 
     Args:
-        provider_name: 提供商名称（如 'zai', 'qwen', 'kimi'）
+        provider_name: Provider name (e.g., 'zai', 'qwen', 'kimi')
 
     Returns:
-        Optional[Dict[str, Any]]: 提供商配置，如果不存在则返回 None
+        Optional[Dict[str, Any]]: Provider configuration, or None if not found
     """
     config = _load_model_providers_config()
     providers = config.get("providers", {})
 
-    # 支持大小写不敏感的查找
+    # Case-insensitive lookup
     for key, value in providers.items():
         if key.lower() == provider_name.lower():
             return value
@@ -72,18 +72,18 @@ def _get_provider_config(provider_name: str) -> Optional[Dict[str, Any]]:
 
 @dataclass
 class OpenCodeConfig:
-    # 提供商名称（如 'zai', 'qwen', 'kimi', 'claude', 'openai'）
-    # 如果为空，则从环境变量或配置文件中获取默认提供商
+    # Provider name (e.g., 'zai', 'qwen', 'kimi', 'claude', 'openai')
+    # If empty, uses default provider from environment variable or config file
     provider: str = ""
 
-    # 模型 ID（可选，如果不指定则使用提供商的默认模型）
+    # Model ID (optional; uses provider default if not specified)
     model_id: Optional[str] = None
 
-    # API Key（可选，如果不指定则从提供商的 api_key_env 环境变量获取）
+    # API Key (optional; reads from provider's api_key_env if not specified)
     api_key: Optional[str] = None
 
-    # 向后兼容：保留 model_provider 字段
-    # 如果设置了 model_provider，会自动推断 provider 和 model_id
+    # Backward compatible: retain model_provider field
+    # If model_provider is set, provider and model_id are inferred automatically
     model_provider: Optional[str] = None
 
     sandbox_domain: str = field(
@@ -114,7 +114,7 @@ class OpenCodeConfig:
     )
 
     def __post_init__(self):
-        # 如果没有指定 provider，尝试从 model_provider 推断
+        # If provider not specified, try to infer from model_provider
         if not self.provider and self.model_provider:
             model_lower = self.model_provider.lower()
             if "glm" in model_lower:
@@ -128,30 +128,32 @@ class OpenCodeConfig:
             elif "gpt" in model_lower or "openai" in model_lower:
                 self.provider = "openai"
 
-        # 如果仍然没有 provider，使用默认提供商
+        # If still no provider, use default
         if not self.provider:
             config = _load_model_providers_config()
             self.provider = config.get("default_provider", "zai")
 
-        # 获取提供商配置
+        # Get provider configuration
         provider_config = _get_provider_config(self.provider)
 
         if provider_config:
-            # 如果没有指定 model_id，使用提供商的默认模型
+            # If model_id not specified, use provider's default model
             if not self.model_id:
                 self.model_id = provider_config.get("model_id", "glm-4.6")
 
-            # 如果没有指定 api_key，从提供商的 api_key_env 环境变量获取
+            # If api_key not specified, read from provider's api_key_env
             if not self.api_key:
                 api_key_env = provider_config.get("api_key_env", "")
                 self.api_key = os.getenv(api_key_env, "") or ""
 
-            # 将 model_provider 设置为模型 ID（向后兼容）
+            # Set model_provider to model ID (backward compatible)
             if not self.model_provider and self.model_id:
                 self.model_provider = self.model_id
         else:
-            # 如果找不到提供商配置，降级使用 model_provider 和 ZHIPUAI_API_KEY
-            logger.warning(f"未找到提供商 '{self.provider}' 的配置，使用向后兼容模式")
+            # Fallback to model_provider and ZHIPUAI_API_KEY
+            logger.warning(
+                f"Provider '{self.provider}' config not found, using backward-compatible mode"
+            )
             if not self.model_provider:
                 self.model_provider = "glm-4.6"
             if not self.api_key:
@@ -159,7 +161,7 @@ class OpenCodeConfig:
 
     @property
     def provider_config(self) -> Dict[str, Any]:
-        """获取当前提供商的完整配置"""
+        """Get the full configuration of the current provider"""
         config = _get_provider_config(self.provider)
         return config or {}
 
@@ -173,9 +175,9 @@ class OpenCodeExecutor:
         iteration: int = 0,
         timeout: int = 600,
         config: Optional[OpenCodeConfig] = None,
-        provider: Optional[str] = None,  # 新增：直接指定提供商
-        model_id: Optional[str] = None,  # 新增：直接指定模型 ID
-        api_key: Optional[str] = None,  # 新增：直接指定 API Key
+        provider: Optional[str] = None,  # Directly specify provider
+        model_id: Optional[str] = None,  # Directly specify model ID
+        api_key: Optional[str] = None,  # Directly specify API Key
         progress_callback: Optional[Callable[[str, str, dict], None]] = None,
         node_name: str = "opencode_executor",
     ):
@@ -185,9 +187,9 @@ class OpenCodeExecutor:
         self.iteration = iteration
         self.timeout = timeout
 
-        # 如果没有传入 config，创建一个新的配置
+        # If no config passed, create a new one
         if config is None:
-            # 如果直接传入了 provider/model_id/api_key，使用它们
+            # If provider/model_id/api_key were passed directly, use them
             if provider or model_id or api_key:
                 config = OpenCodeConfig(
                     provider=provider or "",
@@ -223,9 +225,9 @@ class OpenCodeExecutor:
         iteration: int = 0,
         timeout: int = 600,
         config: Optional[OpenCodeConfig] = None,
-        provider: Optional[str] = None,  # 新增：直接指定提供商
-        model_id: Optional[str] = None,  # 新增：直接指定模型 ID
-        api_key: Optional[str] = None,  # 新增：直接指定 API Key
+        provider: Optional[str] = None,  # Directly specify provider
+        model_id: Optional[str] = None,  # Directly specify model ID
+        api_key: Optional[str] = None,  # Directly specify API Key
         progress_callback: Optional[Callable[[str, str, dict], None]] = None,
         node_name: str = "opencode_executor",
     ) -> Dict[str, Any]:
@@ -253,7 +255,7 @@ class OpenCodeExecutor:
         ts = time.strftime("%Y%m%d_%H%M%S")
         suffix = f"_{self.bundle_id}" if self.bundle_id else ""
         self._log_file_path = f"{log_dir}/opencode_log{suffix}_{ts}.txt"
-        self._log(f"日志文件: {self._log_file_path}")
+        self._log(f"Log file: {self._log_file_path}")
 
     def _write_log_file(self, text: str):
         if not self._log_file_path:
@@ -274,14 +276,14 @@ class OpenCodeExecutor:
 
     async def run(self) -> Dict[str, Any]:
         self._init_log_file()
-        self._log("开始执行 OpenCode 任务")
+        self._log("Starting OpenCode task execution")
 
         try:
             sandbox = await self._create_sandbox()
             await self._setup_opencode()
             result = await self._execute_task()
 
-            self._log(f"任务执行完成，状态: {result.get('status')}")
+            self._log(f"Task execution completed, status: {result.get('status')}")
             return {
                 "status": "success",
                 "session_id": self.session_id,
@@ -292,13 +294,13 @@ class OpenCodeExecutor:
             import traceback
 
             tb_str = traceback.format_exc()
-            self._log(f"任务执行失败: {str(e)}", "ERROR")
+            self._log(f"Task execution failed: {str(e)}", "ERROR")
             self._log(f"Traceback:\n{tb_str}", "ERROR")
             try:
                 await self._write_errors_to_task_log(
                     [
                         {
-                            "error_message": f"任务执行失败: {str(e)}",
+                            "error_message": f"Task execution failed: {str(e)}",
                             "error_source": "run_exception",
                             "traceback": tb_str[:2000],
                             "task_name": self.task[:100],
@@ -322,7 +324,7 @@ class OpenCodeExecutor:
         # and self.timeout for command execution
         sandbox_timeout = self.config.sandbox_timeout_seconds
         self._log(
-            f"步骤1: 创建沙盒 (sandbox_timeout={sandbox_timeout}s, cmd_timeout={self.timeout}s, "
+            f"Step 1: Creating sandbox (sandbox_timeout={sandbox_timeout}s, cmd_timeout={self.timeout}s, "
             f"memory={self.config.sandbox_memory}, cpu={self.config.sandbox_cpu})"
         )
 
@@ -341,7 +343,7 @@ class OpenCodeExecutor:
         }
 
         self._log(
-            f"创建沙盒: image={image}, domain={self.config.sandbox_domain}, resource={resource}"
+            f"Creating sandbox: image={image}, domain={self.config.sandbox_domain}, resource={resource}"
         )
 
         sandbox = await Sandbox.create(
@@ -354,7 +356,7 @@ class OpenCodeExecutor:
         )
 
         self.sandbox = sandbox
-        self._log(f"沙盒创建成功: {sandbox.id}")
+        self._log(f"Sandbox created successfully: {sandbox.id}")
         return sandbox
 
     def _get_stdout(self, result: Any) -> str:
@@ -369,13 +371,13 @@ class OpenCodeExecutor:
         return "\n".join(getattr(entry, "text", str(entry)) for entry in stdout)
 
     async def _setup_opencode(self):
-        self._log("步骤2: 初始化 OpenCode 配置")
+        self._log("Step 2: Initializing OpenCode configuration")
 
         check = await self.sandbox.commands.run("which opencode || echo 'not found'")  # type: ignore
         if "not found" not in self._get_stdout(check):
-            self._log("OpenCode 已安装")
+            self._log("OpenCode is already installed")
         else:
-            self._log("安装 OpenCode...")
+            self._log("Installing OpenCode...")
             result = await self.sandbox.commands.run(
                 self.config.opencode_install_command
             )  # type: ignore
@@ -384,29 +386,29 @@ class OpenCodeExecutor:
                 fallback = "curl -fsSL https://opencode.ai/install | bash"
                 result = await self.sandbox.commands.run(fallback)  # type: ignore
                 if result.error:
-                    raise RuntimeError(f"OpenCode 安装失败: {result.error}")
+                    raise RuntimeError(f"OpenCode installation failed: {result.error}")
 
         await self._configure_opencode()
-        self._log("OpenCode 配置完成")
+        self._log("OpenCode configuration completed")
 
     async def _configure_opencode(self, workspace_dir: str = "/workspace"):
-        self._log("配置 OpenCode 参数")
+        self._log("Configuring OpenCode parameters")
 
         opencode_config: dict = {"$schema": "https://opencode.ai/config.json"}
 
-        # 添加 oh-my-opencode 插件配置
-        opencode_config["plugin"] = ["oh-my-opencode@latest"]
-        self._log("已配置 oh-my-opencode 插件")
+        # Add oh-my-openagent plugin configuration
+        # opencode_config["plugin"] = ["oh-my-openagent@latest"]
+        # self._log("oh-my-openagent plugin configured")
 
-        # 从提供商配置中获取 OpenCode 配置
+        # Get OpenCode configuration from provider config
         provider_config = self.config.provider_config
 
         if provider_config:
             opencode_config.update(provider_config.get("opencode_config", {}))
-            self._log(f"使用提供商配置: {self.config.provider}")
+            self._log(f"Using provider configuration: {self.config.provider}")
         else:
-            # 降级到硬编码逻辑（向后兼容）
-            self._log("使用向后兼容模式配置模型")
+            # Fallback to hardcoded logic (backward compatible)
+            self._log("Using backward-compatible mode for model configuration")
             model_lower = (
                 self.config.model_provider.lower() if self.config.model_provider else ""
             )
@@ -420,11 +422,10 @@ class OpenCodeExecutor:
                 opencode_config["model"] = f"zhipuai/{model_id}"
             else:
                 opencode_config["model"] = self.config.model_provider or "glm-4.6"
-
         mcp_servers = self._build_mcp_servers_config()
         if mcp_servers:
             opencode_config["mcp"] = mcp_servers
-            self._log(f"MCP 配置已加载: {list(mcp_servers.keys())}")
+            self._log(f"MCP configuration loaded: {list(mcp_servers.keys())}")
 
         opencode_config["permission"] = {
             "external_directory": {
@@ -432,7 +433,9 @@ class OpenCodeExecutor:
                 "/tmp/**": "allow",
             },
         }
-        self._log(f"权限配置: 仅允许 /data/**,与/tmp/**，拒绝其他所有外部目录")
+        self._log(
+            f"Permission config: only /data/** and /tmp/** allowed, all other external directories denied"
+        )
 
         opencode_config["instructions"] = ["./AGENTS.md"]
 
@@ -441,59 +444,67 @@ class OpenCodeExecutor:
             config_path, json.dumps(opencode_config, indent=2)
         )  # type: ignore
 
-        self._log(f"配置文件已写入: {config_path}")
+        self._log(f"Configuration file written: {config_path}")
 
-        # 写入 oh-my-opencode 配置
-        await self._write_oh_my_opencode_config(self.workspace_dir)
+        # Write oh-my-opencode configuration
+        # await self._write_oh_my_opencode_config(self.workspace_dir)
 
-        # 复制 OpenCode skills 到沙盒
+        # Copy OpenCode skills to sandbox
         await self._copy_skills_to_sandbox()
 
     async def _write_oh_my_opencode_config(self, workspace_dir: str):
         """
-        写入 oh-my-opencode 配置到项目级目录
+        Write oh-my-opencode configuration to project directory.
 
-        在 {workspace_dir}/.opencode/oh-my-opencode.jsonc 中创建配置文件，
-        用于控制 OpenCode 的并行任务数量等行为。
+        Creates a configuration file at {workspace_dir}/.opencode/oh-my-opencode.jsonc
+        to control OpenCode behavior such as parallel task limits.
 
         Args:
-            workspace_dir: 沙盒内的工作目录路径
+            workspace_dir: Workspace directory path inside sandbox
         """
         config_dir = f"{workspace_dir}/.opencode"
         await self.sandbox.commands.run(f"mkdir -p {config_dir}")  # type: ignore
 
-        # 配置内容（简化：只设置全局并发限制）
+        # Configuration content (simplified: only global concurrency limit)
         omo_config = {
             "$schema": "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json",
             "background_task": {
-                "defaultConcurrency": 3,  # 全局并发限制：所有模型/提供商最多 3 个任务
+                "defaultConcurrency": 3,  # Global concurrency limit: max 3 tasks across all models/providers
+            },
+            "agents": {
+                "prometheus": {
+                    "prompt_append": "don't ask any information from user, you can self-infer the required information."
+                },
+                "sisyphus": {
+                    "prompt_append": "don't ask any information from user, use the recommended parameters to execute. don't stop for any reason, unless all tasks are completed."
+                },
             },
         }
 
-        # 写入配置文件
+        # Write configuration file
         config_path = f"{config_dir}/oh-my-opencode.jsonc"
         await self.sandbox.files.write_file(
             config_path, json.dumps(omo_config, indent=2, ensure_ascii=False)
         )  # type: ignore
 
-        self._log(f"oh-my-opencode 配置已写入: {config_path}")
-        self._log(f"全局并发限制: default = 3")
+        self._log(f"oh-my-opencode configuration written: {config_path}")
+        self._log(f"Global concurrency limit: default = 3")
 
     async def _copy_skills_to_sandbox(self) -> None:
         """
-        复制 OpenCode skills 到沙盒
+        Copy OpenCode skills to sandbox.
 
-        将 agent/coding_agent/skills/ 下所有子目录整体复制到
-        沙盒的 {workspace_dir}/.agents/skills/ 下。
-        在沙盒中，HOME 被设置为 workspace_dir，
-        因此 OpenCode 可从 ~/.agents/skills/<name>/ 加载 skills。
+        Recursively copies all subdirectories under agent/coding_agent/skills/
+        to {workspace_dir}/.agents/skills/ in the sandbox.
+        In the sandbox, HOME is set to workspace_dir,
+        so OpenCode loads skills from ~/.agents/skills/<name>/.
         """
         import shutil
 
         skills_src_dir = Path(__file__).parent.parent / "coding_agent" / "skills"
 
         if not skills_src_dir.exists():
-            self._log(f"Skills 目录不存在: {skills_src_dir}")
+            self._log(f"Skills directory not found: {skills_src_dir}")
             return
 
         skills_dest_dir = f"{self.workspace_dir}/.agents/skills"
@@ -527,9 +538,9 @@ class OpenCodeExecutor:
 
             skill_count += 1
             file_count = sum(1 for _ in skill_dir.rglob("*") if _.is_file())
-            self._log(f"已复制 skill: {skill_dir.name} ({file_count} 个文件)")
+            self._log(f"Copied skill: {skill_dir.name} ({file_count} files)")
 
-        self._log(f"共复制 {skill_count} 个 skills 到 {skills_dest_dir}/")
+        self._log(f"Copied {skill_count} skills to {skills_dest_dir}/")
 
     def _build_mcp_servers_config(self) -> Dict[str, Any]:
         mcp_config_path = (
@@ -541,15 +552,15 @@ class OpenCodeExecutor:
         return {}
 
     async def _execute_task(self) -> Dict[str, Any]:
-        self._log(f"步骤3: 执行任务 (timeout={self.timeout}s)")
+        self._log(f"Step 3: Executing task (timeout={self.timeout}s)")
 
         await self._create_runner_script()
         await self.sandbox.files.write_file(f"{self.workspace_dir}/task.md", self.task)
 
         cmd = f"cd {self.workspace_dir} && bash {self.workspace_dir}/runner.sh"
-        self._log(f"开始执行: {cmd}")
+        self._log(f"Starting execution: {cmd}")
         self._log(
-            f"命令详情 - 长度: {len(cmd)}, timeout: {self.timeout}s, workspace: {self.workspace_dir}"
+            f"Command details - length: {len(cmd)}, timeout: {self.timeout}s, workspace: {self.workspace_dir}"
         )
         start_time = time.time()
 
@@ -563,14 +574,14 @@ class OpenCodeExecutor:
 
         execution = None
         try:
-            self._log(f"调用 sandbox.commands.run() - 开始流式传输")
+            self._log(f"Calling sandbox.commands.run() - starting stream")
             execution = await self.sandbox.commands.run(
                 cmd, opts=opts, handlers=handlers
             )
-            self._log(f"sandbox.commands.run() returned - 流式传输完成")
+            self._log(f"sandbox.commands.run() returned - streaming completed")
         except asyncio.TimeoutError:
             elapsed = time.time() - start_time
-            self._log(f"执行超时 ({self.timeout}s)", "ERROR")
+            self._log(f"Execution timeout ({self.timeout}s)", "ERROR")
             self.sandbox = None
             return {
                 "status": "error",
@@ -584,36 +595,37 @@ class OpenCodeExecutor:
 
             error_type = type(e).__name__
             error_module = type(e).__module__
-            self._log(f"命令执行异常: {e}", "ERROR")
-            self._log(f"异常类型: {error_module}.{error_type}", "ERROR")
-            self._log(f"已执行时间: {elapsed:.1f}s / {self.timeout}s", "ERROR")
+            self._log(f"Command execution exception: {e}", "ERROR")
+            self._log(f"Exception type: {error_module}.{error_type}", "ERROR")
+            self._log(f"Elapsed time: {elapsed:.1f}s / {self.timeout}s", "ERROR")
 
             if isinstance(e, httpx.RemoteProtocolError):
-                self._log(f"RemoteProtocolError 详情: {str(e)}", "ERROR")
+                self._log(f"RemoteProtocolError details: {str(e)}", "ERROR")
                 tb_str = _tb.format_exc()
-                self._log(f"完整堆栈:\n{tb_str[:1000]}", "ERROR")
+                self._log(f"Full stack trace:\n{tb_str[:1000]}", "ERROR")
 
                 recent_events = self._tool_events[-5:] if self._tool_events else []
                 if recent_events:
-                    self._log(f"最近 {len(recent_events)} 个工具事件:", "ERROR")
+                    self._log(f"Last {len(recent_events)} tool events:", "ERROR")
                     for i, evt in enumerate(recent_events):
                         self._log(
-                            f"  事件 {i + 1}: {evt.get('type', 'unknown')} - {evt.get('tool', evt.get('tool_use_id', 'N/A'))}",
+                            f"  Event {i + 1}: {evt.get('type', 'unknown')} - {evt.get('tool', evt.get('tool_use_id', 'N/A'))}",
                             "ERROR",
                         )
 
-                self._log(f"可能原因分析:", "ERROR")
-                self._log(f"  1. 执行超时 - 当前已执行 {elapsed:.1f}s", "ERROR")
+                self._log(f"Possible cause analysis:", "ERROR")
+                self._log(f"  1. Execution timeout - elapsed {elapsed:.1f}s", "ERROR")
                 self._log(
-                    f"  2. Sandbox内存不足(OOM) - 检查是否有大数据加载或可视化", "ERROR"
+                    f"  2. Sandbox OOM - check for large data loading or visualization",
+                    "ERROR",
                 )
-                self._log(f"  3. 网络连接中断", "ERROR")
+                self._log(f"  3. Network connection lost", "ERROR")
 
             self.sandbox = None
             return {"status": "error", "error": str(e), "elapsed_seconds": elapsed}
 
         elapsed = time.time() - start_time
-        self._log(f"命令执行完成 ({elapsed:.1f}s)")
+        self._log(f"Command execution completed ({elapsed:.1f}s)")
 
         if not execution:
             self.sandbox = None
@@ -626,16 +638,16 @@ class OpenCodeExecutor:
         result = self._convert_execution_to_dict(execution)
         stdout = self._get_stdout(execution)
         stderr_lines = self._get_stderr_lines(execution)
-        self._log(f"stdout 长度: {len(stdout)} chars")
+        self._log(f"stdout length: {len(stdout)} chars")
 
         if "===OPENCODE_DONE===" in stdout:
-            self._log("检测到完成标记")
+            self._log("Completion marker detected")
         else:
-            self._log("未检测到完成标记", "WARNING")
+            self._log("Completion marker not detected", "WARNING")
 
         errors = self._collect_errors_from_output(stderr_lines)
         if errors:
-            self._log(f"从输出中提取到 {len(errors)} 条错误信息")
+            self._log(f"Extracted {len(errors)} error(s) from output")
             await self._write_errors_to_task_log(errors)
 
         await self._write_tool_events_to_task_log()
@@ -778,9 +790,9 @@ class OpenCodeExecutor:
 
         try:
             await self.sandbox.files.write_file(log_path, new_content)
-            self._log(f"已写入 {len(errors)} 条错误记录到 task_execution_log.json")
+            self._log(f"Wrote {len(errors)} error record(s) to task_execution_log.json")
         except Exception as e:
-            self._log(f"写入 task_execution_log.json 失败: {e}", "ERROR")
+            self._log(f"Failed to write task_execution_log.json: {e}", "ERROR")
 
     async def _write_tool_events_to_task_log(self) -> None:
         if not self._tool_events:
@@ -867,11 +879,13 @@ class OpenCodeExecutor:
                 await self._write_records_to_sandbox(new_records)
                 sandbox_written = True
             except Exception as e:
-                self._log(f"写入工具事件到沙盒失败: {e}", "WARNING")
+                self._log(f"Failed to write tool events to sandbox: {e}", "WARNING")
                 self.sandbox = None
 
         if not sandbox_written:
-            self._log(f"沙盒不可达，跳过 {len(new_records)} 条工具事件写入")
+            self._log(
+                f"Sandbox unreachable, skipping {len(new_records)} tool event writes"
+            )
 
     async def _write_records_to_sandbox(self, new_records: list) -> None:
         if self.bundle_id:
@@ -918,9 +932,11 @@ class OpenCodeExecutor:
 
         try:
             await self.sandbox.files.write_file(log_path, new_content)
-            self._log(f"已从事件流写入 {len(filtered)} 条工具记录到沙盒")
+            self._log(
+                f"Wrote {len(filtered)} tool record(s) from event stream to sandbox"
+            )
         except Exception as e:
-            self._log(f"写入工具事件到沙盒失败: {e}", "ERROR")
+            self._log(f"Failed to write tool events to sandbox: {e}", "ERROR")
             self.sandbox = None
 
     async def _ensure_task_log_not_empty(
@@ -955,15 +971,17 @@ class OpenCodeExecutor:
 
         summary_reasons = []
         if not has_done_marker:
-            summary_reasons.append("未检测到 OpenCode 完成标记")
+            summary_reasons.append("OpenCode completion marker not detected")
         if has_errors:
-            summary_reasons.append(f"stderr 包含 {len(stderr_lines)} 行输出")
+            summary_reasons.append(
+                f"stderr contains {len(stderr_lines)} lines of output"
+            )
         if not stdout.strip():
-            summary_reasons.append("stdout 为空")
+            summary_reasons.append("stdout is empty")
 
         summary_record = {
             "task_id": "execution_summary",
-            "task_name": "OpenCode 执行总览",
+            "task_name": "OpenCode Execution Summary",
             "task_type": "ANALYSIS",
             "status": summary_status,
             "input_parameters": {"task_preview": self.task[:200]},
@@ -991,10 +1009,13 @@ class OpenCodeExecutor:
         try:
             await self.sandbox.files.write_file(log_path, new_content)
             self._log(
-                f"task_execution_log.json 为空，已写入执行总览记录 (status={summary_status})"
+                f"task_execution_log.json is empty, wrote execution summary record (status={summary_status})"
             )
         except Exception as e:
-            self._log(f"写入执行总览到 task_execution_log.json 失败: {e}", "ERROR")
+            self._log(
+                f"Failed to write execution summary to task_execution_log.json: {e}",
+                "ERROR",
+            )
 
     def _create_nonblocking_handlers(self) -> ExecutionHandlers | None:
         progress_queue = self._get_progress_queue()
@@ -1280,19 +1301,21 @@ class OpenCodeExecutor:
             "R_LIBS_USER": f"{self.workspace_dir}/R/library",
         }
 
-        # 从提供商配置中获取环境变量
+        # Get environment variables from provider configuration
         provider_config = self.config.provider_config
 
         if provider_config and self.config.api_key:
-            # 使用配置文件中的环境变量
+            # Use environment variables from config file
             env_vars_template = provider_config.get("env_vars", {})
             for key, value in env_vars_template.items():
-                # 替换 {{API_KEY}} 占位符
+                # Replace {{API_KEY}} placeholder
                 env[key] = value.replace("{{API_KEY}}", self.config.api_key)
-            self._log(f"使用提供商环境变量配置: {self.config.provider}")
+            self._log(
+                f"Using provider environment variable configuration: {self.config.provider}"
+            )
         else:
-            # 降级到硬编码逻辑（向后兼容）
-            self._log("使用向后兼容模式配置环境变量")
+            # Fallback to hardcoded logic (backward compatible)
+            self._log("Using backward-compatible mode for environment variables")
             model_lower = (
                 self.config.model_provider.lower() if self.config.model_provider else ""
             )
@@ -1314,8 +1337,8 @@ class OpenCodeExecutor:
 
     async def _cleanup(self):
         if self.sandbox:
-            self._log("清理沙盒资源")
+            self._log("Cleaning up sandbox resources")
             try:
                 await self.sandbox.close()
             except Exception as e:
-                self._log(f"清理时出错: {e}", "WARNING")
+                self._log(f"Error during cleanup: {e}", "WARNING")

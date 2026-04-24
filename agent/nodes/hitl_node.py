@@ -18,19 +18,19 @@ import sys
 from datetime import datetime
 import uuid
 
-# 关键修复：使用模块级全局变量存储 progress_callback
-# 避免 _global_callbacks 被重新初始化
+# Key fix: use module-level global variable to store progress_callback
+# prevent _global_callbacks from being re-initialized
 _module_level_progress_callback: Optional[Dict[str, Any]] = None
 
 
 def _get_module_level_callback() -> Optional[Dict[str, Any]]:
-    """获取模块级别的 progress_callback"""
+    """Get module-level progress_callback"""
     global _module_level_progress_callback
     return _module_level_progress_callback
 
 
 def _set_module_level_callback(callbacks: Dict[str, Any]):
-    """设置模块级别的 progress_callback"""
+    """Set module-level progress_callback"""
     global _module_level_progress_callback
     _module_level_progress_callback = callbacks
     print(
@@ -39,7 +39,7 @@ def _set_module_level_callback(callbacks: Dict[str, Any]):
 
 
 def _get_callback_for_session(session_id: str) -> Optional[Dict[str, Any]]:
-    """从模块级别的 callbacks 获取特定session的callback"""
+    """Get callback for specific session from module-level callbacks"""
     callbacks = _get_module_level_callback()
     if callbacks and session_id in callbacks:
         return callbacks[session_id]
@@ -47,7 +47,7 @@ def _get_callback_for_session(session_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _remove_callback_for_session(session_id: str):
-    """从模块级别的 callbacks 移除特定session的callback"""
+    """Remove callback for specific session from module-level callbacks"""
     callbacks = _get_module_level_callback()
     if callbacks and session_id in callbacks:
         del callbacks[session_id]
@@ -143,9 +143,9 @@ async def hitl_node(state: GlobalState) -> GlobalState:
         state.hitl_status = "auto_confirmed"
         return state
 
-    # 关键修复：先调用 interrupt() 获取 resume_value
-    # 如果有 resume_value，说明是 resume 调用，处理并返回
-    # 如果 interrupt() 抛出异常，说明是第一次调用，设置 hitl_status 并重新抛出
+    # Key fix: call interrupt() first to get resume_value
+    # If resume_value exists, this is a resume call, process and return
+    # If interrupt() raises exception, this is first call, set hitl_status and re-raise
     resume_value = None
     if INTERRUPT_AVAILABLE:
         try:
@@ -179,7 +179,7 @@ async def hitl_node(state: GlobalState) -> GlobalState:
             # Push HITL request event (via session_id from global registry)
             if state.session_id:
                 try:
-                    # 使用模块级别的 callback，避免动态导入
+                    # Use module-level callback to avoid dynamic imports
                     callbacks = _get_module_level_callback()
                     if callbacks and state.session_id in callbacks:
                         hitl_callback = callbacks[state.session_id]

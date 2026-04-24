@@ -834,7 +834,7 @@ def create_llm_with_callback(
                         f"Successfully created {provider} {purpose_enum.value} model with callback ({model})"
                     )
                     return llm
-        # 其他provider暂时不支持progress_callback，使用标准创建方式
+        # Other providers do not support progress_callback yet, using standard creation
         elif provider == "dashscope":
             dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv(
                 "QIANFAN_API_KEY"

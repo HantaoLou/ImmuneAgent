@@ -1,19 +1,19 @@
 """
-Mem0 记忆管理器 - 基于 immuneagent_memory 实现参考
+Mem0 Memory Manager - Based on immuneagent_memory implementation reference
 
-功能:
-1. 向量化用户输入，搜索相似问题（缓存命中检测）
-2. 存储 Immunity 产出（实验计划、研究结果等）
-3. 存储 Todo-List 执行结果
-4. 仅在所有任务完美完成时才存储记忆
+Features:
+1. Vectorize user input, search for similar questions (cache hit detection)
+2. Store Immunity outputs (experiment plans, research results, etc.)
+3. Store Todo-List execution results
+4. Only store memories when all tasks are completed perfectly
 
-使用流程:
-1. immunity_node 开始时 → query_similar_immunity() 检查缓存
-2. 如果缓存命中 → 直接返回缓存结果，跳过后续步骤
-3. 如果缓存未命中 → 继续执行 immunity 子图
-4. 流程结束后 → store_immunity_trace() 保存成功结果（仅在全部成功时）
+Usage flow:
+1. immunity_node starts -> query_similar_immunity() checks cache
+2. If cache hit -> return cached result directly, skip subsequent steps
+3. If cache miss -> continue executing immunity subgraph
+4. After flow ends -> store_immunity_trace() saves successful results (only when all succeed)
 
-参考项目: C:/Users/53966/xwechat_files/wxid_xsjtlj48c8no21_bda3/msg/file/2026-01/memory
+Reference project: C:/Users/53966/xwechat_files/wxid_xsjtlj48c8no21_bda3/msg/file/2026-01/memory
 """
 
 from typing import Optional, Dict, Any, List, Tuple
@@ -113,7 +113,7 @@ def sanitize_payload(
 
 
 def generate_input_hash(user_input: str) -> str:
-    """生成用户输入的哈希值"""
+    """Generate hash of user input"""
     normalized = user_input.strip().lower()
     return hashlib.md5(normalized.encode()).hexdigest()[:16]
 
@@ -121,23 +121,31 @@ def generate_input_hash(user_input: str) -> str:
 class ImmunityTrace(BaseModel):
     """Schema for immunity execution trace storage"""
 
-    user_input: str = Field(description="用户原始输入")
-    input_hash: str = Field(description="输入哈希")
+    user_input: str = Field(description="Original user input")
+    input_hash: str = Field(description="Input hash")
     query_summary: str = Field(description="Original user query (truncated)")
 
-    # Immunity 产出
+    # Immunity outputs
     optimized_questions: List[str] = Field(
-        default_factory=list, description="优化查询列表"
+        default_factory=list, description="Optimized query list"
     )
-    research_summary: str = Field(default="", description="研究摘要 (truncated)")
-    hypothesis_summary: str = Field(default="", description="假设摘要 (truncated)")
-    final_enhanced_plan: str = Field(default="", description="最终增强计划 (truncated)")
-    final_evaluation: str = Field(default="", description="最终评估 (truncated)")
-    execution_plan: str = Field(default="", description="执行计划 (truncated)")
+    research_summary: str = Field(
+        default="", description="Research summary (truncated)"
+    )
+    hypothesis_summary: str = Field(
+        default="", description="Hypothesis summary (truncated)"
+    )
+    final_enhanced_plan: str = Field(
+        default="", description="Final enhanced plan (truncated)"
+    )
+    final_evaluation: str = Field(
+        default="", description="Final evaluation (truncated)"
+    )
+    execution_plan: str = Field(default="", description="Execution plan (truncated)")
 
-    # Todo-List 摘要
+    # Todo-List summary
     todo_list_summary: Dict[str, Any] = Field(
-        default_factory=dict, description="Todo-List 执行摘要"
+        default_factory=dict, description="Todo-List execution summary"
     )
     tool_calls: List[Dict[str, Any]] = Field(
         default_factory=list, description="Sanitized tool calls"
@@ -146,16 +154,16 @@ class ImmunityTrace(BaseModel):
         default_factory=list, description="Tool names in order"
     )
 
-    # 状态
+    # Status
     status: str = Field(description="success | partial | failed")
     output_paths: List[str] = Field(
         default_factory=list, description="File paths produced"
     )
     execution_time_seconds: float = Field(default=0.0)
 
-    # 元数据
-    session_id: str = Field(default="", description="会话 ID")
-    created_at: str = Field(default="", description="创建时间")
+    # Metadata
+    session_id: str = Field(default="", description="Session ID")
+    created_at: str = Field(default="", description="Creation time")
 
 
 class ImmunityMemory:
@@ -178,7 +186,7 @@ class ImmunityMemory:
         if self._memory is not None:
             return self._memory
 
-        # 首先检查 mem0 模块是否可用
+        # First check if mem0 module is available
         try:
             import mem0
         except ImportError:
@@ -194,7 +202,7 @@ class ImmunityMemory:
             try:
                 from mem0 import AsyncMemory
 
-                # AsyncMemory.from_config 可能返回协程，需要 await
+                # AsyncMemory.from_config may return a coroutine, need to await
                 config = {
                     "llm": self.config.get(
                         "llm",
@@ -216,10 +224,10 @@ class ImmunityMemory:
                         },
                     },
                 }
-                # 检查 from_config 是否是协程
+                # Check if from_config is a coroutine
                 memory_instance = AsyncMemory.from_config(config)
                 if hasattr(memory_instance, "__await__"):
-                    # 如果是协程，await 它
+                    # If it's a coroutine, await it
                     self._memory = await memory_instance
                 else:
                     self._memory = memory_instance
@@ -269,24 +277,24 @@ class ImmunityMemory:
         self, user_input: str, limit: int = 3, score_threshold: float = 0.90
     ) -> Tuple[bool, Optional[ImmunityTrace]]:
         """
-        查询相似的成功 immunity 执行记录
+        Query similar successful immunity execution records
 
         Args:
-            user_input: 用户输入
-            limit: 返回结果数量限制
-            score_threshold: 相似度阈值（默认 0.90，要求高度相似）
+            user_input: User input
+            limit: Maximum number of results to return
+            score_threshold: Similarity threshold (default 0.90, requires high similarity)
 
         Returns:
-            (is_cached, trace): 是否命中缓存，以及缓存内容
+            (is_cached, trace): Whether cache was hit, and cached content
         """
         memory = await self._get_memory()
 
-        # 如果 memory 未初始化（mem0 模块不可用），直接返回未命中
+        # If memory is not initialized (mem0 module unavailable), return miss directly
         if memory is None:
             logger.info("Memory not available, skipping cache check")
             return (False, None)
 
-        # 生成输入哈希用于精确匹配
+        # Generate input hash for exact matching
         input_hash = generate_input_hash(user_input)
 
         filters = {"metadata.status": "success"}
@@ -310,24 +318,26 @@ class ImmunityMemory:
 
             all_results = results.get("results", [])
 
-            # 首先尝试精确匹配（通过 hash）
+            # First try exact matching (via hash)
             for r in all_results:
                 metadata = r.get("metadata", {})
                 if metadata.get("input_hash") == input_hash:
-                    logger.info(f"[Mem0] ✅ 缓存命中（精确匹配）: {input_hash}")
+                    logger.info(f"[Mem0] \u2705 Cache hit (exact match): {input_hash}")
                     trace = ImmunityTrace(**metadata)
                     return True, trace
 
-            # 然后尝试语义相似性
+            # Then try semantic similarity
             for r in all_results:
                 score = r.get("score", 0)
                 if score >= score_threshold:
-                    logger.info(f"[Mem0] ✅ 缓存命中（语义匹配）: 相似度 {score:.2f}")
+                    logger.info(
+                        f"[Mem0] \u2705 Cache hit (semantic match): similarity {score:.2f}"
+                    )
                     metadata = r.get("metadata", {})
                     trace = ImmunityTrace(**metadata)
                     return True, trace
 
-            logger.info(f"[Mem0] ❌ 缓存未命中: {input_hash}")
+            logger.info(f"[Mem0] \u274c Cache miss: {input_hash}")
             return False, None
 
         except Exception as e:
@@ -336,23 +346,23 @@ class ImmunityMemory:
 
     async def store_immunity_trace(self, trace: ImmunityTrace) -> str:
         """
-        存储成功的 immunity 执行记录
+        Store successful immunity execution record
 
         Args:
-            trace: Immunity 执行轨迹
+            trace: Immunity execution trace
 
         Returns:
-            trace_id: 存储的记录 ID
+            trace_id: Stored record ID
         """
         memory = await self._get_memory()
 
-        # 清理数据
+        # Clean data
         trace.tool_calls = [sanitize_payload(tc) for tc in trace.tool_calls]
         trace.tool_sequence = [
             tc.get("name", tc.get("tool_name", "unknown")) for tc in trace.tool_calls
         ]
 
-        # 截断长文本
+        # Truncate long texts
         max_text_len = 1000
         if len(trace.research_summary) > max_text_len:
             trace.research_summary = (
@@ -412,7 +422,7 @@ class ImmunityMemory:
 
 
 # =============================================================================
-# Singleton Pattern - 避免 Qdrant 连接风暴
+# Singleton Pattern - Avoid Qdrant connection storms
 # =============================================================================
 
 _memory_instance: Optional[ImmunityMemory] = None
@@ -432,7 +442,7 @@ def get_memory_client(config: Dict[str, Any] = None) -> ImmunityMemory:
     """
     global _memory_instance, _initialized_config_hash
 
-    # 默认配置
+    # Default configuration
     if config is None:
         config = {
             "qdrant_host": "localhost",
@@ -462,7 +472,7 @@ def reset_memory_client() -> None:
 
 
 # =============================================================================
-# 便捷函数 - 同步包装器
+# Convenience functions - Sync wrappers
 # =============================================================================
 
 
@@ -470,21 +480,21 @@ def check_immunity_cache_sync(
     user_input: str, score_threshold: float = 0.90
 ) -> Tuple[bool, Optional[ImmunityTrace]]:
     """
-    同步便捷函数：检查 Immunity 缓存
+    Sync convenience function: Check Immunity cache
 
     Args:
-        user_input: 用户输入
-        score_threshold: 相似度阈值
+        user_input: User input
+        score_threshold: Similarity threshold
 
     Returns:
-        (is_cached, trace): 是否命中缓存，以及缓存内容
+        (is_cached, trace): Whether cache was hit, and cached content
     """
     memory = get_memory_client()
 
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            # 如果已经在异步上下文中，使用线程池
+            # If already in async context, use thread pool
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -502,7 +512,7 @@ def check_immunity_cache_sync(
                 )
             )
     except RuntimeError:
-        # 没有事件循环，创建一个新的
+        # No event loop, create a new one
         return asyncio.run(
             memory.query_similar_immunity(user_input, score_threshold=score_threshold)
         )
@@ -527,32 +537,32 @@ def save_immunity_trace_sync(
     status: str = "success",
 ) -> str:
     """
-    同步便捷函数：保存 Immunity 执行记录
+    Sync convenience function: Save Immunity execution record
 
     Args:
-        user_input: 用户原始输入
-        optimized_questions: 优化后的查询列表
-        research_summary: 研究摘要
-        hypothesis_summary: 假设摘要
-        final_enhanced_plan: 最终增强计划
-        final_evaluation: 最终评估
-        execution_plan: 执行计划
-        todo_list_summary: Todo-List 摘要
-        tool_calls: 工具调用列表
-        output_paths: 输出文件路径列表
-        execution_time_seconds: 执行时间（秒）
-        session_id: 会话 ID
-        status: 状态 (success | partial | failed)
+        user_input: Original user input
+        optimized_questions: List of optimized queries
+        research_summary: Research summary
+        hypothesis_summary: Hypothesis summary
+        final_enhanced_plan: Final enhanced plan
+        final_evaluation: Final evaluation
+        execution_plan: Execution plan
+        todo_list_summary: Todo-List summary
+        tool_calls: Tool call list
+        output_paths: Output file path list
+        execution_time_seconds: Execution time (seconds)
+        session_id: Session ID
+        status: Status (success | partial | failed)
 
     Returns:
-        trace_id: 存储的记录 ID
+        trace_id: Stored record ID
     """
     memory = get_memory_client()
 
     trace = ImmunityTrace(
         user_input=user_input,
         input_hash=generate_input_hash(user_input),
-        query_summary=user_input[:500],  # 截断
+        query_summary=user_input[:500],
         optimized_questions=optimized_questions,
         research_summary=research_summary,
         hypothesis_summary=hypothesis_summary,
@@ -592,13 +602,13 @@ def check_all_tasks_completed_successfully(
     merged_result: Dict[str, Any],
 ) -> Tuple[bool, Dict[str, Any]]:
     """
-    检查所有任务是否都完美完成
+    Check whether all tasks have completed perfectly
 
     Args:
-        merged_result: 合并结果（包含 executor_results 和 result_evaluation）
+        merged_result: Merged results (containing executor_results and result_evaluation)
 
     Returns:
-        (all_success, summary): 是否全部成功，以及摘要信息
+        (all_success, summary): Whether all succeeded, and summary info
     """
     summary = {
         "total_tasks": 0,
@@ -608,18 +618,18 @@ def check_all_tasks_completed_successfully(
         "is_perfect": False,
     }
 
-    # 从 executor_results 获取任务统计
+    # Get task statistics from executor_results
     executor_results = merged_result.get("executor_results", {})
     if executor_results:
         summary["total_tasks"] = executor_results.get("total_tasks", 0)
         summary["completed_tasks"] = executor_results.get("completed_count", 0)
         summary["failed_tasks"] = executor_results.get("failed_count", 0)
 
-    # 计算成功率
+    # Calculate success rate
     if summary["total_tasks"] > 0:
         summary["success_rate"] = summary["completed_tasks"] / summary["total_tasks"]
 
-    # 判断是否完美完成
+    # Determine if all tasks completed perfectly
     summary["is_perfect"] = (
         summary["total_tasks"] > 0
         and summary["failed_tasks"] == 0

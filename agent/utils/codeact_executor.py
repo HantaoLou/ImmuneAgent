@@ -1,28 +1,29 @@
 """
-CodeAct Executor - 统一的沙盒代码执行接口
+CodeAct Executor - Unified sandbox code execution interface
 
-这是其他子图与 OpenSandbox 沟通的唯一入口。
-所有沙盒操作都应该通过此接口执行，而不是直接调用 opensandbox_executor。
+This is the sole entry point for other subgraphs to communicate with OpenSandbox.
+All sandbox operations should be executed through this interface, not by directly
+calling opensandbox_executor.
 
-架构原则：
-- 其他子图（executor, result_evaluator, immunity, supervisor）不直接调用 OpenSandbox
-- 所有代码执行请求发送给 CodeAct 子图
-- CodeAct 负责：生成代码 → 执行代码 → 返回结果
-- OpenSandbox 是远程沙盒，只有 CodeAct 子图与之直接交互
+Architecture principles:
+- Other subgraphs (executor, result_evaluator, immunity, supervisor) do not call OpenSandbox directly
+- All code execution requests are sent to the CodeAct subgraph
+- CodeAct is responsible for: generating code -> executing code -> returning results
+- OpenSandbox is a remote sandbox; only the CodeAct subgraph interacts with it directly
 
-使用示例：
+Usage examples:
     from utils.codeact_executor import execute_code_via_codeact
 
-    # 场景1: CSV 转 FASTA
+    # Scenario 1: CSV to FASTA conversion
     result = execute_code_via_codeact(
-        task_description="将 /data/sessions/xxx/input/data.csv 转换为 FASTA 格式",
+        task_description="Convert /data/sessions/xxx/input/data.csv to FASTA format",
         sandbox_id=existing_sandbox_id,
         keep_alive=True
     )
 
-    # 场景2: 读取远程文件
+    # Scenario 2: Read remote file
     result = execute_code_via_codeact(
-        task_description="读取 /data/sessions/xxx/output 目录下所有 .csv 文件",
+        task_description="Read all .csv files under /data/sessions/xxx/output directory",
         sandbox_id=opensandbox_id
     )
 """
@@ -39,14 +40,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 import sys
 
-# 获取 agent 目录
+# Get agent directory
 AGENT_DIR = Path(__file__).parent.parent
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
 
 class CodeActExecutionStatus(str, Enum):
-    """执行状态"""
+    """Execution status"""
 
     SUCCESS = "success"
     ERROR = "error"
@@ -56,7 +57,7 @@ class CodeActExecutionStatus(str, Enum):
 
 @dataclass
 class CodeActResult:
-    """CodeAct 执行结果"""
+    """CodeAct execution result"""
 
     status: CodeActExecutionStatus
     output: str = ""
@@ -82,7 +83,7 @@ class CodeActResult:
 
 
 def is_codeact_available() -> bool:
-    """检查 CodeAct 是否可用"""
+    """Check whether CodeAct is available"""
     try:
         from utils.opensandbox_executor import is_opensandbox_enabled
 
@@ -101,31 +102,31 @@ def execute_code_via_codeact(
     auto_parse_json: bool = True,
 ) -> CodeActResult:
     """
-        通过 CodeAct 在沙盒中执行代码（同步接口）
+        Execute code in sandbox via CodeAct (synchronous interface)
 
-        这是其他子图与 OpenSandbox 沟通的唯一入口。
+        This is the sole entry point for other subgraphs to communicate with OpenSandbox.
 
         Args:
-            task_description: 任务描述（自然语言，描述要执行的任务）
-            code_template: 可选的代码模板（如果提供，直接执行此代码，不经过 LLM 生成）
-            sandbox_id: 现有的沙盒ID（复用沙盒）
-            timeout_seconds: 超时时间（秒）
-            keep_alive: 是否保持沙盒存活
-            env: 环境变量
-            auto_parse_json: 是否自动解析输出中的 JSON
+            task_description: Task description (natural language describing the task to execute)
+            code_template: Optional code template (if provided, execute this code directly without LLM generation)
+            sandbox_id: Existing sandbox ID (reuse sandbox)
+            timeout_seconds: Timeout in seconds
+            keep_alive: Whether to keep the sandbox alive
+            env: Environment variables
+            auto_parse_json: Whether to automatically parse JSON in output
 
         Returns:
-            CodeActResult: 包含执行结果的对象
+            CodeActResult: Object containing execution results
 
         Example:
-            # 简单任务 - 让 CodeAct 生成代码
+            # Simple task - let CodeAct generate code
             result = execute_code_via_codeact(
-                task_description="读取 /data/sessions/xxx/output/result.csv 的前5行"
+                task_description="Read first 5 lines of /data/sessions/xxx/output/result.csv"
             )
 
-            # 指定代码 - 直接执行
+            # Specified code - execute directly
             result = execute_code_via_codeact(
-                task_description="执行文件复制",
+                task_description="Execute file copy",
                 code_template=\'\'\'
     import shutil
     shutil.copy("/data/source.csv", "/data/target.csv")
@@ -136,7 +137,7 @@ def execute_code_via_codeact(
     start_time = time.time()
 
     try:
-        # 如果提供了代码模板，直接执行
+        # If code template is provided, execute directly
         if code_template:
             return _execute_code_direct(
                 code=code_template,
@@ -148,7 +149,7 @@ def execute_code_via_codeact(
                 auto_parse_json=auto_parse_json,
             )
 
-        # 否则，通过 CodeAct 子图生成代码并执行
+        # Otherwise, generate code via CodeAct subgraph and execute
         return _execute_via_codeact_subgraph(
             task_description=task_description,
             sandbox_id=sandbox_id,
@@ -176,9 +177,9 @@ async def execute_code_via_codeact_async(
     auto_parse_json: bool = True,
 ) -> CodeActResult:
     """
-    异步版本的 execute_code_via_codeact
+    Async version of execute_code_via_codeact
     """
-    # 在事件循环中运行同步版本
+    # Run synchronous version in event loop
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None,
@@ -204,9 +205,9 @@ def _execute_code_direct(
     auto_parse_json: bool,
 ) -> CodeActResult:
     """
-    直接执行代码（不经过 LLM 生成）
+    Execute code directly (without LLM generation)
 
-    当调用者已经知道要执行什么代码时使用此方法。
+    Use this method when the caller already knows what code to execute.
     """
     start_time = time.time()
 
@@ -222,20 +223,20 @@ def _execute_code_direct(
                 error="OpenSandbox not enabled. Set CODEACT_SANDBOX_PROVIDER=opensandbox or OPENSANDBOX_ENABLED=true",
             )
 
-        # 准备环境变量
+        # Prepare environment variables
         exec_env = env or {}
         if "OPENSANDBOX_SKIP_MCP_INSTALL" not in exec_env:
             exec_env["OPENSANDBOX_SKIP_MCP_INSTALL"] = "true"
 
-        # 执行代码
-        # 注意: 不再复用沙盒 ID，每次创建新沙盒
-        # 文件通过 session_id 组织在同一目录下，而非沙盒 ID
+        # Execute code
+        # Note: sandbox ID is no longer reused; a new sandbox is created each time
+        # Files are organized by session_id in the same directory, not by sandbox ID
         result = run_code_in_opensandbox_sync(
             code=code,
             task_id=f"codeact_direct_{int(time.time())}",
             timeout_seconds=timeout_seconds,
-            existing_sandbox_id=None,  # 不复用，每次创建新沙盒
-            keep_alive=False,  # 不保持沙盒存活
+            existing_sandbox_id=None,  # Do not reuse; create new sandbox each time
+            keep_alive=False,  # Do not keep sandbox alive
             env=exec_env,
         )
 
@@ -248,22 +249,22 @@ def _execute_code_direct(
                 execution_time_ms=execution_time,
             )
 
-        # 解析结果
+        # Parse result
         stdout = result.get("stdout", "") + result.get("formatted_output", "")
         stderr = result.get("stderr", "")
         error_msg = result.get("error", "")
         returncode = result.get("returncode", 0)
         result_sandbox_id = result.get("sandbox_id", sandbox_id)
 
-        # 确定状态
-        # 注意: returncode 为 None 时，不应视为错误（OpenSandbox SDK 可能不返回 returncode）
-        # 只有当 returncode 明确非 None 且非 0 时，才是执行错误
+        # Determine status
+        # Note: returncode of None should not be treated as an error (OpenSandbox SDK may not return returncode)
+        # Only treat it as an execution error when returncode is explicitly non-None and non-0
         if error_msg or (returncode is not None and returncode != 0):
             status = CodeActExecutionStatus.ERROR
         else:
             status = CodeActExecutionStatus.SUCCESS
 
-        # 自动解析 JSON
+        # Auto-parse JSON
         parsed_result = None
         if auto_parse_json and stdout:
             parsed_result = _extract_json_from_output(stdout)
@@ -295,14 +296,14 @@ def _execute_via_codeact_subgraph(
     auto_parse_json: bool,
 ) -> CodeActResult:
     """
-    通过 CodeAct 子图执行任务（LLM 生成代码）
+    Execute task via CodeAct subgraph (LLM generates code)
 
-    当任务需要 LLM 理解并生成代码时使用此方法。
+    Use this method when the task requires LLM understanding and code generation.
     """
     start_time = time.time()
 
     try:
-        # 导入 CodeAct 子图组件
+        # Import CodeAct subgraph components
         from nodes.subagents.code_act.graph import (
             build_codeact_subgraph,
             CodeActState,
@@ -310,7 +311,7 @@ def _execute_via_codeact_subgraph(
         )
         from state import SubTask
 
-        # 创建临时任务
+        # Create temporary task
         temp_task = SubTask(
             id=f"codeact_exec_{int(time.time())}",
             description=task_description,
@@ -320,7 +321,7 @@ def _execute_via_codeact_subgraph(
             result={},
         )
 
-        # 构建 CodeAct 状态
+        # Build CodeAct state
         codeact_state = CodeActState(
             task=temp_task,
             task_description=task_description,
@@ -330,17 +331,17 @@ def _execute_via_codeact_subgraph(
             execution_mode=CodeActExecutionMode.CODEACT,
         )
 
-        # 如果有现有的 sandbox_id，注入到状态中
+        # If there is an existing sandbox_id, inject it into state
         if sandbox_id:
             codeact_state.existing_sandbox_id = sandbox_id
 
-        # 构建并执行子图
+        # Build and execute subgraph
         subgraph = build_codeact_subgraph()
         result_state = subgraph.invoke(codeact_state.model_dump())
 
         execution_time = int((time.time() - start_time) * 1000)
 
-        # 解析结果
+        # Parse result
         if isinstance(result_state, dict):
             exec_result = result_state.get("execution_result", {})
             generated_code = result_state.get("generated_code", "")
@@ -354,12 +355,12 @@ def _execute_via_codeact_subgraph(
             generated_code = getattr(result_state, "generated_code", "")
             result_sandbox_id = getattr(result_state, "sandbox_id", None) or sandbox_id
 
-        # 提取输出
+        # Extract output
         output = exec_result.get("output", "") or exec_result.get("stdout", "")
         error = exec_result.get("error", "") or exec_result.get("stderr", "")
         status_str = exec_result.get("status", "unknown")
 
-        # 确定状态
+        # Determine status
         if status_str == "success":
             status = CodeActExecutionStatus.SUCCESS
         elif status_str == "timeout":
@@ -371,7 +372,7 @@ def _execute_via_codeact_subgraph(
                 else CodeActExecutionStatus.SUCCESS
             )
 
-        # 自动解析 JSON
+        # Auto-parse JSON
         parsed_result = None
         if auto_parse_json and output:
             parsed_result = _extract_json_from_output(output)
@@ -387,7 +388,7 @@ def _execute_via_codeact_subgraph(
 
     except Exception as e:
         execution_time = int((time.time() - start_time) * 1000)
-        # 如果子图调用失败，回退到直接执行
+        # If subgraph call fails, fall back to direct execution
         print(
             f"[CodeActExecutor] Subgraph execution failed, falling back to direct: {e}"
         )
@@ -400,16 +401,16 @@ def _execute_via_codeact_subgraph(
 
 def _extract_json_from_output(output: str) -> Optional[Dict[str, Any]]:
     """
-    从输出中提取 JSON 结果
+    Extract JSON result from output
 
-    支持多种格式：
-    1. 标记格式: __JSON_START__ ... __JSON_END__
-    2. 直接 JSON: {...}
-    3. JSON 数组: [...]
+    Supports multiple formats:
+    1. Marker format: __JSON_START__ ... __JSON_END__
+    2. Direct JSON: {...}
+    3. JSON array: [...]
     """
     import re
 
-    # 尝试提取标记格式的 JSON
+    # Try to extract marker-formatted JSON
     marker_patterns = [
         r"__JSON_START__\s*(.*?)\s*__JSON_END__",
         r"__OUTPUT_FILES_JSON_START__\s*(.*?)\s*__OUTPUT_FILES_JSON_END__",
@@ -424,7 +425,7 @@ def _extract_json_from_output(output: str) -> Optional[Dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
 
-    # 尝试直接提取 JSON 对象
+    # Try to extract JSON object directly
     json_object_pattern = r"\{[^{}]*\}"
     matches = re.findall(json_object_pattern, output, re.DOTALL)
     for match in matches:
@@ -435,7 +436,7 @@ def _extract_json_from_output(output: str) -> Optional[Dict[str, Any]]:
         except json.JSONDecodeError:
             continue
 
-    # 尝试提取 JSON 数组
+    # Try to extract JSON array
     json_array_pattern = r"\[[^\]]*\]"
     matches = re.findall(json_array_pattern, output, re.DOTALL)
     for match in matches:
@@ -449,22 +450,22 @@ def _extract_json_from_output(output: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-# ==================== 便捷函数 ====================
+# ==================== Convenience Functions ====================
 
 
 def read_remote_file(
     file_path: str, sandbox_id: Optional[str] = None, max_lines: int = 1000
 ) -> CodeActResult:
     """
-    读取远程沙盒中的文件
+    Read a file in the remote sandbox
 
     Args:
-        file_path: 远程文件路径
-        sandbox_id: 沙盒 ID
-        max_lines: 最大读取行数
+        file_path: Remote file path
+        sandbox_id: Sandbox ID
+        max_lines: Maximum number of lines to read
 
     Returns:
-        CodeActResult，output 包含文件内容
+        CodeActResult, output contains file content
     """
     code = f'''
 import os
@@ -487,7 +488,7 @@ else:
 '''
 
     return execute_code_via_codeact(
-        task_description=f"读取远程文件 {file_path}",
+        task_description=f"Read remote file {file_path}",
         code_template=code,
         sandbox_id=sandbox_id,
         keep_alive=True,
@@ -498,15 +499,15 @@ def list_remote_directory(
     dir_path: str, sandbox_id: Optional[str] = None, pattern: str = "*"
 ) -> CodeActResult:
     """
-    列出远程沙盒目录中的文件
+    List files in a remote sandbox directory
 
     Args:
-        dir_path: 远程目录路径
-        sandbox_id: 沙盒 ID
-        pattern: 文件匹配模式（glob 格式）
+        dir_path: Remote directory path
+        sandbox_id: Sandbox ID
+        pattern: File matching pattern (glob format)
 
     Returns:
-        CodeActResult，parsed_result 包含文件列表
+        CodeActResult, parsed_result contains file list
     """
     code = f'''
 import os
@@ -535,7 +536,7 @@ print("__DIR_LIST_END__")
 '''
 
     result = execute_code_via_codeact(
-        task_description=f"列出远程目录 {dir_path}",
+        task_description=f"List remote directory {dir_path}",
         code_template=code,
         sandbox_id=sandbox_id,
         keep_alive=True,
@@ -548,12 +549,12 @@ def copy_file_in_sandbox(
     source_path: str, target_path: str, sandbox_id: Optional[str] = None
 ) -> CodeActResult:
     """
-    在沙盒内复制文件
+    Copy a file within the sandbox
 
     Args:
-        source_path: 源文件路径
-        target_path: 目标文件路径
-        sandbox_id: 沙盒 ID
+        source_path: Source file path
+        target_path: Target file path
+        sandbox_id: Sandbox ID
 
     Returns:
         CodeActResult
@@ -578,7 +579,7 @@ except Exception as e:
 '''
 
     return execute_code_via_codeact(
-        task_description=f"复制文件 {source_path} 到 {target_path}",
+        task_description=f"Copy file {source_path} to {target_path}",
         code_template=code,
         sandbox_id=sandbox_id,
         keep_alive=True,
@@ -592,13 +593,13 @@ def convert_csv_to_fasta(
     sandbox_id: Optional[str] = None,
 ) -> CodeActResult:
     """
-    将 CSV 文件转换为 FASTA 格式
+    Convert CSV file to FASTA format
 
     Args:
-        csv_path: CSV 文件路径
-        output_path: 输出 FASTA 文件路径
-        sequence_columns: 序列列名列表（如果为 None，自动检测）
-        sandbox_id: 沙盒 ID
+        csv_path: CSV file path
+        output_path: Output FASTA file path
+        sequence_columns: List of sequence column names (auto-detected if None)
+        sandbox_id: Sandbox ID
 
     Returns:
         CodeActResult
@@ -613,7 +614,7 @@ csv_path = "{csv_path}"
 output_path = "{output_path}"
 sequence_columns = {seq_cols_str}
 
-# 支持的序列列名
+    # Supported sequence column names
 SEQ_COLUMN_PATTERNS = [
     'sequence', 'seq', 'cdr3', 'CDR3',
     'heavy_dna', 'light_dna', 'Heavy_DNA', 'Light_DNA',
@@ -621,7 +622,7 @@ SEQ_COLUMN_PATTERNS = [
 ]
 
 def find_sequence_columns(headers):
-    """自动检测序列列"""
+    """Auto-detect sequence columns"""
     found = []
     for header in headers:
         header_lower = header.lower()
@@ -642,7 +643,7 @@ try:
         if not sequence_columns:
             print("__CSV_NO_SEQ_COLUMNS__")
         else:
-            # 转换路径（容器内）- 统一使用 /data/sessions 路径
+            # Conversion path (inside container) - use unified /data/sessions path
             container_output = output_path
             os.makedirs(os.path.dirname(container_output), exist_ok=True)
 
@@ -665,14 +666,14 @@ except Exception as e:
 '''
 
     return execute_code_via_codeact(
-        task_description=f"将 CSV {csv_path} 转换为 FASTA 格式",
+        task_description=f"Convert CSV {csv_path} to FASTA format",
         code_template=code,
         sandbox_id=sandbox_id,
         keep_alive=True,
     )
 
 
-# ==================== 更多便捷函数 ====================
+# ==================== More Convenience Functions ====================
 
 
 def convert_rds_to_csv(
@@ -681,12 +682,12 @@ def convert_rds_to_csv(
     sandbox_id: Optional[str] = None,
 ) -> CodeActResult:
     """
-    将 RDS 文件转换为 CSV 格式
+    Convert RDS file to CSV format
 
     Args:
-        rds_path: RDS 文件路径
-        output_csv_path: 输出 CSV 文件路径（可选，默认使用相同名称）
-        sandbox_id: 沙盒 ID
+        rds_path: RDS file path
+        output_csv_path: Output CSV file path (optional, defaults to same name)
+        sandbox_id: Sandbox ID
 
     Returns:
         CodeActResult
@@ -750,7 +751,7 @@ except Exception as e:
 '''
 
     return execute_code_via_codeact(
-        task_description=f"将 RDS {rds_path} 转换为 CSV 格式",
+        task_description=f"Convert RDS {rds_path} to CSV format",
         code_template=code,
         sandbox_id=sandbox_id,
         timeout_seconds=120,
@@ -762,14 +763,14 @@ def analyze_file_structure(
     file_path: str, sandbox_id: Optional[str] = None
 ) -> CodeActResult:
     """
-    分析文件结构（列名、行数、数据类型等）
+    Analyze file structure (column names, row count, data types, etc.)
 
     Args:
-        file_path: 文件路径
-        sandbox_id: 沙盒 ID
+        file_path: File path
+        sandbox_id: Sandbox ID
 
     Returns:
-        CodeActResult，parsed_result 包含文件结构信息
+        CodeActResult, parsed_result contains file structure information
     """
     code = f'''
 import os
@@ -846,7 +847,7 @@ else:
 '''
 
     return execute_code_via_codeact(
-        task_description=f"分析文件结构 {file_path}",
+        task_description=f"Analyze file structure {file_path}",
         code_template=code,
         sandbox_id=sandbox_id,
         keep_alive=True,
@@ -860,13 +861,13 @@ def prepare_nettcr_input(
     sandbox_id: Optional[str] = None,
 ) -> CodeActResult:
     """
-    准备 NetTCR 输入文件
+    Prepare NetTCR input file
 
     Args:
-        input_csv: 输入 CSV 文件路径
-        output_path: 输出文件路径
-        tcr_columns: TCR 序列列名列表
-        sandbox_id: 沙盒 ID
+        input_csv: Input CSV file path
+        output_path: Output file path
+        tcr_columns: TCR sequence column name list
+        sandbox_id: Sandbox ID
 
     Returns:
         CodeActResult
@@ -882,14 +883,14 @@ input_csv = "{input_csv}"
 output_path = "{output_path}"
 tcr_columns = {tcr_cols_str}
 
-# NetTCR 标准列名映射
+    # NetTCR standard column name mapping
 NETTCR_COLUMN_PATTERNS = [
     'tcr_sequence', 'CDR3', 'cdr3', 'CDR3_beta', 'cdr3_beta',
     'tcr_seq', 'tcr', 'TCR_sequence'
 ]
 
 def find_tcr_columns(headers):
-    """自动检测 TCR 序序列"""
+    """Auto-detect TCR sequence columns"""
     found = []
     for header in headers:
         header_lower = header.lower()
@@ -910,7 +911,7 @@ try:
         if not tcr_columns:
             print("__NETTCR_NO_TCR_COLUMNS__")
         else:
-            # 准备输出目录 - 统一使用 /data/sessions 路径
+            # Prepare output directory - use unified /data/sessions path
             container_output = output_path
             os.makedirs(os.path.dirname(container_output), exist_ok=True)
             
@@ -924,7 +925,7 @@ try:
                             "original_column": tcr_col
                         }})
             
-            # 写入输出
+            # Write output
             with open(container_output, 'w', encoding='utf-8') as out_f:
                 writer = csv.DictWriter(out_f, fieldnames=["tcr_sequence", "original_column"])
                 writer.writeheader()
@@ -939,24 +940,24 @@ except Exception as e:
 '''
 
     return execute_code_via_codeact(
-        task_description=f"准备 NetTCR 输入文件 {input_csv}",
+        task_description=f"Prepare NetTCR input file {input_csv}",
         code_template=code,
         sandbox_id=sandbox_id,
         keep_alive=True,
     )
 
 
-# ==================== 导出 ====================
+# ==================== Exports ====================
 
 __all__ = [
-    # 主要接口
+    # Main interface
     "execute_code_via_codeact",
     "execute_code_via_codeact_async",
     "is_codeact_available",
-    # 结果类
+    # Result classes
     "CodeActResult",
     "CodeActExecutionStatus",
-    # 便捷函数
+    # Convenience functions
     "read_remote_file",
     "list_remote_directory",
     "copy_file_in_sandbox",

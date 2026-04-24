@@ -1425,14 +1425,14 @@ def codeact_explore_data_node(state: CodeActState) -> CodeActState:
             from utils.opensandbox_executor import run_code_in_opensandbox_sync
             
             timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "180"))
-            # 每次创建新沙盒，不再复用（避免连接失败问题）
-            # 文件通过 session_id 组织在同一目录下
+            # Create new sandbox each time, do not reuse (avoid connection failure issues)
+            # Files organized in the same directory via session_id
             
             exploration_result = run_code_in_opensandbox_sync(
                 code=exploration_code,
                 task_id=f"{state.task.task_id}_explore",
                 timeout_seconds=30,  # Short timeout for exploration
-                existing_sandbox_id=None,  # 不复用，每次创建新沙盒
+                existing_sandbox_id=None,  # Do not reuse, create new sandbox each time
                 keep_alive=False
             )
             
@@ -1922,15 +1922,15 @@ def codeact_execute_code_node(state: CodeActState) -> CodeActState:
 
             timeout_seconds = int(os.getenv("CODEACT_TIMEOUT_SECONDS", "180"))  # Default: 3 minutes
             
-            # 每次创建新沙盒，不再复用（避免连接失败问题）
-            # 文件通过 session_id 组织在同一目录下
+            # Create new sandbox each time, do not reuse (avoid connection failure issues)
+            # Files organized in the same directory via session_id
             
             sandbox_result = run_code_in_opensandbox_sync(
                 code=code,
                 task_id=state.task.task_id,
                 timeout_seconds=timeout_seconds,
-                existing_sandbox_id=None,  # 不复用，每次创建新沙盒
-                keep_alive=False,  # 不保持沙盒存活
+                existing_sandbox_id=None,  # Do not reuse, create new sandbox each time
+                keep_alive=False,  # Do not keep sandbox alive
             )
             
             if sandbox_result.get("error"):
@@ -2397,7 +2397,7 @@ def select_next_task_node(state: CodeActState) -> CodeActState:
             # Debug: Log parameter merge
             print(f"     Parameters: {list(merged_params.keys())}")
             if env_params.intersection(merged_params.keys()):
-                print(f"     (包含环境参数: {env_params.intersection(merged_params.keys())})")
+                print(f"     (Includes env params: {env_params.intersection(merged_params.keys())}")
             
             # Set execution mode based on task type
             if next_task.type == TodoTaskType.MCP_TOOL:
@@ -3017,7 +3017,7 @@ def build_codeact_subgraph(use_todo_mode: bool = True):
         # START → infer_parameters → explore_data → generate_code
         graph.add_edge(START, "infer_parameters")  # P2: Add parameter inference even in legacy mode
         graph.add_edge("infer_parameters", "explore_data")
-        graph.add_edge("explore_data", "generate_code")  # FIX: 添加缺失的边
+        graph.add_edge("explore_data", "generate_code")  # FIX: Add missing edge
     
     graph.add_edge("generate_code", "execute_code")
     graph.add_edge("execute_code", "extract_file_params")  # P2: Extract files before validation

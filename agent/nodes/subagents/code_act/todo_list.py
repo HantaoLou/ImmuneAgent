@@ -18,12 +18,12 @@ Todo-list.md format:
 
 ## Tasks
 
-### Task 1: 文件上传
+### Task 1: File Upload
 - id: task_001
 - type: file_upload
 - status: pending
 - priority: 1
-- description: 将本地 CSV 文件上传到沙箱 input 目录
+- description: Upload local CSV file to sandbox input directory
 - parameters:
     source_path: /local/data.csv
     target_path: /data/sessions/{session_id}/input/data.csv
@@ -186,14 +186,14 @@ exists = os.path.exists(path)
 print(f"__EXISTS__:{{exists}}")
 '''
             result = execute_code_via_codeact(
-                task_description=f"检查远程文件是否存在: {self.todo_list_path}",
+                task_description=f"Check if remote file exists: {self.todo_list_path}",
                 code_template=check_code,
                 sandbox_id=self.opensandbox_id,
                 timeout_seconds=10,
-                keep_alive=True  # 保持沙盒存活
+                keep_alive=True  # Keep sandbox alive
             )
             
-            # CodeActResult 是 dataclass，使用属性访问而不是 .get()
+            # CodeActResult is a dataclass, use attribute access instead of .get()
             if result and result.is_success():
                 output = result.output or ""
                 return "__EXISTS__:True" in str(output)
@@ -261,14 +261,14 @@ else:
     print("__NOT_FOUND__")
 '''
             result = execute_code_via_codeact(
-                task_description=f"读取远程文件: {container_file_path} (server: {self.todo_list_path})",
+                task_description=f"Read remote file: {container_file_path} (server: {self.todo_list_path})",
                 code_template=read_code,
                 sandbox_id=self.opensandbox_id,
                 timeout_seconds=30,
-                keep_alive=True  # 保持沙盒存活
+                keep_alive=True  # Keep sandbox alive
             )
             
-            # CodeActResult 是 dataclass，使用属性访问而不是 .get()
+            # CodeActResult is a dataclass, use attribute access instead of .get()
             if result and result.is_success():
                 output = str(result.output or "")
                 if "__NOT_FOUND__" in output:
@@ -331,7 +331,7 @@ else:
             # Detect task header
             # Support both formats:
             # - New format with emoji: "### ⏳ Task: task_001"
-            # - Old format: "### Task 1: 文件上传"
+            # - Old format: "### Task 1: File Upload"
             is_task_header = (
                 (stripped.startswith("### ") and "Task:" in stripped) or  # New format with emoji
                 (stripped.startswith("### Task ") and ":" in stripped)    # Old format
@@ -345,7 +345,7 @@ else:
                     tasks.append(self._create_task(current_task))
                 
                 # Start new task - extract task ID from header
-                # Format: "### ⏳ Task: test_task_001" or "### Task 1: 文件上传"
+                # Format: "### ⏳ Task: test_task_001" or "### Task 1: File Upload"
                 if "Task:" in stripped:
                     # New format: extract ID after "Task:"
                     task_title = stripped.split("Task:", 1)[1].strip()
@@ -641,14 +641,14 @@ with open(file_path, 'w', encoding='utf-8') as f:
 print(f"__WRITTEN__:{{file_path}}")
 '''
             result = execute_code_via_codeact(
-                task_description=f"写入远程文件: {container_file_path} (server: {self.todo_list_path_str})",
+                task_description=f"Write remote file: {container_file_path} (server: {self.todo_list_path_str})",
                 code_template=write_code,
                 sandbox_id=self.opensandbox_id,
                 timeout_seconds=30,
-                keep_alive=True  # 保持沙盒存活
+                keep_alive=True  # Keep sandbox alive
             )
             
-            # CodeActResult 是 dataclass，使用属性访问而不是 .get()
+            # CodeActResult is a dataclass, use attribute access instead of .get()
             if result and result.is_success():
                 output = str(result.output or "")
                 if "__WRITTEN__:" in output:
@@ -863,14 +863,14 @@ else:
     print("__NOT_FOUND__")
 '''
             result = execute_code_via_codeact(
-                task_description=f"读取文件参数表: {self.file_params_path_str}",
+                task_description=f"Read file parameter table: {self.file_params_path_str}",
                 code_template=read_code,
                 sandbox_id=self.opensandbox_id,
                 timeout_seconds=30,
-                keep_alive=True  # 保持沙盒存活
+                keep_alive=True  # Keep sandbox alive
             )
             
-            # CodeActResult 是 dataclass，使用属性访问而不是 .get()
+            # CodeActResult is a dataclass, use attribute access instead of .get()
             if result and result.is_success():
                 output = str(result.output or "")
                 if "__NOT_FOUND__" in output:
@@ -988,14 +988,14 @@ with open(path, 'w', encoding='utf-8') as f:
 print(f"__WRITTEN__:{{path}}")
 '''
             result = execute_code_via_codeact(
-                task_description=f"保存文件参数表: {self.file_params_path_str}",
+                task_description=f"Save file parameter table: {self.file_params_path_str}",
                 code_template=write_code,
                 sandbox_id=self.opensandbox_id,
                 timeout_seconds=30,
-                keep_alive=True  # 保持沙盒存活
+                keep_alive=True  # Keep sandbox alive
             )
             
-            # CodeActResult 是 dataclass，使用属性访问而不是 .get()
+            # CodeActResult is a dataclass, use attribute access instead of .get()
             if result and result.is_success():
                 output = str(result.output or "")
                 if "__WRITTEN__:" in output:

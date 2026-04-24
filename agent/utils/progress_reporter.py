@@ -1,5 +1,5 @@
 """
-进度报告工具函数（带过滤）
+Progress reporting utility functions (with filtering)
 """
 
 from typing import Optional, Dict, Any, TYPE_CHECKING, Union
@@ -11,13 +11,13 @@ if TYPE_CHECKING:
 
 def should_report_message(message: str, event_type: Optional[str] = None) -> bool:
     """
-    判断是否应该报告这个消息
+    Determine whether this message should be reported
 
-    过滤掉调试信息、API密钥等用户不关心的内容
+    Filters out debug info, API keys, and other content users don't care about
 
     Args:
-        message: 消息内容
-        event_type: 事件类型，某些类型总是报告
+        message: Message content
+        event_type: Event type, certain types are always reported
     """
     skip_keywords = [
         "API key",
@@ -56,30 +56,30 @@ def should_report_message(message: str, event_type: Optional[str] = None) -> boo
         return True
 
     keep_patterns = [
-        r"节点.*启动",
-        r"节点.*完成",
-        r"节点.*执行",
+        r"Node.*started",
+        r"Node.*completed",
+        r"Node.*executing",
         r"LLM",
-        r"思考",
-        r"推理",
-        r"分析",
-        r"检索",
-        r"计算",
-        r"验证",
-        r"生成",
-        r"处理",
-        r"正在",
-        r"开始",
-        r"完成",
-        r"成功",
-        r"失败",
+        r"Thinking",
+        r"Reasoning",
+        r"Analyzing",
+        r"Retrieving",
+        r"Computing",
+        r"Validating",
+        r"Generating",
+        r"Processing",
+        r"In progress",
+        r"Starting",
+        r"Completed",
+        r"Success",
+        r"Failed",
         r"Task",
         r"Step \d+",
         r"Node \w+",
-        r"调用工具",
-        r"最终答案",
+        r"Calling tool",
         r"Final answer",
-        r"任务执行",
+        r"Final answer",
+        r"Task executing",
         r"Generating",
         r"Analyzing",
         r"Processing",
@@ -105,7 +105,7 @@ def report_progress(
     details: Optional[Dict[str, Any]] = None,
     progress_percent: Optional[int] = None,
 ):
-    """报告执行进度（带过滤）"""
+    """Report execution progress (with filtering)"""
     if not should_report_message(message, event_type):
         return
 
@@ -126,8 +126,8 @@ def report_progress(
 def report_node_start(
     state: "GlobalState", node_name: str, message: Optional[str] = None
 ):
-    """报告节点开始执行"""
-    msg = message or f"启动 {node_name} 节点"
+    """Report node execution started"""
+    msg = message or f"Starting {node_name} node"
     report_progress(
         state=state, event_type="node_start", message=msg, node_name=node_name
     )
@@ -140,7 +140,7 @@ def report_node_progress(
     progress_percent: Optional[int] = None,
     details: Optional[Dict[str, Any]] = None,
 ):
-    """报告节点执行进度"""
+    """Report node execution progress"""
     report_progress(
         state=state,
         event_type="node_progress",
@@ -158,8 +158,8 @@ def report_node_complete(
     progress_percent: Optional[int] = None,
     details: Optional[Dict[str, Any]] = None,
 ):
-    """报告节点执行完成"""
-    msg = message or f"完成 {node_name} 节点"
+    """Report node execution completed"""
+    msg = message or f"Completed {node_name} node"
     report_progress(
         state=state,
         event_type="node_complete",
@@ -176,11 +176,11 @@ def report_task_start(
     task_description: str,
     node_name: Optional[str] = None,
 ):
-    """报告子任务开始"""
+    """Report subtask started"""
     report_progress(
         state=state,
         event_type="task_start",
-        message=f"开始任务: {task_description}",
+        message=f"Starting task: {task_description}",
         task_id=task_id,
         node_name=node_name,
         details={"task_description": task_description},
@@ -194,7 +194,7 @@ def report_task_progress(
     progress_percent: Optional[int] = None,
     details: Optional[Dict[str, Any]] = None,
 ):
-    """报告子任务进度"""
+    """Report subtask progress"""
     report_progress(
         state=state,
         event_type="task_progress",
@@ -208,11 +208,11 @@ def report_task_progress(
 def report_task_complete(
     state: "GlobalState", task_id: str, task_description: str, success: bool = True
 ):
-    """报告子任务完成"""
+    """Report subtask completed"""
     report_progress(
         state=state,
         event_type="task_complete",
-        message=f"任务{'完成' if success else '失败'}: {task_description}",
+        message=f"Task {'completed' if success else 'failed'}: {task_description}",
         task_id=task_id,
         details={"success": success, "task_description": task_description},
     )
@@ -221,7 +221,7 @@ def report_task_complete(
 def report_code_generation(
     state: "GlobalState", message: str, details: Optional[Dict[str, Any]] = None
 ):
-    """报告代码生成"""
+    """Report code generation"""
     report_progress(
         state=state, event_type="code_generation", message=message, details=details
     )
@@ -230,7 +230,7 @@ def report_code_generation(
 def report_code_execution(
     state: "GlobalState", message: str, details: Optional[Dict[str, Any]] = None
 ):
-    """报告代码执行"""
+    """Report code execution"""
     report_progress(
         state=state, event_type="code_execution", message=message, details=details
     )
@@ -242,7 +242,7 @@ def report_tool_call(
     message: str,
     details: Optional[Dict[str, Any]] = None,
 ):
-    """报告工具调用"""
+    """Report tool call"""
     report_progress(
         state=state,
         event_type="tool_call",
@@ -258,7 +258,7 @@ def report_error(
     task_id: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
 ):
-    """报告错误"""
+    """Report error"""
     report_progress(
         state=state,
         event_type="error",
@@ -275,7 +275,7 @@ def report_info(
     node_name: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
 ):
-    """报告一般信息"""
+    """Report general information"""
     report_progress(
         state=state,
         event_type="info",
@@ -288,19 +288,19 @@ def report_info(
 def report_llm_thinking(
     state: "GlobalState",
     thinking_content: str,
-    step_name: str = "推理",
+    step_name: str = "Reasoning",
     node_name: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
 ):
     """
-    报告 LLM 思考过程
+    Report LLM thinking process
 
     Args:
-        state: 全局状态
-        thinking_content: 思考内容（会自动截断)
-        step_name: 步骤名称
-        node_name: 节点名称
-        details: 额外详情
+        state: Global state
+        thinking_content: Thinking content (auto-truncated)
+        step_name: Step name
+        node_name: Node name
+        details: Additional details
     """
     truncated = (
         thinking_content[:300] if len(thinking_content) > 300 else thinking_content
@@ -309,7 +309,7 @@ def report_llm_thinking(
     report_progress(
         state=state,
         event_type="llm_thinking",
-        message=f"💭 {step_name}: {truncated}",
+        message=f"\U0001f4ad {step_name}: {truncated}",
         node_name=node_name,
         details=details or {"step": step_name, "full_content": thinking_content[:1000]},
     )
@@ -322,13 +322,13 @@ def report_llm_streaming(
     node_name: Optional[str] = None,
 ):
     """
-    报告 LLM 流式输出
+    Report LLM streaming output
 
     Args:
-        state: 全局状态
-        chunk: 当前输出的文本块
-        accumulated: 已累积的文本
-        node_name: 节点名称
+        state: Global state
+        chunk: Current text chunk
+        accumulated: Accumulated text so far
+        node_name: Node name
     """
     report_progress(
         state=state,
@@ -347,21 +347,21 @@ def report_llm_reasoning(
     node_name: Optional[str] = None,
 ):
     """
-    报告 LLM 推理步骤
+    Report LLM reasoning step
 
     Args:
-        state: 全局状态
-        reasoning_step: 推理步骤描述
-        step_number: 当前步骤号
-        total_steps: 总步骤数
-        node_name: 节点名称
+        state: Global state
+        reasoning_step: Reasoning step description
+        step_number: Current step number
+        total_steps: Total number of steps
+        node_name: Node name
     """
-    step_info = f"[步骤 {step_number}/{total_steps}] " if total_steps > 0 else ""
+    step_info = f"[Step {step_number}/{total_steps}] " if total_steps > 0 else ""
 
     report_progress(
         state=state,
         event_type="llm_reasoning",
-        message=f"🧠 {step_info}{reasoning_step}",
+        message=f"\U0001f9e0 {step_info}{reasoning_step}",
         node_name=node_name,
         details={"step_number": step_number, "total_steps": total_steps},
         progress_percent=int(
@@ -379,17 +379,17 @@ def report_tool_result(
     details: Optional[Dict[str, Any]] = None,
 ):
     """
-    报告工具调用结果
+    Report tool call result
 
     Args:
-        state: 全局状态
-        tool_name: 工具名称
-        result_summary: 结果摘要
-        success: 是否成功
-        node_name: 节点名称
-        details: 额外详情
+        state: Global state
+        tool_name: Tool name
+        result_summary: Result summary
+        success: Whether successful
+        node_name: Node name
+        details: Additional details
     """
-    icon = "✅" if success else "❌"
+    icon = "\u2705" if success else "\u274c"
     truncated_summary = (
         result_summary[:200] if len(result_summary) > 200 else result_summary
     )
@@ -397,7 +397,7 @@ def report_tool_result(
     report_progress(
         state=state,
         event_type="tool_result",
-        message=f"{icon} 工具 [{tool_name}] 返回: {truncated_summary}",
+        message=f"{icon} Tool [{tool_name}] returned: {truncated_summary}",
         node_name=node_name,
         details={"tool_name": tool_name, "success": success, **(details or {})},
     )
@@ -412,15 +412,15 @@ def report_subgraph_step(
     details: Optional[Dict[str, Any]] = None,
 ):
     """
-    报告子图内部步骤
+    Report subgraph internal step
 
     Args:
-        state: 全局状态
-        subgraph_name: 子图名称（如 general_qa, supervisor）
-        step_name: 步骤名称
-        message: 步骤消息
-        progress_percent: 进度百分比
-        details: 额外详情
+        state: Global state
+        subgraph_name: Subgraph name (e.g., general_qa, supervisor)
+        step_name: Step name
+        message: Step message
+        progress_percent: Progress percentage
+        details: Additional details
     """
     full_message = f"[{subgraph_name}] {step_name}"
     if message:
@@ -444,21 +444,21 @@ def report_knowledge_retrieval(
     node_name: Optional[str] = None,
 ):
     """
-    报告知识检索进度
+    Report knowledge retrieval progress
 
     Args:
-        state: 全局状态
-        source: 数据源（如 Qdrant, Tavily, KnowledgeGraph）
-        query: 查询内容
-        results_count: 检索结果数量
-        node_name: 节点名称
+        state: Global state
+        source: Data source (e.g., Qdrant, Tavily, KnowledgeGraph)
+        query: Query content
+        results_count: Number of retrieval results
+        node_name: Node name
     """
     truncated_query = query[:100] if len(query) > 100 else query
 
     report_progress(
         state=state,
         event_type="knowledge_retrieval",
-        message=f'🔍 从 {source} 检索: "{truncated_query}" ({results_count} 条结果)',
+        message=f'\U0001f50d Retrieving from {source}: "{truncated_query}" ({results_count} results)',
         node_name=node_name,
         details={"source": source, "results_count": results_count},
     )
@@ -473,17 +473,17 @@ def report_analysis_progress(
     node_name: Optional[str] = None,
 ):
     """
-    报告分析进度
+    Report analysis progress
 
     Args:
-        state: 全局状态
-        analysis_type: 分析类型（如 "数据分析", "文献分析"）
-        current_item: 当前分析项
-        completed: 已完成数量
-        total: 总数量
-        node_name: 节点名称
+        state: Global state
+        analysis_type: Analysis type (e.g., "Data analysis", "Literature analysis")
+        current_item: Current analysis item
+        completed: Number of completed items
+        total: Total number of items
+        node_name: Node name
     """
-    progress_msg = f"📊 {analysis_type}"
+    progress_msg = f"\U0001f4ca {analysis_type}"
     if current_item:
         truncated_item = current_item[:80] if len(current_item) > 80 else current_item
         progress_msg += f": {truncated_item}"

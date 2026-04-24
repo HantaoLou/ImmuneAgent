@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-# 添加 agent 目录到路径
+# Add agent directory to path
 agent_dir = Path(__file__).parent.parent.parent.parent
 if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))

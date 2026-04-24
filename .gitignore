@@ -1,3 +1,6 @@
+# Windows reserved device name — never track (breaks git index on Windows)
+nul
+
 .venv/
 *.egg-info/
 __pycache__/

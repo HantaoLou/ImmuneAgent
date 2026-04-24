@@ -975,7 +975,7 @@ if '{api_key_for_sandbox}':
                     elapsed = int(time.time() - start_time)
                     if show_progress:
                         print(
-                            f"  ⏳ 命令执行中... 已运行 {elapsed}s / 超时 {command_timeout_seconds}s"
+                            f"  ⏳ Command running... elapsed {elapsed}s / timeout {command_timeout_seconds}s"
                         )
 
                     if (
@@ -998,20 +998,24 @@ if '{api_key_for_sandbox}':
                     stdout_preview = _collect_log_text(
                         getattr(execution.logs, "stdout", None)
                     )[:500]
-                print(f"  ⚠ 命令执行时间过短 ({elapsed:.1f}s)，可能未正常执行")
+                print(
+                    f"  ⚠ Command finished too quickly ({elapsed:.1f}s), may not have executed properly"
+                )
                 if stdout_preview:
-                    print(f"  ⚠ stdout 预览: {stdout_preview}")
+                    print(f"  ⚠ stdout preview: {stdout_preview}")
 
             return execution
 
         try:
             if show_progress:
-                print(f"  ▶ 开始执行代码 (超时: {command_timeout_seconds}s)...")
+                print(
+                    f"  ▶ Starting code execution (timeout: {command_timeout_seconds}s)..."
+                )
             execution = await _run_with_progress()
             if show_progress:
-                print(f"  ✓ 代码执行完成")
+                print(f"  ✓ Code execution completed")
         except asyncio.TimeoutError:
-            print(f"  ⏱ 命令超时 ({command_timeout_seconds}s)")
+            print(f"  ⏱ Command timed out ({command_timeout_seconds}s)")
             return {
                 "error": f"Command timeout after {command_timeout_seconds}s",
                 "error_type": "TimeoutError",
@@ -1030,7 +1034,7 @@ if '{api_key_for_sandbox}':
         if "command not found" in (stderr or "").lower() and python_cmd == "python3":
             fallback_cmd = "python"
             if show_progress:
-                print(f"  ⚠ python3 未找到，尝试 python...")
+                print(f"  ⚠ python3 not found, trying python...")
 
             # Build fallback command with same venv setup
             if use_venv:
@@ -1051,7 +1055,7 @@ if '{api_key_for_sandbox}':
                         elapsed = int(time.time() - start_time)
                         if show_progress:
                             print(
-                                f"  ⏳ 命令执行中... 已运行 {elapsed}s / 超时 {command_timeout_seconds}s"
+                                f"  ⏳ Command running... elapsed {elapsed}s / timeout {command_timeout_seconds}s"
                             )
                         if (
                             command_timeout_seconds > 0
@@ -1073,18 +1077,20 @@ if '{api_key_for_sandbox}':
                         stdout_preview = _collect_log_text(
                             getattr(execution.logs, "stdout", None)
                         )[:500]
-                    print(f"  ⚠ 命令执行时间过短 ({elapsed:.1f}s)，可能未正常执行")
+                    print(
+                        f"  ⚠ Command finished too quickly ({elapsed:.1f}s), may not have executed properly"
+                    )
                     if stdout_preview:
-                        print(f"  ⚠ stdout 预览: {stdout_preview}")
+                        print(f"  ⚠ stdout preview: {stdout_preview}")
 
                 return execution
 
             try:
                 execution = await _run_fallback_with_progress()
                 if show_progress:
-                    print(f"  ✓ 代码执行完成")
+                    print(f"  ✓ Code execution completed")
             except asyncio.TimeoutError:
-                print(f"  ⏱ 命令超时 ({command_timeout_seconds}s)")
+                print(f"  ⏱ Command timed out ({command_timeout_seconds}s)")
                 return {
                     "error": f"Command timeout after {command_timeout_seconds}s",
                     "error_type": "TimeoutError",
@@ -1124,17 +1130,21 @@ if '{api_key_for_sandbox}':
                 if connection_config
                 else os.getenv("SANDBOX_DOMAIN", "localhost:8080")
             )
-            diagnostics.append("HTTP 503 错误诊断:")
-            diagnostics.append(f"  1. 服务可能暂时过载，建议稍后重试")
+            diagnostics.append("HTTP 503 error diagnostics:")
             diagnostics.append(
-                f"  2. 健康检查端点正常，但创建 sandbox 失败，可能是资源不足"
+                f"  1. Service may be temporarily overloaded, try again later"
             )
-            diagnostics.append(f"  3. 检查服务健康状态: curl http://{domain}/health")
             diagnostics.append(
-                f"  4. 检查是否需要 API key: {'已设置' if os.getenv('SANDBOX_API_KEY') else '未设置（可能需要）'}"
+                f"  2. Health check endpoint OK but sandbox creation failed, possibly insufficient resources"
             )
-            diagnostics.append(f"  5. 当前配置的域名: {domain}")
-            diagnostics.append(f"  6. 尝试手动测试创建 sandbox:")
+            diagnostics.append(
+                f"  3. Check service health: curl http://{domain}/health"
+            )
+            diagnostics.append(
+                f"  4. Check if API key is required: {'set' if os.getenv('SANDBOX_API_KEY') else 'not set (may be needed)'}"
+            )
+            diagnostics.append(f"  5. Current configured domain: {domain}")
+            diagnostics.append(f"  6. Try manual sandbox creation test:")
             diagnostics.append(f"     curl -X POST http://{domain}/api/v1/sandboxes \\")
             diagnostics.append(f"          -H 'Content-Type: application/json' \\")
             api_key = os.getenv("SANDBOX_API_KEY")
@@ -1143,26 +1153,32 @@ if '{api_key_for_sandbox}':
                     f"          -H 'Authorization: Bearer {api_key[:10]}...' \\"
                 )
             diagnostics.append(f'          -d \'{{"image": "{image}"}}\'')
-            diagnostics.append(f"  7. 如果健康检查正常但创建失败，可能是:")
-            diagnostics.append(f"     - 服务资源不足（CPU/内存/容器）")
-            diagnostics.append(f"     - 需要 API key 认证")
-            diagnostics.append(f"     - 请求格式不正确")
+            diagnostics.append(
+                f"  7. If health check OK but creation failed, possible causes:"
+            )
+            diagnostics.append(
+                f"     - Insufficient service resources (CPU/memory/containers)"
+            )
+            diagnostics.append(f"     - API key authentication required")
+            diagnostics.append(f"     - Incorrect request format")
 
         # Handle connection errors
         elif "Network connectivity" in error_msg or "connection" in error_msg.lower():
-            diagnostics.append("连接诊断:")
+            diagnostics.append("Connection diagnostics:")
             diagnostics.append(
-                f"  1. 检查 SANDBOX_DOMAIN 环境变量: {os.getenv('SANDBOX_DOMAIN', '未设置 (使用默认值)')}"
+                f"  1. Check SANDBOX_DOMAIN env var: {os.getenv('SANDBOX_DOMAIN', 'not set (using default)')}"
             )
             diagnostics.append(
-                f"  2. 检查 SANDBOX_API_KEY 环境变量: {'已设置' if os.getenv('SANDBOX_API_KEY') else '未设置'}"
+                f"  2. Check SANDBOX_API_KEY env var: {'set' if os.getenv('SANDBOX_API_KEY') else 'not set'}"
             )
-            diagnostics.append(f"  3. 检查 OpenSandbox 服务是否运行")
-            diagnostics.append(f"  4. 检查网络连接和防火墙设置")
+            diagnostics.append(f"  3. Check if OpenSandbox service is running")
+            diagnostics.append(f"  4. Check network connection and firewall settings")
             if connection_config:
                 domain = getattr(connection_config, "domain", None)
-                diagnostics.append(f"  5. 当前配置的域名: {domain}")
-                diagnostics.append(f"  6. 测试健康检查: curl http://{domain}/health")
+                diagnostics.append(f"  5. Current configured domain: {domain}")
+                diagnostics.append(
+                    f"  6. Test health check: curl http://{domain}/health"
+                )
 
         # Handle authentication errors
         elif (
@@ -1171,12 +1187,12 @@ if '{api_key_for_sandbox}':
             or "Unauthorized" in error_msg
             or "Forbidden" in error_msg
         ):
-            diagnostics.append("认证错误诊断:")
+            diagnostics.append("Authentication error diagnostics:")
             diagnostics.append(
-                f"  1. 检查 SANDBOX_API_KEY 环境变量: {'已设置' if os.getenv('SANDBOX_API_KEY') else '未设置（必需）'}"
+                f"  1. Check SANDBOX_API_KEY env var: {'set' if os.getenv('SANDBOX_API_KEY') else 'not set (required)'}"
             )
-            diagnostics.append(f"  2. 验证 API key 是否有效")
-            diagnostics.append(f"  3. 检查 API key 格式是否正确")
+            diagnostics.append(f"  2. Verify API key is valid")
+            diagnostics.append(f"  3. Check API key format is correct")
 
         # Handle health check timeout
         elif "health check" in error_msg.lower() and (
@@ -1190,22 +1206,32 @@ if '{api_key_for_sandbox}':
             current_ready_timeout = ready_timeout_seconds or int(
                 os.getenv("OPENSANDBOX_READY_TIMEOUT_SECONDS", "300")
             )
-            diagnostics.append("健康检查超时诊断:")
-            diagnostics.append(f"  1. Sandbox 创建请求可能已接受，但健康检查失败")
-            diagnostics.append(f"  2. 可能原因:")
-            diagnostics.append(f"     - 镜像拉取需要更长时间（首次使用或网络慢）")
-            diagnostics.append(f"     - 容器启动需要更长时间（资源不足）")
-            diagnostics.append(f"     - Sandbox 内部服务启动失败")
-            diagnostics.append(f"  3. 解决方案:")
-            diagnostics.append(f"     - 增加 ready_timeout（健康检查等待时间）")
-            diagnostics.append(f"     - 检查镜像是否存在: docker pull {image}")
-            diagnostics.append(f"     - 检查服务资源是否充足")
-            diagnostics.append(f"     - 稍后重试（可能是临时资源不足）")
-            diagnostics.append(f"  4. 当前配置:")
-            diagnostics.append(f"     - 域名: {domain}")
-            diagnostics.append(f"     - 镜像: {image}")
+            diagnostics.append("Health check timeout diagnostics:")
             diagnostics.append(
-                f"     - Ready timeout (健康检查): {current_ready_timeout}秒"
+                f"  1. Sandbox creation request may have been accepted, but health check failed"
+            )
+            diagnostics.append(f"  2. Possible causes:")
+            diagnostics.append(
+                f"     - Image pull requires more time (first use or slow network)"
+            )
+            diagnostics.append(
+                f"     - Container startup requires more time (insufficient resources)"
+            )
+            diagnostics.append(f"     - Sandbox internal service failed to start")
+            diagnostics.append(f"  3. Solutions:")
+            diagnostics.append(
+                f"     - Increase ready_timeout (health check wait time)"
+            )
+            diagnostics.append(f"     - Check if image exists: docker pull {image}")
+            diagnostics.append(f"     - Check if service resources are sufficient")
+            diagnostics.append(
+                f"     - Retry later (may be temporary resource shortage)"
+            )
+            diagnostics.append(f"  4. Current configuration:")
+            diagnostics.append(f"     - Domain: {domain}")
+            diagnostics.append(f"     - Image: {image}")
+            diagnostics.append(
+                f"     - Ready timeout (health check): {current_ready_timeout}s"
             )
             request_timeout = (
                 getattr(connection_config, "request_timeout", None)
@@ -1214,28 +1240,30 @@ if '{api_key_for_sandbox}':
             )
             if request_timeout:
                 diagnostics.append(
-                    f"     - Request timeout (API请求): {request_timeout}"
+                    f"     - Request timeout (API request): {request_timeout}"
                 )
             else:
-                diagnostics.append(f"     - Request timeout (API请求): 默认值（300秒）")
-            diagnostics.append(f"  5. 建议设置环境变量:")
+                diagnostics.append(
+                    f"     - Request timeout (API request): default (300s)"
+                )
+            diagnostics.append(f"  5. Recommended environment variables:")
             diagnostics.append(
-                f"     OPENSANDBOX_READY_TIMEOUT_SECONDS=600  # 增加到 10 分钟（健康检查）"
+                f"     OPENSANDBOX_READY_TIMEOUT_SECONDS=600  # Increase to 10 minutes (health check)"
             )
             diagnostics.append(
-                f"     SANDBOX_REQUEST_TIMEOUT_SECONDS=300  # API 请求超时（已设置）"
+                f"     SANDBOX_REQUEST_TIMEOUT_SECONDS=300  # API request timeout (already set)"
             )
 
         # Generic error
         else:
-            diagnostics.append("错误诊断:")
-            diagnostics.append(f"  1. 错误类型: {error_type}")
-            diagnostics.append(f"  2. 错误消息: {error_msg}")
+            diagnostics.append("Error diagnostics:")
+            diagnostics.append(f"  1. Error type: {error_type}")
+            diagnostics.append(f"  2. Error message: {error_msg}")
             if connection_config:
                 domain = getattr(connection_config, "domain", None)
-                diagnostics.append(f"  3. 当前配置的域名: {domain}")
+                diagnostics.append(f"  3. Current configured domain: {domain}")
 
-        print(f"[opensandbox] ❌ 创建 sandbox 失败: {error_type}: {error_msg}")
+        print(f"[opensandbox] ❌ Sandbox creation failed: {error_type}: {error_msg}")
         if diagnostics:
             print(f"[opensandbox] " + "\n[opensandbox] ".join(diagnostics))
 

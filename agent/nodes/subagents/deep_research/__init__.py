@@ -1,7 +1,7 @@
 """
-Deep Research Agent 子图
+Deep Research Agent Subgraph
 
-主要功能：基于LangGraph的深度研究Agent，支持多工具协作、向量检索和网络搜索
+Main function: LangGraph-based deep research agent with multi-tool collaboration, vector search, and web search
 """
 
 from agent.nodes.subagents.deep_research.deep_researcher import (

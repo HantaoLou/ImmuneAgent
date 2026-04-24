@@ -420,7 +420,7 @@ def _build_critic_prompt(
     problem: str, 
     solution: str, 
     retrieved_context: str = "",
-    semantic_conditions: Dict[str, Any] = None  # NEW: 结构化条件
+    semantic_conditions: Dict[str, Any] = None  # NEW: Structured conditions
 ) -> str:
     """Build the user message for the Critic agent.
 
@@ -445,7 +445,7 @@ def _build_critic_prompt(
             f"{retrieved_context}\n"
         )
     
-    # NEW: 条件验证部分 - 强调模拟代码必须正确实现所有条件
+    # NEW: Condition verification section - emphasizes simulation must implement all conditions correctly
     condition_section = ""
     if semantic_conditions:
         condition_section = "\n\n## [WARN] CRITICAL CONDITIONS (Your simulation MUST implement these exactly)\n\n"
@@ -517,7 +517,7 @@ def run_single_critic(
     solution: str,
     solver_id: int = 0,
     retrieved_context: str = "",
-    semantic_conditions: Dict[str, Any] = None,  # NEW: 结构化条件
+    semantic_conditions: Dict[str, Any] = None,  # NEW: Structured conditions
     temperature: float = 0.6,
     llm: str = None,
     source: str = None,

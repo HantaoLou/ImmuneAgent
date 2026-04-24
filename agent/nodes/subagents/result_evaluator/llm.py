@@ -2,7 +2,7 @@
 LLM Module
 Extracted from Biomni framework (biomni/llm.py)
 
-MODIFIED: 集成 llm_factory.py 的模型配置，支持 DashScope 和 Zhipu
+MODIFIED: Integrated llm_factory.py model configuration, supports DashScope and Zhipu
 """
 
 import os
@@ -10,8 +10,19 @@ from typing import Literal, Optional
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-# 扩展支持 DashScope 和 Zhipu
-SourceType = Literal["OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom", "DashScope", "Zhipu"]
+# Extended support for DashScope and Zhipu
+SourceType = Literal[
+    "OpenAI",
+    "AzureOpenAI",
+    "Anthropic",
+    "Ollama",
+    "Gemini",
+    "Bedrock",
+    "Groq",
+    "Custom",
+    "DashScope",
+    "Zhipu",
+]
 ALLOWED_SOURCES: set[str] = set(SourceType.__args__)
 
 
@@ -22,14 +33,14 @@ def get_llm(
     source: SourceType | None = None,
     base_url: str | None = None,
     api_key: str | None = None,
-    purpose: str = "reasoning_advanced",  # 新增: 模型用途，默认使用高级推理模型
+    purpose: str = "reasoning_advanced",  # Added: model purpose, defaults to advanced reasoning model
 ) -> BaseChatModel:
     """
     Get a language model instance based on the specified model name and source.
     This function supports models from OpenAI, Azure OpenAI, Anthropic, Ollama, Gemini, Bedrock, and custom model serving.
-    
-    MODIFIED: 始终优先使用 llm_factory.py 的配置
-    
+
+    MODIFIED: Always prefer llm_factory.py configuration
+
     Args:
         model (str): The model name to use
         temperature (float): Temperature setting for generation
@@ -41,19 +52,22 @@ def get_llm(
         purpose (str): Model purpose for llm_factory: "reasoning", "bioinformatics", "reasoning_advanced", "code"
     """
     # ============================================================
-    # 始终优先使用 llm_factory.py 的配置（除非用户明确指定了所有参数）
+    # Always prefer llm_factory.py configuration (unless user explicitly specifies all parameters)
     # ============================================================
-    # 如果只指定了 source 但没有指定 model，说明用户想用 llm_factory 的配置
+    # If only source is specified without model, user wants llm_factory config
     use_llm_factory = (model is None) or (model is None and source is None)
-    
+
     if use_llm_factory:
         try:
             from agent.utils.llm_factory import create_llm
+
             llm = create_llm(purpose=purpose, temperature=temperature)
             if llm is not None:
-                print(f"[result_evaluator/llm] Using llm_factory config for purpose={purpose}")
-                # 如果需要 stop_sequences，需要重新包装
-                if stop_sequences and hasattr(llm, 'bind'):
+                print(
+                    f"[result_evaluator/llm] Using llm_factory config for purpose={purpose}"
+                )
+                # If stop_sequences needed, re-wrap
+                if stop_sequences and hasattr(llm, "bind"):
                     llm = llm.bind(stop=stop_sequences)
                 return llm
         except ImportError as e:
@@ -89,7 +103,7 @@ def get_llm(
                 source = "Groq"
             elif base_url is not None:
                 source = "Custom"
-            # 新增: 检测 DashScope 和 Zhipu 模型
+            # Added: detect DashScope and Zhipu models
             elif model.startswith(("qwen-", "qwen2-", "qwen2.5-", "deepseek-")):
                 source = "DashScope"
             elif model.startswith(("glm-", "chatglm-")):
@@ -110,11 +124,21 @@ def get_llm(
             ):
                 source = "Ollama"
             elif model.startswith(
-                ("anthropic.claude-", "amazon.titan-", "meta.llama-", "mistral.", "cohere.", "ai21.", "us.")
+                (
+                    "anthropic.claude-",
+                    "amazon.titan-",
+                    "meta.llama-",
+                    "mistral.",
+                    "cohere.",
+                    "ai21.",
+                    "us.",
+                )
             ):
                 source = "Bedrock"
             else:
-                raise ValueError("Unable to determine model source. Please specify 'source' parameter.")
+                raise ValueError(
+                    "Unable to determine model source. Please specify 'source' parameter."
+                )
 
     # Create appropriate model based on source
     if source == "OpenAI":
@@ -161,7 +185,11 @@ def get_llm(
                 import subprocess
 
                 result = subprocess.run(
-                    ["bash", "-c", "source ~/.bash_profile 2>/dev/null && echo $ANTHROPIC_API_KEY"],
+                    [
+                        "bash",
+                        "-c",
+                        "source ~/.bash_profile 2>/dev/null && echo $ANTHROPIC_API_KEY",
+                    ],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -243,7 +271,9 @@ def get_llm(
                 "langchain-openai package is required for custom models. Install with: pip install langchain-openai"
             )
         # Custom LLM serving such as SGLang. Must expose an openai compatible API.
-        assert base_url is not None, "base_url must be provided for customly served LLMs"
+        assert base_url is not None, (
+            "base_url must be provided for customly served LLMs"
+        )
         llm = ChatOpenAI(
             model=model,
             temperature=temperature,
@@ -255,7 +285,7 @@ def get_llm(
         return llm
 
     elif source == "DashScope":
-        # 阿里云 DashScope (Qwen 系列模型)
+        # Alibaba Cloud DashScope (Qwen series models)
         try:
             from langchain_openai import ChatOpenAI
         except ImportError:
@@ -264,7 +294,9 @@ def get_llm(
             )
         dashscope_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QIANFAN_API_KEY")
         if not dashscope_key:
-            raise ValueError("DASHSCOPE_API_KEY or QIANFAN_API_KEY is required for DashScope models")
+            raise ValueError(
+                "DASHSCOPE_API_KEY or QIANFAN_API_KEY is required for DashScope models"
+            )
         return ChatOpenAI(
             model=model,
             temperature=temperature,
@@ -275,7 +307,7 @@ def get_llm(
         )
 
     elif source == "Zhipu":
-        # 智谱 AI (GLM 系列模型)
+        # Zhipu AI (GLM series models)
         try:
             from agent.utils.zhipu_adapter import ZhipuAIAdapter
         except ImportError:
@@ -289,7 +321,7 @@ def get_llm(
             zhipu_key = os.getenv("ZHIPU_API_KEY")
             if not zhipu_key:
                 raise ValueError("ZHIPU_API_KEY is required for Zhipu models")
-            # 使用智谱的 OpenAI 兼容接口
+            # Use Zhipu's OpenAI-compatible API
             return ChatOpenAI(
                 model=model,
                 temperature=temperature,

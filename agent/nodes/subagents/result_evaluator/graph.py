@@ -326,27 +326,27 @@ Write in professional academic English. Reference actual data values where relev
     # Generate complete TXT report
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # 构建关键发现文本
+    # Build key findings text
     key_findings_text = ""
     for i, finding in enumerate(state.key_findings, 1):
         key_findings_text += f"{i}. {finding}\n"
 
-    # 构建局限性文本
+    # Build limitations text
     limitations_text = ""
     for i, limitation in enumerate(limitations, 1):
         limitations_text += f"{i}. {limitation}\n"
 
-    # 构建验证建议文本
+    # Build validation recommendations text
     validation_text = ""
     for i, rec in enumerate(validation_recommendations, 1):
         validation_text += f"{i}. {rec}\n"
 
-    # 构建建议文本
+    # Build recommendations text
     recommendations_text = ""
     for i, rec in enumerate(state.recommendations, 1):
         recommendations_text += f"{i}. {rec}\n"
 
-    # 构建文件列表文本
+    # Build file list text
     files_generated_text = ""
     if state.output_files:
         for i, f in enumerate(state.output_files[:20], 1):
@@ -358,8 +358,8 @@ Write in professional academic English. Reference actual data values where relev
     else:
         files_generated_text = "No output files generated.\n"
 
-    # ========== 生成报告标题 ==========
-    # 从用户问题中提取关键主题
+    # ========== Generate report title ==========
+    # Extract key theme from user question
     title = "ANALYSIS REPORT"
     if "antibod" in state.user_input.lower():
         if "neutraliz" in state.user_input.lower():
@@ -381,7 +381,7 @@ Write in professional academic English. Reference actual data values where relev
     elif "b cell" in state.user_input.lower():
         title = "B CELL ANALYSIS REPORT"
 
-    # ========== 生成完整报告 ==========
+    # ========== Generate complete report ==========
     txt_report = f"""
 {"=" * 70}
 {title}
@@ -1260,7 +1260,7 @@ Return in JSON format:
             response.content if hasattr(response, "content") else str(response)
         )
 
-        # 使用健壮的 JSON 提取工具
+        # Use robust JSON extraction utility
         from utils.json_extractor import extract_json_from_llm_response
 
         analysis_result = extract_json_from_llm_response(

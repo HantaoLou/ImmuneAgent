@@ -293,21 +293,21 @@ def format_task_guide_for_prompt(guide_content: str, max_length: int = 3000) -> 
     key_sections = []
     
     # Find task structure section
-    structure_start = guide_content.find("## 任务结构")
+    structure_start = guide_content.find("## Task Structure")
     if structure_start != -1:
         structure_end = guide_content.find("##", structure_start + 10)
         if structure_end != -1:
             key_sections.append(guide_content[structure_start:structure_end])
     
     # Find best practices section
-    practices_start = guide_content.find("## 最佳实践")
+    practices_start = guide_content.find("## Best Practices")
     if practices_start != -1:
         practices_end = guide_content.find("##", practices_start + 10)
         if practices_end != -1:
             key_sections.append(guide_content[practices_start:practices_end])
     
     # Find output constraints section
-    constraints_start = guide_content.find("## 输出约束")
+    constraints_start = guide_content.find("## Output Constraints")
     if constraints_start != -1:
         constraints_end = guide_content.find("##", constraints_start + 10)
         if constraints_end != -1:
@@ -367,14 +367,14 @@ _tool_params_cache: Optional[Dict[str, Dict[str, Any]]] = None
 
 def load_tool_parameters_from_skills() -> Dict[str, Dict[str, Any]]:
     """
-    从所有 skill.yaml 文件中提取工具参数定义
+    Extract tool parameter definitions from all skill.yaml files
     
-    这是工具参数的唯一可信来源（Single Source of Truth）
-    替代 tools_params_table.json
+    This is the Single Source of Truth for tool parameters
+    Replaces tools_params_table.json
     
     Returns:
-        字典：tool_name -> {input_params: [...], output_params: [...]}
-        格式与 tools_params_table.json 兼容
+        Dict: tool_name -> {input_params: [...], output_params: [...]}
+        Format compatible with tools_params_table.json
     """
     global _tool_params_cache
     
@@ -392,11 +392,11 @@ def load_tool_parameters_from_skills() -> Dict[str, Dict[str, Any]]:
             if not tool_name:
                 continue
             
-            # 构建完整工具名：service_tool_name (e.g., "nettcr_predict_tcr_binding_complete")
-            # 也保留纯工具名作为别名
+            # Build full tool name: service_tool_name (e.g., "nettcr_predict_tcr_binding_complete")
+            # Also keep pure tool name as alias
             full_tool_name = f"{service_name}_{tool_name}"
             
-            # 提取参数定义
+            # Extract parameter definitions
             parameters = tool.get("parameters", [])
             input_params = []
             
@@ -412,7 +412,7 @@ def load_tool_parameters_from_skills() -> Dict[str, Dict[str, Any]]:
                 }
                 input_params.append(param_info)
             
-            # 提取返回值信息
+            # Extract return value info
             returns = tool.get("returns", {})
             output_params = []
             
@@ -424,7 +424,7 @@ def load_tool_parameters_from_skills() -> Dict[str, Dict[str, Any]]:
                 }
                 output_params.append(output_info)
             
-            # 构建工具参数映射
+            # Build tool parameter mapping
             tool_params = {
                 "input_params": input_params,
                 "output_params": output_params,
@@ -436,42 +436,42 @@ def load_tool_parameters_from_skills() -> Dict[str, Dict[str, Any]]:
                 "priority": tool.get("priority", ""),
             }
             
-            # 存储两种格式的键名
-            # 1. 完整名称 service_tool_name
+            # Store keys in two formats
+            # 1. Full name service_tool_name
             tools_params_map[full_tool_name] = tool_params
-            # 2. 纯工具名 tool_name (允许模糊匹配)
+            # 2. Pure tool name (allows fuzzy matching)
             if tool_name not in tools_params_map:
                 tools_params_map[tool_name] = tool_params
     
     _tool_params_cache = tools_params_map
-    print(f"[OK] 从 skill.yaml 加载了 {len(tools_params_map)} 个工具参数定义")
+    print(f"[OK] Loaded {len(tools_params_map)} tool parameter definitions from skill.yaml")
     return tools_params_map
 
 
 def get_tool_params(tool_name: str, service_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
-    获取指定工具的参数定义
+    Get parameter definitions for specified tool
     
     Args:
-        tool_name: 工具名称
-        service_name: 可选的服务名称，用于精确匹配
+        tool_name: Tool name
+        service_name: Optional service name for exact matching
         
     Returns:
-        工具参数定义，如果找不到返回 None
+        Tool parameter definition, or None if not found
     """
     tools_params_map = load_tool_parameters_from_skills()
     
-    # 如果提供了服务名，优先精确匹配
+    # If service name provided, prefer exact match
     if service_name:
         full_name = f"{service_name}_{tool_name}"
         if full_name in tools_params_map:
             return tools_params_map[full_name]
     
-    # 尝试直接匹配工具名
+    # Try direct tool name match
     if tool_name in tools_params_map:
         return tools_params_map[tool_name]
     
-    # 模糊匹配
+    # Fuzzy matching
     tool_name_lower = tool_name.lower()
     for key in tools_params_map:
         key_lower = key.lower()

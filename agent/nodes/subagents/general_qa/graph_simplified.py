@@ -1,18 +1,18 @@
 """
 Simplified GeneralQA Subgraph - Core: Deep Research + X-Masters
 
-流程设计：
-1. N0: 简单预处理 (问题分类、领域检测)
-2. Deep Research: 深度知识检索与研究
-3. X-Masters: 多路径推理 + 批评 + 综合选择
-4. N8: 答案格式化与输出
+Workflow design:
+1. N0: Simple preprocessing (question classification, domain detection)
+2. Deep Research: Deep knowledge retrieval and research
+3. X-Masters: Multi-path reasoning + critique + synthesis selection
+4. N8: Answer formatting and output
 
-核心理念：
-- Deep Research 负责提供充分的知识
-- X-Masters 负责多路径推理和验证
-- 移除冗余的中间节点，让LLM自由发挥
+Core philosophy:
+- Deep Research provides sufficient knowledge
+- X-Masters handles multi-path reasoning and verification
+- Redundant intermediate nodes removed for LLM flexibility
 
-使用方式：
+Usage:
     USE_SIMPLIFIED_GRAPH=true
 """
 
@@ -82,10 +82,10 @@ LLM_AVAILABLE = is_llm_available()
 
 # ===================== Configuration =====================
 
-# 是否启用Deep Research (默认启用)
+# Whether to enable Deep Research (enabled by default)
 ENABLE_DEEP_RESEARCH = os.getenv("ENABLE_DEEP_RESEARCH", "true").lower() == "true"
 
-# X-Masters solver数量
+# Number of X-Masters solvers
 XMASTERS_NUM_SOLVERS = int(os.getenv("XMASTERS_NUM_SOLVERS", "3"))
 
 # ===================== LLM Helper =====================
@@ -158,36 +158,36 @@ def _parse_json(response: str) -> Optional[Dict]:
 
 # ===================== N0: Simple Preprocessing =====================
 
-N0_PROMPT = """分析这个生物医学问题，提取关键信息。
+N0_PROMPT = """Analyze this biomedical question and extract key information.
 
-问题:
+Question:
 {user_input}
 
-输出JSON格式:
+Output JSON format:
 {{
-    "cleaned_text": "清理后的问题文本",
+    "cleaned_text": "Cleaned question text",
     "question_type": "multiple_choice|true_false|calculation|explanation|short_answer",
     "answer_format": "single_letter|true/false|number|text|sequence",
-    "options": ["A选项文本", "B选项文本", ...] 或 [] 如果没有选项,
+    "options": ["Option A text", "Option B text", ...] or [] if no options,
     "domain": "genetics|immunology|biochemistry|bioinformatics|clinical|microbiology|general",
-    "key_terms": ["关键词1", "关键词2", ...]
+    "key_terms": ["keyword1", "keyword2", ...]
 }}
 
-规则:
-- True/False判断题 → question_type: "true_false", answer_format: "true/false"
-- 多选题 → question_type: "multiple_choice", answer_format: "single_letter"
-- 需要数值计算 → question_type: "calculation", answer_format: "number"
-- 提取实际选项文本，不要只提取标签
+Rules:
+- True/False question → question_type: "true_false", answer_format: "true/false"
+- Multiple choice → question_type: "multiple_choice", answer_format: "single_letter"
+- Numerical calculation → question_type: "calculation", answer_format: "number"
+- Extract actual option text, not just labels
 """
 
 
 def n0_preprocess_node(state: GeneralQAState) -> GeneralQAState:
     """
-    N0: 简单预处理
-    只做问题分类和关键信息提取，不做复杂分析
+    N0: Simple preprocessing
+    Only performs question classification and key information extraction, no complex analysis
     """
     print("\n" + "=" * 60)
-    print("N0: 简单预处理 (Simplified)")
+    print("N0: Simple Preprocessing (Simplified)")
     print("=" * 60)
 
     if not state.user_input or not state.user_input.strip():
@@ -223,10 +223,10 @@ def n0_preprocess_node(state: GeneralQAState) -> GeneralQAState:
     state.core_domains = [result.get("domain", "general")]
     state.core_keywords = result.get("key_terms", [])
 
-    print(f"  [OK] 问题类型: {state.question_type_label}")
-    print(f"  [OK] 领域: {state.core_domains}")
+    print(f"  [OK] Question type: {state.question_type_label}")
+    print(f"  [OK] Domain: {state.core_domains}")
     print(
-        f"  [OK] 选项数: {len(state.question_options) if state.question_options else 0}"
+        f"  [OK] Number of options: {len(state.question_options) if state.question_options else 0}"
     )
 
     return state
@@ -237,23 +237,23 @@ def n0_preprocess_node(state: GeneralQAState) -> GeneralQAState:
 
 def deep_research_node(state: GeneralQAState) -> GeneralQAState:
     """
-    Deep Research: 深度知识检索
-    使用deep_research子图获取充分的知识背景
+    Deep Research: Deep knowledge retrieval
+    Uses deep_research subgraph to obtain sufficient knowledge background
     """
     print("\n" + "=" * 60)
-    print("[Deep Research] 深度知识检索")
+    print("[Deep Research] Deep Knowledge Retrieval")
     print("=" * 60)
 
     if not DEEP_RESEARCH_AVAILABLE:
-        print("  [WARN] Deep Research不可用，跳过")
+        print("  [WARN] Deep Research unavailable, skipping")
         state.domain_knowledge_map = {"general": {"facts": [], "context": ""}}
         return state
 
     try:
-        # 构建研究问题
+        # Build research question
         research_question = state.cleaned_text
 
-        # 添加选项上下文（如果有）
+        # Add option context (if available)
         if state.question_options:
             options_text = "\n".join(
                 [
@@ -262,33 +262,33 @@ def deep_research_node(state: GeneralQAState) -> GeneralQAState:
                 ]
             )
             research_question = f"""
-问题: {state.cleaned_text}
+Question: {state.cleaned_text}
 
-选项:
+Options:
 {options_text}
 
-请深入研究这个问题，检索相关知识和文献，为回答问题提供充分的知识背景。
+Please research this question thoroughly, retrieve relevant knowledge and literature to provide sufficient background for answering.
 """
 
-        print(f"  [INFO] 研究问题: {state.cleaned_text[:100]}...")
+        print(f"  [INFO] Research question: {state.cleaned_text[:100]}...")
 
-        # 调用Deep Research
+        # Call Deep Research
         from agent.nodes.subagents.deep_research.configuration import Configuration
 
         config = Configuration(
-            max_researcher_iterations=2,  # 限制迭代次数以提高速度
+            max_researcher_iterations=2,  # Limit iterations for speed
             max_concurrent_research_units=2,
         )
 
-        # 运行deep research
+        # Run deep research
         result = deep_research_graph.invoke(
             {"messages": [HumanMessage(content=research_question)]},
             config={"configurable": config.__dict__},
         )
 
-        # 提取研究结果
+        # Extract research results
         if result:
-            # 获取最终报告或消息
+            # Get final report or messages
             messages = result.get("messages", [])
             if messages:
                 last_message = messages[-1]
@@ -299,7 +299,7 @@ def deep_research_node(state: GeneralQAState) -> GeneralQAState:
             else:
                 research_context = ""
 
-            # 存储到state
+            # Store in state
             domain = state.core_domains[0] if state.core_domains else "general"
             state.domain_knowledge_map = {
                 domain: {
@@ -311,14 +311,14 @@ def deep_research_node(state: GeneralQAState) -> GeneralQAState:
             state.deep_research_result = {"context": research_context, "success": True}
 
             print(
-                f"  [OK] Deep Research完成，获取 {len(research_context)} 字符的知识背景"
+                f"  [OK] Deep Research completed, obtained {len(research_context)} characters of knowledge background"
             )
         else:
-            print("  [WARN] Deep Research返回空结果")
+            print("  [WARN] Deep Research returned empty results")
             state.domain_knowledge_map = {"general": {"facts": [], "context": ""}}
 
     except Exception as e:
-        print(f"  [FAIL] Deep Research失败: {e}")
+        print(f"  [FAIL] Deep Research failed: {e}")
         state.domain_knowledge_map = {"general": {"facts": [], "context": ""}}
 
     return state
@@ -329,22 +329,22 @@ def deep_research_node(state: GeneralQAState) -> GeneralQAState:
 
 def xmasters_node(state: GeneralQAState) -> GeneralQAState:
     """
-    X-Masters: 多路径推理
-    使用X-Masters进行多解法、批评、综合、选择
+    X-Masters: Multi-path reasoning
+    Uses X-Masters for multi-solution, critique, synthesis, and selection
     """
     print("\n" + "=" * 60)
-    print("[X-Masters] X-Masters: 多路径推理")
+    print("[X-Masters] X-Masters: Multi-path Reasoning")
     print("=" * 60)
 
     if not XMASTERS_AVAILABLE:
-        print("  [WARN] X-Masters不可用，使用单路径推理")
+        print("  [WARN] X-Masters unavailable, using single-path reasoning")
         return _fallback_inference(state)
 
     try:
-        # 构建问题
+        # Build problem
         problem = state.cleaned_text
 
-        # 添加选项
+        # Add options
         if state.question_options:
             options_text = "\n".join(
                 [
@@ -353,13 +353,13 @@ def xmasters_node(state: GeneralQAState) -> GeneralQAState:
                 ]
             )
             problem = f"""
-问题: {state.cleaned_text}
+Question: {state.cleaned_text}
 
-选项:
+Options:
 {options_text}
 """
 
-        # 添加Deep Research上下文
+        # Add Deep Research context
         if state.domain_knowledge_map:
             domain = state.core_domains[0] if state.core_domains else "general"
             domain_data = state.domain_knowledge_map.get(domain, {})
@@ -367,17 +367,17 @@ def xmasters_node(state: GeneralQAState) -> GeneralQAState:
             if context:
                 problem += f"""
 
-背景知识:
+Background knowledge:
 {context[:4000]}
 """
 
-        print(f"  [INFO] 问题长度: {len(problem)} 字符")
-        print(f"  [RUN] 使用 {XMASTERS_NUM_SOLVERS} 个Solver")
+        print(f"  [INFO] Problem length: {len(problem)} characters")
+        print(f"  [RUN] Using {XMASTERS_NUM_SOLVERS} Solvers")
 
-        # 构建X-Masters图
+        # Build X-Masters graph
         xmasters_graph = build_xmasters_graph().compile()
 
-        # 运行X-Masters
+        # Run X-Masters
         from agent.utils.llm_factory import get_current_llm_config
 
         llm_config = get_current_llm_config()
@@ -393,20 +393,20 @@ def xmasters_node(state: GeneralQAState) -> GeneralQAState:
             }
         )
 
-        # 提取最终答案
+        # Extract final answer
         final_answer = result.get("final_answer", "")
 
         if final_answer:
             state.final_answer = _extract_answer(final_answer, state)
             state.core_conclusion = final_answer
-            print(f"  [OK] X-Masters完成")
-            print(f"  [OK] 答案: {state.final_answer}")
+            print(f"  [OK] X-Masters completed")
+            print(f"  [OK] Answer: {state.final_answer}")
         else:
-            print("  [WARN] X-Masters返回空答案，使用备用推理")
+            print("  [WARN] X-Masters returned empty answer, using fallback reasoning")
             return _fallback_inference(state)
 
     except Exception as e:
-        print(f"  [FAIL] X-Masters失败: {e}")
+        print(f"  [FAIL] X-Masters failed: {e}")
         return _fallback_inference(state)
 
     return state
@@ -414,37 +414,37 @@ def xmasters_node(state: GeneralQAState) -> GeneralQAState:
 
 def _fallback_inference(state: GeneralQAState) -> GeneralQAState:
     """
-    备用推理：当X-Masters不可用时的单路径推理
+    Fallback inference: Single-path reasoning when X-Masters is unavailable
     """
-    print("\n  使用备用单路径推理...")
+    print("\n  Using fallback single-path reasoning...")
 
-    # 构建推理提示
-    prompt = f"""基于以下知识回答问题。
+    # Build inference prompt
+    prompt = f"""Answer the question based on the following knowledge.
 
-问题: {state.cleaned_text}
+Question: {state.cleaned_text}
 
 """
 
-    # 添加选项
+    # Add options
     if state.question_options:
         options_text = "\n".join(
             [f"{chr(65 + i)}. {opt}" for i, opt in enumerate(state.question_options)]
         )
-        prompt += f"选项:\n{options_text}\n\n"
+        prompt += f"Options:\n{options_text}\n\n"
 
-    # 添加知识背景
+    # Add knowledge background
     if state.domain_knowledge_map:
         domain = state.core_domains[0] if state.core_domains else "general"
         domain_data = state.domain_knowledge_map.get(domain, {})
         context = domain_data.get("context", "")
         if context:
-            prompt += f"背景知识:\n{context[:3000]}\n\n"
+            prompt += f"Background knowledge:\n{context[:3000]}\n\n"
 
     prompt += """
-输出JSON格式:
+Output JSON format:
 {
-    "analysis": "分析过程",
-    "answer": "最终答案 (多选题为单个字母如A/B/C，True/False题为True或False)"
+    "analysis": "Analysis process",
+    "answer": "Final answer (single letter like A/B/C for MCQ, True or False for T/F)"
 }
 """
 
@@ -455,26 +455,26 @@ def _fallback_inference(state: GeneralQAState) -> GeneralQAState:
         if result:
             state.final_answer = _extract_answer(result.get("answer", ""), state)
             state.core_conclusion = result.get("analysis", "")
-            print(f"  [OK] 备用推理完成，答案: {state.final_answer}")
+            print(f"  [OK] Fallback inference completed, Answer: {state.final_answer}")
         else:
             state.final_answer = response[:100]
             state.core_conclusion = response
     else:
-        state.error_message = "推理失败"
+        state.error_message = "Inference failed"
 
     return state
 
 
 def _extract_answer(raw_answer: str, state: GeneralQAState) -> str:
     """
-    从原始回答中提取最终答案
+    Extract final answer from raw response
     """
     if not raw_answer:
         return ""
 
     raw_answer = raw_answer.strip()
 
-    # True/False问题
+    # True/False questions
     if (
         state.answer_format_label == "true/false"
         or state.question_type_label == "true_false"
@@ -484,21 +484,21 @@ def _extract_answer(raw_answer: str, state: GeneralQAState) -> str:
         elif "false" in raw_answer.lower():
             return "False"
 
-    # 多选题
+    # Multiple choice
     if state.question_options:
-        # 尝试提取选项字母
+        # Try to extract option letter
         import re
 
         match = re.search(r"\b([A-E])\b", raw_answer.upper())
         if match:
             return match.group(1)
 
-        # 如果回答中包含完整选项文本，匹配到对应字母
+        # If response contains full option text, match to corresponding letter
         for i, opt in enumerate(state.question_options):
             if opt.lower() in raw_answer.lower():
                 return chr(65 + i)
 
-    # 数值计算题 - 提取数字
+    # Numerical calculation - extract number
     if (
         state.answer_format_label == "number"
         or state.question_type_label == "calculation"
@@ -507,9 +507,9 @@ def _extract_answer(raw_answer: str, state: GeneralQAState) -> str:
 
         numbers = re.findall(r"[-+]?\d*\.?\d+", raw_answer)
         if numbers:
-            return numbers[-1]  # 返回最后一个数字
+            return numbers[-1]  # Return the last number
 
-    return raw_answer[:200]  # 默认返回前200字符
+    return raw_answer[:200]  # Return first 200 characters by default
 
 
 # ===================== N8: Answer Formatting =====================
@@ -517,37 +517,37 @@ def _extract_answer(raw_answer: str, state: GeneralQAState) -> str:
 
 def n8_format_node(state: GeneralQAState) -> GeneralQAState:
     """
-    N8: 答案格式化
-    确保答案格式符合要求
+    N8: Answer Formatting
+    Ensures answer format meets requirements
     """
     print("\n" + "=" * 60)
-    print("N8: 答案格式化")
+    print("N8: Answer Formatting")
     print("=" * 60)
 
     if not state.final_answer:
-        print("  [WARN] 无答案可格式化")
+        print("  [WARN] No answer to format")
         return state
 
-    # 验证答案格式
+    # Validate answer format
     answer = state.final_answer.strip()
     format_label = state.answer_format_label or "Single Choice"
 
-    # True/False验证
+    # True/False validation
     if format_label == "true/false":
         if answer.lower() not in ["true", "false"]:
-            # 尝试纠正
+            # Try to correct
             if "true" in answer.lower():
                 answer = "True"
             elif "false" in answer.lower():
                 answer = "False"
 
-    # 多选题验证
+    # Multiple choice validation
     elif format_label == "Single Choice" and state.question_options:
         import re
 
         match = re.search(r"^[A-Ea-e]$", answer)
         if not match:
-            # 尝试从文本中提取
+            # Try to extract from text
             match = re.search(r"\b([A-Ea-e])\b", answer.upper())
             if match:
                 answer = match.group(1).upper()
@@ -555,8 +555,8 @@ def n8_format_node(state: GeneralQAState) -> GeneralQAState:
     state.final_answer = answer
     state.format_valid_label = "Valid"
 
-    print(f"  [OK] 最终答案: {state.final_answer}")
-    print(f"  [OK] 格式: {format_label}")
+    print(f"  [OK] Final answer: {state.final_answer}")
+    print(f"  [OK] Format: {format_label}")
 
     return state
 
@@ -565,13 +565,13 @@ def n8_format_node(state: GeneralQAState) -> GeneralQAState:
 
 
 def should_skip_deep_research(state: GeneralQAState) -> str:
-    """判断是否跳过Deep Research"""
+    """Determine whether to skip Deep Research"""
     if not ENABLE_DEEP_RESEARCH:
         return "skip"
 
-    # 简单问题可以跳过
+    # Simple questions can be skipped
     if state.question_type_label == "true_false":
-        # True/False问题通常不需要深度研究
+        # True/False questions usually do not need deep research
         if len(state.cleaned_text) < 200:
             return "skip"
 
@@ -583,32 +583,32 @@ def should_skip_deep_research(state: GeneralQAState) -> str:
 
 def build_simplified_general_qa_graph():
     """
-    构建简化版General QA子图
+    Build simplified General QA subgraph
 
-    流程:
-    START → N0(预处理) → Deep Research → X-Masters → N8(格式化) → END
+    Flow:
+    START → N0(Preprocess) → Deep Research → X-Masters → N8(Format) → END
                            ↑              ↑
-                        (可选跳过)     (备用推理)
+                        (optional skip)     (fallback inference)
     """
 
     graph = StateGraph(GeneralQAState)
 
-    # 添加节点
+    # Add nodes
     graph.add_node("n0_preprocess", n0_preprocess_node)
     graph.add_node("deep_research", deep_research_node)
     graph.add_node("xmasters", xmasters_node)
     graph.add_node("n8_format", n8_format_node)
 
-    # 定义边
+    # Define edges
     graph.add_edge(START, "n0_preprocess")
 
-    # 条件路由：是否跳过Deep Research
+    # Conditional routing: skip Deep Research?
     graph.add_conditional_edges(
         "n0_preprocess",
         should_skip_deep_research,
         {
             "research": "deep_research",
-            "skip": "xmasters",  # 跳过Deep Research直接推理
+            "skip": "xmasters",  # Skip Deep Research, go directly to inference
         },
     )
 
@@ -629,31 +629,31 @@ def build_simplified_general_qa_graph():
 
 def run_simplified_general_qa(user_input: str, **kwargs) -> Dict[str, Any]:
     """
-    运行简化版General QA流程
+    Run simplified General QA workflow
 
     Args:
-        user_input: 问题文本
-        **kwargs: 额外参数
+        user_input: Question text
+        **kwargs: Additional parameters
 
     Returns:
-        包含final_answer的结果字典
+        Result dictionary containing final_answer
     """
     print("\n" + "=" * 60)
-    print("[START] 简化版 GENERAL QA 流程")
-    print("   核心: Deep Research + X-Masters")
+    print("[START] Simplified GENERAL QA Workflow")
+    print("   Core: Deep Research + X-Masters")
     print("=" * 60)
 
     start_time = time.time()
 
-    # 初始化state
+    # Initialize state
     state = GeneralQAState(user_input=user_input)
 
-    # 应用额外参数
+    # Apply additional parameters
     for key, value in kwargs.items():
         if hasattr(state, key):
             setattr(state, key, value)
 
-    # 运行图
+    # Run graph
     graph = build_simplified_general_qa_graph()
 
     try:
@@ -662,7 +662,7 @@ def run_simplified_general_qa(user_input: str, **kwargs) -> Dict[str, Any]:
         elapsed = time.time() - start_time
 
         print("\n" + "=" * 60)
-        print(f"[SUCCESS] 完成，耗时 {elapsed:.1f}秒")
+        print(f"[SUCCESS] Completed in {elapsed:.1f}s")
         print("=" * 60)
 
         return {
@@ -675,7 +675,7 @@ def run_simplified_general_qa(user_input: str, **kwargs) -> Dict[str, Any]:
 
     except Exception as e:
         elapsed = time.time() - start_time
-        print(f"\n[ERROR] 流程错误: {e}")
+        print(f"\n[ERROR] Workflow error: {e}")
 
         return {
             "final_answer": None,

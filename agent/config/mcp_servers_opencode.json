@@ -1,56 +1,49 @@
 {
     "igblast": {
         "type": "remote",
-        "url": "http://mcp.igblast.immuneagent.cn:50001/sse",
+        "url": "",
         "enabled": true,
         "oauth": false,
         "timeout": 36000000
     },
     "metabcr": {
         "type": "remote",
-        "url": "http://mcp.metabcr.immuneagent.cn:50001/sse",
-        "enabled": true,
-        "oauth": false,
-        "timeout": 36000000
-    },
-    "metabcrtrain": {
-        "type": "remote",
-        "url": "http://mcp.metabcrtrain.immuneagent.cn:50001/sse",
+        "url": "",
         "enabled": true,
         "oauth": false,
         "timeout": 36000000
     },
     "b_cell_analysis": {
         "type": "remote",
-        "url": "http://mcp.bcell.immuneagent.cn:50001/sse",
+        "url": "",
         "enabled": true,
         "oauth": false,
         "timeout": 36000000
     },
     "t_cell_analysis": {
         "type": "remote",
-        "url": "http://mcp.tcell.immuneagent.cn:50001/sse",
+        "url": "",
         "enabled": true,
         "oauth": false,
         "timeout": 36000000
     },
     "immune_analysis": {
         "type": "remote",
-        "url": "http://mcp.immune.immuneagent.cn:50001/sse",
+        "url": "",
         "enabled": true,
         "oauth": false,
         "timeout": 36000000
     },
     "nettcr": {
         "type": "remote",
-        "url": "http://mcp.nettcr.immuneagent.cn:50001/sse",
+        "url": "",
         "enabled": true,
         "oauth": false,
         "timeout": 36000000
     },
     "alphafold3": {
         "type": "remote",
-        "url": "http://mcp.af3.immuneagent.cn:50001/sse",
+        "url": "",
         "enabled": true,
         "oauth": false,
         "timeout": 36000000

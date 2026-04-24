@@ -77,28 +77,28 @@ if USE_SIMPLIFIED_QA:
         if not global_state.merged_result:
             global_state.merged_result = {}
 
-        # [HOT] 优先从N8节点的final_answer提取答案
+        # [HOT] Prefer extracting answer from N8 node final_answer
         final_answer = getattr(general_qa_state, "final_answer", None)
 
-        # 如果没有final_answer，尝试从structured_answer中提取
+        # If no final_answer, try extracting from structured_answer
         if not final_answer:
             structured_answer = getattr(general_qa_state, "structured_answer", None)
             if structured_answer and isinstance(structured_answer, dict):
                 final_answer = structured_answer.get("final_answer")
                 if final_answer:
                     print(
-                        f"  [提取] 从structured_answer获取答案: {str(final_answer)[:100]}..."
+                        f"  [Extract] Got answer from structured_answer: {str(final_answer)[:100]}..."
                     )
 
-        # 如果还是没有，尝试从core_conclusion提取
+        # If still none, try extracting from core_conclusion
         if not final_answer:
             final_answer = getattr(general_qa_state, "core_conclusion", None)
             if final_answer:
                 print(
-                    f"  [提取] 从core_conclusion获取答案: {str(final_answer)[:100]}..."
+                    f"  [Extract] Got answer from core_conclusion: {str(final_answer)[:100]}..."
                 )
 
-        # 设置到merged_result
+        # Set to merged_result
         global_state.merged_result["general_qa_answer"] = final_answer
         global_state.merged_result["general_qa_error"] = getattr(
             general_qa_state, "error_message", None
@@ -111,7 +111,7 @@ if USE_SIMPLIFIED_QA:
         if final_answer:
             print(f"  - Final answer: {str(final_answer)[:200]}...")
 
-            # [HOT] 通过SSE推送最终答案到前端
+            # [HOT] Push final answer to frontend via SSE
             if global_state.session_id:
                 try:
                     import sys
@@ -136,7 +136,7 @@ if USE_SIMPLIFIED_QA:
                     if progress_callback:
                         progress_callback(
                             event_type="final_answer",
-                            message=f"最终答案: {str(final_answer)[:300]}",
+                            message=f"Final answer: {str(final_answer)[:300]}",
                             details={
                                 "answer": str(final_answer),
                                 "answer_length": len(str(final_answer)),
@@ -144,7 +144,7 @@ if USE_SIMPLIFIED_QA:
                             },
                         )
                 except Exception as e:
-                    print(f"  [警告] 推送答案到SSE失败: {e}")
+                    print(f"  [WARN] Failed to push answer to SSE: {e}")
 
         return global_state
 

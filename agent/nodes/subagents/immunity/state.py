@@ -150,18 +150,18 @@ class ImmunityState(BaseModel):
         self, purpose: str = "reasoning", node_name: Optional[str] = None, **kwargs
     ) -> Optional[Any]:
         """
-        获取 LLM 实例（推荐方法）
+        Get LLM instance (recommended method)
 
-        始终通过 session_id 从全局 registry 获取 progress_callback，
-        确保即使 self.progress_callback 为 None 也能正确获取。
+        Always retrieves progress_callback from global registry via session_id,
+        ensuring correct retrieval even when self.progress_callback is None.
 
         Args:
-            purpose: 模型用途，可选: "reasoning", "bioinformatics", "reasoning_advanced", "code"
-            node_name: 节点名称
-            **kwargs: 传递给 LLM 创建函数的其他参数
+            purpose: Model purpose, options: "reasoning", "bioinformatics", "reasoning_advanced", "code"
+            node_name: Node name
+            **kwargs: Additional parameters passed to LLM creation function
 
         Returns:
-            LLM 实例，如果创建失败则返回 None
+            LLM instance, or None if creation fails
         """
         from utils.llm_factory import create_llm_with_thinking
 
@@ -185,7 +185,7 @@ class ImmunityState(BaseModel):
 
                 progress_callback = pt_module.get_progress_callback(self.session_id)
             except (ImportError, AttributeError) as e:
-                print(f"[ImmunityState.get_llm] 获取 callback 失败: {e}")
+                print(f"[ImmunityState.get_llm] Failed to get callback: {e}")
 
         return create_llm_with_thinking(
             purpose=purpose,

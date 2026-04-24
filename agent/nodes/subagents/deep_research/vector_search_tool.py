@@ -16,7 +16,7 @@ This implementation uses local config and vectorstore modules.
 
 import os
 
-# 完全离线模式 - 使用本地缓存的 HuggingFace 模型，禁止所有网络请求
+# Fully offline mode - use locally cached HuggingFace models, disable all network requests
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 

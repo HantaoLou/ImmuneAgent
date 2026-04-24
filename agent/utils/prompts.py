@@ -259,9 +259,11 @@ For MCP tools that return immediate results (not `streaming_task`), the task is 
 - **Task Delegation** → `run_in_background=false` (wait for completion)
 - **Parallel Exploration** → `run_in_background=true` (async, must call `background_output`)
 
+**IMPORTANT NOTE**: The term "wait for results" below means you MUST call the `background_output` TOOL. It does NOT mean you should pause execution or stop working. You MUST actively call the tool to retrieve results.
+
 ### Mode 1: Task Delegation (run_in_background=false)
 
-Use this when you need the result immediately.
+Use this when you need result immediately.
 
 ```typescript
 // Direct delegation - waits for completion
@@ -272,12 +274,12 @@ const result = task({{
   load_skills: [],
   run_in_background: false
 }})
-// → Returns the full task result directly
+// → Returns: full task result directly
 ```
 
 ### Mode 2: Parallel Exploration (run_in_background=true)
 
-Use this for parallel research. **MUST call `background_output` to retrieve results.**
+Use this for parallel research. **MUST call `background_output` TOOL to retrieve results.**
 
 ```typescript
 // Step 1: Launch background task
@@ -290,7 +292,7 @@ task({{
 }})
 // → Returns: "Background Task ID: bg_xxx\nStatus: pending..."
 
-// Step 2: IMMEDIATELY call background_output to wait for results
+// Step 2: IMMEDIATELY call background_output tool to wait for results
 background_output({{
   task_id: "bg_xxx",
   block: true,
@@ -310,10 +312,12 @@ background_output({{
     // Error: "Invalid arguments: 'run_in_background' parameter is REQUIRED"
     ```
 
-2. **Only saying "waiting" without calling tool:**
-    ```
-    "Waiting for background task to complete..."
-    // ❌ WRONG - no tool call, execution will stop
+2. **Only mentioning "waiting" without calling background_output:**
+    ```typescript
+    // Launch background task
+    task({{ subagent_type: "explore", ..., run_in_background: true }})
+    // Then saying "I'll wait for results" WITHOUT calling background_output
+    // ❌ WRONG - no tool call, you MUST call background_output tool
     ```
 
 3. **Starting multiple tasks without polling:**
@@ -330,12 +334,12 @@ background_output({{
 const r1 = task({{ subagent_type: "explore", ..., run_in_background: true }})
 const r2 = task({{ subagent_type: "librarian", ..., run_in_background: true }})
 
-// Poll each one to get results
+// Poll each one to get results using background_output tool
 background_output({{ task_id: "bg_1", block: true }})
 background_output({{ task_id: "bg_2", block: true }})
 ```
 
-**⚠️ NEVER say "waiting for results" without calling `background_output` tool.**
+**⚠️ CRITICAL: After launching tasks with run_in_background=true, you MUST call the background_output TOOL. Do not just mention waiting - actively call the tool.**
 
 ---
 
@@ -398,7 +402,9 @@ _RUNNER_EXEC_BLOCK = """\
 echo "=== Starting OpenCode (output logged to $LOG_DIR/opencode.log) ==="
 
 # Execute with explicit instructions to read AGENTS.md first
-opencode run "ulw Execute all tasks in task.md.don't ask for more information from user.Don't stop until all tasks are completed." --file "$WORK_DIR/task.md" --format json 2>&1 | tee -a "$LOG_DIR/opencode.log"
+# Use --no-interactive to prevent OpenCode from waiting for user input
+# Use --continue-on-error to keep running even if one task fails
+opencode run "Execute all tasks in task.md." --file "$WORK_DIR/task.md" --format json 2>&1 | tee -a "$LOG_DIR/opencode.log"
 
 OPENCODE_EXIT_CODE=${PIPESTATUS[0]}
 

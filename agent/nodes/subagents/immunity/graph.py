@@ -65,7 +65,7 @@ def get_progress_callback_by_session(session_id: Optional[str]) -> Optional[Any]
         return None
 
 
-# Mem0 记忆管理
+# Mem0 Memory Management
 try:
     from utils.mem0_manager import (
         get_memory_client,
@@ -76,7 +76,7 @@ try:
     MEM0_AVAILABLE = True
 except ImportError as e:
     MEM0_AVAILABLE = False
-    print(f"[Immunity] 警告: mem0_manager 不可用: {e}")
+    print(f"[Immunity] Warning: mem0_manager unavailable: {e}")
 
 # Import search tools for LLM binding
 from tools.search import web_search, knowledge_search, read_webpage
@@ -98,10 +98,10 @@ if str(agent_dir) not in sys.path:
 
 class ImmunityProgressLogger:
     """
-    进度日志记录器 - 提供详细的进度输出和时间统计
+    Progress logger - provides detailed progress output and time statistics
     """
 
-    # 阶段定义
+    # Stage definitions
     STAGES = [
         ("query_decomposition", "📝 Query Decomposition", 1),
         ("retrieval", "📚 Immunology Retrieval", 2),
@@ -118,36 +118,36 @@ class ImmunityProgressLogger:
         self.current_stage: str = ""
 
     def _timestamp(self) -> str:
-        """获取当前时间戳"""
+        """Get current timestamp"""
         return datetime.now().strftime("%H:%M:%S")
 
     def _flush_print(self, msg: str):
-        """强制刷新输出"""
+        """Force flush output"""
         print(msg)
         sys.stdout.flush()
 
     def start_workflow(self):
-        """开始工作流"""
+        """Start workflow"""
         self.workflow_start_time = time.perf_counter()
         self._flush_print("\n" + "=" * 80)
-        self._flush_print(f"[{self._timestamp()}] [START] IMMUNITY SUBGRAPH 工作流开始")
+        self._flush_print(f"[{self._timestamp()}] [START] IMMUNITY SUBGRAPH workflow started")
         self._flush_print("=" * 80)
 
     def end_workflow(self, success: bool = True):
-        """结束工作流"""
+        """End workflow"""
         total_time = time.perf_counter() - self.workflow_start_time
-        status = "[SUCCESS] 成功完成" if success else "[ERROR] 失败"
+        status = "[SUCCESS] completed successfully" if success else "[ERROR] Failed"
         self._flush_print("\n" + "=" * 80)
         self._flush_print(f"[{self._timestamp()}] {status}")
-        self._flush_print(f"  总耗时: {total_time:.2f} 秒 ({total_time / 60:.1f} 分钟)")
+        self._flush_print(f"  Total time: {total_time:.2f} seconds ({total_time / 60:.1f} minutes)")
         self._flush_print("=" * 80)
 
     def start_stage(self, stage_name: str, description: str = ""):
-        """开始一个阶段"""
+        """Start a stage"""
         self.current_stage = stage_name
         self.stage_start_times[stage_name] = time.perf_counter()
 
-        # 查找阶段编号
+        # Find stage number
         stage_num = 0
         for name, _, num in self.STAGES:
             if name == stage_name:
@@ -165,12 +165,12 @@ class ImmunityProgressLogger:
         self._flush_print("-" * 80)
 
     def end_stage(self, stage_name: str, success: bool = True, details: str = ""):
-        """结束一个阶段"""
+        """End a stage"""
         elapsed = time.perf_counter() - self.stage_start_times.get(
             stage_name, time.perf_counter()
         )
 
-        # 查找阶段编号
+        # Find stage number
         stage_num = 0
         for name, _, num in self.STAGES:
             if name == stage_name:
@@ -181,45 +181,45 @@ class ImmunityProgressLogger:
         status = "[SUCCESS]" if success else "[ERROR]"
 
         self._flush_print(
-            f"[{self._timestamp()}] {status} STAGE {stage_num}/{self.TOTAL_STAGES} 完成 ({progress_pct:.0f}%)"
+            f"[{self._timestamp()}] {status} STAGE {stage_num}/{self.TOTAL_STAGES} completed ({progress_pct:.0f}%)"
         )
-        self._flush_print(f"  ⏱️ 阶段耗时: {elapsed:.2f} 秒")
+        self._flush_print(f"  ⏱️ Stage time: {elapsed:.2f} seconds")
         if details:
             self._flush_print(f"  [STAT] {details}")
 
     def log_llm_start(self, model_info: dict, prompt_len: int):
-        """记录 LLM 调用开始"""
-        self._flush_print(f"[{self._timestamp()}] 🤖 开始 LLM 调用...")
-        self._flush_print(f"  📦 模型: {model_info.get('model', 'unknown')}")
-        self._flush_print(f"  🌡️ 温度: {model_info.get('temperature', 'N/A')}")
-        self._flush_print(f"  ⏰ 超时: {model_info.get('timeout', 'N/A')}s")
-        self._flush_print(f"  📝 Prompt 长度: {prompt_len} 字符")
-        self._flush_print(f"  ⏳ 等待响应中...")
+        """Log LLM call start"""
+        self._flush_print(f"[{self._timestamp()}] 🤖 Starting LLM call...")
+        self._flush_print(f"  📦 Model: {model_info.get('model', 'unknown')}")
+        self._flush_print(f"  🌡️ Temperature: {model_info.get('temperature', 'N/A')}")
+        self._flush_print(f"  ⏰ Timeout: {model_info.get('timeout', 'N/A')}s")
+        self._flush_print(f"  📝 Prompt length: {prompt_len} characters")
+        self._flush_print(f"  ⏳ Waiting for response...")
 
     def log_llm_end(self, elapsed: float, response_len: int = 0, success: bool = True):
-        """记录 LLM 调用结束"""
+        """Log LLM call end"""
         status = "[SUCCESS]" if success else "[ERROR]"
-        self._flush_print(f"[{self._timestamp()}] {status} LLM 调用完成")
-        self._flush_print(f"  ⏱️ 响应时间: {elapsed:.2f} 秒")
+        self._flush_print(f"[{self._timestamp()}] {status} LLM call completed")
+        self._flush_print(f"  ⏱️ Response time: {elapsed:.2f} seconds")
         if response_len > 0:
-            self._flush_print(f"  📤 响应长度: {response_len} 字符")
+            self._flush_print(f"  📤 Response length: {response_len} characters")
 
     def log_info(self, message: str):
-        """记录信息"""
+        """Log info message"""
         self._flush_print(f"[{self._timestamp()}] ℹ️ {message}")
 
     def log_warning(self, message: str):
-        """记录警告"""
+        """Log warning"""
         self._flush_print(f"[{self._timestamp()}] [WARN]️ {message}")
 
     def log_error(self, message: str, error: Exception = None):
-        """记录错误"""
+        """Log error"""
         self._flush_print(f"[{self._timestamp()}] [ERROR] {message}")
         if error:
-            self._flush_print(f"  错误详情: {type(error).__name__}: {str(error)}")
+            self._flush_print(f"  Error details: {type(error).__name__}: {str(error)}")
 
 
-# 全局进度记录器实例
+# Global progress logger instance
 _progress_logger = ImmunityProgressLogger()
 
 
@@ -228,44 +228,44 @@ _progress_logger = ImmunityProgressLogger()
 
 def _get_llm_with_callback(state, purpose="bioinformatics"):
     """
-    创建带progress_callback的LLM实例
+    Create LLM instance with progress_callback
 
-    优先使用 state.get_llm() 方法，确保 SSE 推送正常工作。
+    Prefer state.get_llm() method to ensure SSE push works correctly.
 
     Args:
-        state: ImmunityState实例
-        purpose: LLM用途（"bioinformatics", "reasoning", "code"等）
+        state: ImmunityState instance
+        purpose: LLM purpose ("bioinformatics", "reasoning", "code", etc.)
 
     Returns:
-         LLM实例（带或不带progress_callback）
+         LLM instance (with or without progress_callback)
     """
-    # [DEBUG] 检查 session_id 是否可用
+    # [DEBUG] Check if session_id is available
     has_session_id = hasattr(state, "session_id") and state.session_id
     has_parent_state = hasattr(state, "parent_state") and state.parent_state
     has_get_llm = hasattr(state, "get_llm") and callable(
         getattr(state, "get_llm", None)
     )
 
-    print(f"[Immunity] _get_llm_with_callback 状态检查:")
+    print(f"[Immunity] _get_llm_with_callback state check:")
     print(f"  - has_session_id: {has_session_id}")
     print(f"  - has_parent_state: {has_parent_state}")
     print(f"  - has_get_llm: {has_get_llm}")
 
-    # [HOT] 优先使用 state.get_llm() 方法
+    # [HOT] Prefer state.get_llm() method
     if has_get_llm:
-        print(f"[Immunity] 使用 state.get_llm() 方法")
+        print(f"[Immunity] Using state.get_llm() method")
         return state.get_llm(purpose=purpose, node_name="immunity")
 
-    # [FALLBACK] 如果没有 get_llm 方法，通过session_id获取 callback 并创建 LLM
+    # [FALLBACK] If no get_llm method, get callback via session_id and create LLM
     progress_callback = None
     session_id = None
     if has_session_id:
         session_id = state.session_id
     elif has_parent_state:
         session_id = getattr(state.parent_state, "session_id", None)
-        print(f"[Immunity] 从 parent_state 获取: session_id={session_id}")
+        print(f"[Immunity] Retrieved from parent_state: session_id={session_id}")
 
-    # 通过session_id从全局registry获取callback
+    # Get callback from global registry via session_id
     if session_id:
         try:
             import sys
@@ -283,17 +283,17 @@ def _get_llm_with_callback(state, purpose="bioinformatics"):
 
             progress_callback = pt_module.get_progress_callback(session_id)
             print(
-                f"[Immunity] 从全局 registry 获取 callback: {progress_callback is not None}"
+                f"[Immunity] Got callback from global registry: {progress_callback is not None}"
             )
         except (ImportError, AttributeError) as e:
-            print(f"[Immunity] 获取callback失败: {e}")
+            print(f"[Immunity] Failed to get callback: {e}")
 
-    # 创建带SSE推送的LLM实例
+    # Create LLM instance with SSE push
     if progress_callback or session_id:
         from utils.llm_factory import create_llm_with_thinking
 
         print(
-            f"[Immunity] 创建带 thinking 的 LLM: progress_callback={progress_callback is not None}, session_id={session_id}"
+            f"[Immunity] Creating LLM with thinking: progress_callback={progress_callback is not None}, session_id={session_id}"
         )
         return create_llm_with_thinking(
             purpose=purpose,
@@ -302,8 +302,8 @@ def _get_llm_with_callback(state, purpose="bioinformatics"):
             node_name="immunity",
         )
     else:
-        # 回退到普通创建
-        print(f"[Immunity] [WARN] 没有 progress_callback 或 session_id，使用普通 LLM")
+        # Fallback to normal creation
+        print(f"[Immunity] [WARN] No progress_callback or session_id, using normal LLM")
         if purpose == "bioinformatics":
             return create_bioinformatics_llm()
         elif purpose == "reasoning":
@@ -336,34 +336,34 @@ def _load_tools_json() -> str:
 
 def _get_opensandbox_id(state: "ImmunityState") -> Optional[str]:
     """
-    从 state 或 parent_state 获取 opensandbox_id
+    Get opensandbox_id from state or parent_state
 
-    遵循架构原则：所有子图通过 parent_state.merged_result 获取 opensandbox_id
-    以复用 supervisor 创建的沙盒实例
+    Architecture principle: all subgraphs get opensandbox_id via parent_state.merged_result
+    to reuse the sandbox instance created by supervisor
     """
-    # 1. 从 parent_state.merged_result 获取（优先）
+    # 1. Get from parent_state.merged_result (preferred)
     if state.parent_state:
         merged_result = getattr(state.parent_state, "merged_result", None) or {}
         if isinstance(merged_result, dict):
             opensandbox_id = merged_result.get("opensandbox_id")
             if opensandbox_id:
-                print(f"[Immunity] 获取到 opensandbox_id: {opensandbox_id}")
+                print(f"[Immunity] Got opensandbox_id: {opensandbox_id}")
                 return opensandbox_id
 
-    # 2. 从 parent_state 直接获取
+    # 2. Get directly from parent_state
     if state.parent_state:
         opensandbox_id = getattr(state.parent_state, "opensandbox_id", None)
         if opensandbox_id:
-            print(f"[Immunity] 从 parent_state 获取到 opensandbox_id: {opensandbox_id}")
+            print(f"[Immunity] Got opensandbox_id from parent_state: {opensandbox_id}")
             return opensandbox_id
 
-    # 3. 从 state 本身获取（如果有）
+    # 3. Get from state itself (if available)
     opensandbox_id = getattr(state, "opensandbox_id", None)
     if opensandbox_id:
-        print(f"[Immunity] 从 state 获取到 opensandbox_id: {opensandbox_id}")
+        print(f"[Immunity] Got opensandbox_id from state: {opensandbox_id}")
         return opensandbox_id
 
-    print("[Immunity] [WARN]️ 未获取到 opensandbox_id，将创建新沙盒")
+    print("[Immunity] [WARN]️ opensandbox_id not found, will create new sandbox")
     return None
 
 
@@ -379,10 +379,10 @@ def _save_report(
     """
     Save report to file in sandbox output directory
 
-    报告保存策略（遵循架构原则：通过 CodeAct 统一执行）：
-    1. 远程沙盒环境：通过 CodeAct 执行代码保存到 {sandbox_dir}/output/reports/
-    2. 本地环境回退：保存到 {local_sandbox_dir}/output/reports/
-    3. [HOT] 同时通过SSE推送文件内容到前端
+    Report save strategy (architecture principle: unified execution via CodeAct):
+    1. Remote sandbox: save via CodeAct to {sandbox_dir}/output/reports/
+    2. Local fallback: save to {local_sandbox_dir}/output/reports/
+    3. [HOT] Also push file content to frontend via SSE
 
     Args:
         content: Report content
@@ -390,8 +390,8 @@ def _save_report(
         sandbox_dir: Sandbox directory (sandbox_data_dir like /data/sessions/{session_id})
         local_sandbox_dir: Local sandbox directory (fallback for local testing)
         opensandbox_id: OpenSandbox instance ID to reuse (IMPORTANT for session continuity)
-        progress_callback: SSE进度回调函数，用于推送文件内容到前端
-        session_id: 会话ID，用于日志记录
+        progress_callback: SSE progress callback for pushing file content to frontend
+        session_id: Session ID for logging
 
     Returns:
         Saved file path
@@ -399,47 +399,47 @@ def _save_report(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{report_type}_{timestamp}.md"
 
-    print(f"[Immunity] _save_report 调用:")
+    print(f"[Immunity] _save_report called:")
     print(f"  - report_type: {report_type}")
     print(f"  - sandbox_dir: {sandbox_dir}")
     print(f"  - local_sandbox_dir: {local_sandbox_dir}")
     print(f"  - opensandbox_id: {opensandbox_id}")
 
-    # 尝试保存的路径列表（按优先级排序）
+    # List of save paths to try (sorted by priority)
     save_paths = []
 
-    # 1. 沙盒环境路径：/data/sessions/{session_id}/output/reports/
-    #    通过 CodeAct 执行代码保存到远程沙盒（架构原则：唯一与 OpenSandbox 沟通的入口）
+    # 1. Sandbox path: /data/sessions/{session_id}/output/reports/
+    #    Save to remote sandbox via CodeAct (architecture principle: sole entry point to OpenSandbox)
     if sandbox_dir:
         sandbox_dir_normalized = str(sandbox_dir).replace("\\", "/")
         is_unix_path = sandbox_dir_normalized.startswith("/")
         remote_path = f"{sandbox_dir_normalized.rstrip('/')}/output/reports/{filename}"
 
-        # 远程沙盒路径，必须通过 CodeAct 保存
+        # Remote sandbox path, must be saved via CodeAct
         if is_unix_path:
             try:
-                # 使用 CodeAct 统一接口保存文件（架构原则：唯一与 OpenSandbox 沟通的入口）
+                # Save file via CodeAct unified interface (architecture principle: sole entry point to OpenSandbox)
                 from utils.codeact_executor import (
                     execute_code_via_codeact,
                     is_codeact_available,
                 )
 
                 if is_codeact_available():
-                    print(f"[Immunity] CodeAct 可用，准备保存报告到远程沙盒...")
+                    print(f"[Immunity] CodeAct available, preparing to save report to remote sandbox...")
 
-                    # 转义内容中的特殊字符（包括换行符）
+                    # Escape special characters in content (including newlines)
                     escaped_content = (
                         content.replace("\\", "\\\\")
                         .replace('"""', '\\"\\"\\"')
                         .replace("'''", "\\'\\'\\'")
                     )
 
-                    # 容器内路径
+                    # Container path
                     container_path = remote_path.replace(
                         "/data/sessions/", "/data/sessions/", 1
                     )
 
-                    # 使用更安全的代码模板（避免三引号问题）
+                    # Use safer code template (avoid triple-quote issues)
                     import base64
 
                     content_b64 = base64.b64encode(content.encode("utf-8")).decode(
@@ -450,18 +450,18 @@ def _save_report(
 import os
 import base64
 
-# Base64 编码的内容
+# Base64 encoded content
 content_b64 = "{content_b64}"
 file_path = "{container_path}"
 
 try:
-    # 解码内容
+    # Decode content
     content = base64.b64decode(content_b64).decode('utf-8')
     
-    # 创建目录
+    # Create directory
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     
-    # 写入文件
+    # Write file
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(content)
     
@@ -471,19 +471,19 @@ except Exception as e:
     print(f"__REPORT_ERROR__:{{str(e)}}")
 '''
 
-                    print(f"[Immunity] 调用 CodeAct 保存报告...")
+                    print(f"[Immunity] Calling CodeAct to save report...")
                     print(f"  - container_path: {container_path}")
                     print(f"  - opensandbox_id: {opensandbox_id}")
 
                     result = execute_code_via_codeact(
-                        task_description=f"保存 {report_type} 报告到远程沙盒",
+                        task_description=f"Save {report_type} report to remote sandbox",
                         code_template=save_code,
-                        sandbox_id=opensandbox_id,  # 传递 sandbox_id 复用沙盒
+                        sandbox_id=opensandbox_id,  # Pass sandbox_id to reuse sandbox
                         timeout_seconds=60,
                         keep_alive=True,
                     )
 
-                    print(f"[Immunity] CodeAct 执行结果:")
+                    print(f"[Immunity] CodeAct execution result:")
                     print(f"  - status: {result.status}")
                     print(
                         f"  - output: {result.output[:200] if result.output else 'N/A'}..."
@@ -491,8 +491,8 @@ except Exception as e:
                     print(f"  - error: {result.error}")
                     print(f"  - sandbox_id: {result.sandbox_id}")
 
-                    # 修改判断逻辑：只要输出中包含 __REPORT_SAVED__ 就认为成功
-                    # 不再要求 result.is_success()，因为沙盒连接过程可能有一些非致命错误
+                    # Modified logic: consider success if output contains __REPORT_SAVED__
+                    # No longer require result.is_success(), as sandbox connection may have non-fatal errors
                     if result.output and "__REPORT_SAVED__:" in result.output:
                         print(
                             f"📄 {report_type} report saved to remote sandbox via CodeAct: {remote_path}"
@@ -500,15 +500,15 @@ except Exception as e:
                         if progress_callback:
                             try:
                                 report_type_display = {
-                                    "retrieval": "检索报告",
-                                    "deep_research": "深度研究报告",
-                                    "hypothesis": "假设生成报告",
-                                    "planning": "实验计划",
-                                    "evaluation": "评估报告",
+                                    "retrieval": "Retrieval Report",
+                                    "deep_research": "Deep Research Report",
+                                    "hypothesis": "Hypothesis Report",
+                                    "planning": "Experimental Plan",
+                                    "evaluation": "Evaluation Report",
                                 }.get(report_type, report_type)
                                 progress_callback(
                                     event_type="file_content",
-                                    message=f"📄 {report_type_display}已保存到沙盒",
+                                    message=f"📄 {report_type_display}saved to sandbox",
                                     details={
                                         "file_type": report_type,
                                         "file_name": filename,
@@ -520,10 +520,10 @@ except Exception as e:
                                     },
                                 )
                                 print(
-                                    f"  [SUCCESS] 已推送 {report_type} 文件内容到前端 ({len(content)} 字符)"
+                                    f"  [SUCCESS] Pushed {report_type} file content to frontend ({len(content)} characters)"
                                 )
                             except Exception as e:
-                                print(f"  [WARN]️ 推送文件内容到前端失败: {e}")
+                                print(f"  [WARN]️ Failed to push file content to frontend: {e}")
                         return remote_path
                     else:
                         print(
@@ -540,7 +540,7 @@ except Exception as e:
                 traceback.print_exc()
                 print(f"ℹ️ Falling back to local save")
 
-        # 如果是本地 Unix 路径，直接保存
+        # If local Unix path, save directly
         if is_unix_path and os.name != "nt":
             save_paths.append(
                 (
@@ -549,18 +549,18 @@ except Exception as e:
                 )
             )
 
-    # 2. 本地回退路径：{local_sandbox_dir}/output/reports/
+    # 2. Local fallback path: {local_sandbox_dir}/output/reports/
     if local_sandbox_dir:
         local_dir_normalized = str(local_sandbox_dir).replace("\\", "/")
         save_paths.append(
             ("local", Path(local_dir_normalized) / "output" / "reports" / filename)
         )
 
-    # 3. 如果没有提供任何路径，使用当前目录下的 output/reports
+    # 3. If no path provided, use output/reports in current directory
     if not save_paths:
         save_paths.append(("fallback", Path("output") / "reports" / filename))
 
-    # 尝试每个路径直到成功
+    # Try each path until success
     for path_type, report_file in save_paths:
         try:
             report_file.parent.mkdir(parents=True, exist_ok=True)
@@ -572,15 +572,15 @@ except Exception as e:
             if progress_callback:
                 try:
                     report_type_display = {
-                        "retrieval": "检索报告",
-                        "deep_research": "深度研究报告",
-                        "hypothesis": "假设生成报告",
-                        "planning": "实验计划",
-                        "evaluation": "评估报告",
+                        "retrieval": "Retrieval Report",
+                        "deep_research": "Deep Research Report",
+                        "hypothesis": "Hypothesis Report",
+                        "planning": "Experimental Plan",
+                        "evaluation": "Evaluation Report",
                     }.get(report_type, report_type)
                     progress_callback(
                         event_type="file_content",
-                        message=f"📄 {report_type_display}已保存到本地",
+                        message=f"📄 {report_type_display}saved locally",
                         details={
                             "file_type": report_type,
                             "file_name": filename,
@@ -592,10 +592,10 @@ except Exception as e:
                         },
                     )
                     print(
-                        f"  [SUCCESS] 已推送 {report_type} 文件内容到前端 ({len(content)} 字符)"
+                        f"  [SUCCESS] Pushed {report_type} file content to frontend ({len(content)} characters)"
                     )
                 except Exception as e:
-                    print(f"  [WARN]️ 推送文件内容到前端失败: {e}")
+                    print(f"  [WARN]️ Failed to push file content to frontend: {e}")
             return str(report_file)
         except Exception as e:
             print(
@@ -656,100 +656,100 @@ def cache_check_node(state: ImmunityState) -> ImmunityState:
     """
     Stage 0: Cache Check Node (Mem0)
 
-    检查是否有相似的问题已经在 Mem0 中缓存
+    Check if a similar question has been cached in Mem0
 
-    如果缓存命中：
-    - 直接从缓存加载所有结果
-    - 设置 skip_immunity_stages=True 跳过后续阶段
+    If cache hit:
+    - Load all results directly from cache
+    - Set skip_immunity_stages=True to skip subsequent stages
 
-    如果缓存未命中：
-    - 继续执行后续阶段
+    If cache miss:
+    - Continue executing subsequent stages
     """
-    _progress_logger.start_stage("cache_check", "检查 Mem0 缓存")
+    _progress_logger.start_stage("cache_check", "Checking Mem0 cache")
 
     if not MEM0_AVAILABLE:
-        _progress_logger.log_info("Mem0 不可用，跳过缓存检查")
+        _progress_logger.log_info("Mem0 unavailable, skipping cache check")
         _progress_logger.end_stage(
-            "cache_check", success=True, details="跳过（Mem0 不可用）"
+            "cache_check", success=True, details="Skipped (Mem0 unavailable)"
         )
         return state
 
     if not state.original_question:
-        _progress_logger.log_warning("没有原始问题，跳过缓存检查")
+        _progress_logger.log_warning("No original question, skipping cache check")
         _progress_logger.end_stage(
-            "cache_check", success=True, details="跳过（无输入）"
+            "cache_check", success=True, details="Skipped (no input)"
         )
         return state
 
     try:
-        _progress_logger.log_info(f"检查缓存: {state.original_question[:100]}...")
+        _progress_logger.log_info(f"Checking cache: {state.original_question[:100]}...")
 
-        # 生成输入哈希
+        # Generate input hash
         input_hash = generate_input_hash(state.original_question)
         state.cache_input_hash = input_hash
-        _progress_logger.log_info(f"输入哈希: {input_hash}")
+        _progress_logger.log_info(f"Input hash: {input_hash}")
 
-        # 检查缓存
+        # Check cache
         is_cached, cached_trace = check_immunity_cache_sync(
             user_input=state.original_question,
-            score_threshold=0.90,  # 要求 90% 以上相似度
+            score_threshold=0.90,  # Require 90%+ similarity
         )
 
         if is_cached and cached_trace:
-            _progress_logger.log_info("[SUCCESS] 缓存命中！从 Mem0 加载结果...")
+            _progress_logger.log_info("[SUCCESS] Cache hit! Loading results from Mem0...")
 
-            # 从缓存加载所有结果
+            # Load all results from cache
             state.cache_hit = True
             state.skip_immunity_stages = True
 
-            # 加载优化查询
+            # Load optimized queries
             state.optimized_questions = cached_trace.optimized_questions or [
                 state.original_question
             ]
             state.optimized_question = "; ".join(state.optimized_questions)
 
-            # 加载研究结果
+            # Load research results
             state.research_summary = cached_trace.research_summary or ""
-            state.research_confidence = 80.0  # 缓存结果默认高置信度
+            state.research_confidence = 80.0  # Cached results default to high confidence
 
-            # 加载假设结果
+            # Load hypothesis results
             state.hypothesis_summary = cached_trace.hypothesis_summary or ""
             state.hypothesis_confidence = 80.0
 
-            # 加载计划
+            # Load plan
             state.final_enhanced_plan = cached_trace.final_enhanced_plan or ""
             state.research_informed_plan = cached_trace.final_enhanced_plan or ""
             state.generated_plan = cached_trace.final_enhanced_plan or ""
             state.execution_plan = cached_trace.execution_plan or ""
 
-            # 加载评估
+            # Load evaluation
             state.final_evaluation = cached_trace.final_evaluation or ""
 
-            # 加载 Todo-List 摘要
+            # Load Todo-List summary
             if cached_trace.todo_list_summary:
                 state.decomposed_tasks = cached_trace.todo_list_summary.get("tasks", [])
 
             _progress_logger.log_info(
-                f"  - 优化查询数: {len(state.optimized_questions)}"
+                f"  - Optimized queries count: {len(state.optimized_questions)}"
             )
             _progress_logger.log_info(
-                f"  - 研究摘要长度: {len(state.research_summary)}"
+                f"  - Research summary length: {len(state.research_summary)}"
             )
-            _progress_logger.log_info(f"  - 计划长度: {len(state.final_enhanced_plan)}")
+            _progress_logger.log_info(f"  - Plan length: {len(state.final_enhanced_plan)}")
 
             _progress_logger.end_stage(
-                "cache_check", success=True, details="[SUCCESS] 缓存命中"
+                "cache_check", success=True, details="[SUCCESS] Cache hit"
             )
         else:
-            _progress_logger.log_info("[ERROR] 缓存未命中，将继续执行 immunity 阶段")
+            _progress_logger.log_info("[ERROR] Cache miss, will continue executing immunity stages")
             state.cache_hit = False
             state.skip_immunity_stages = False
             _progress_logger.end_stage(
-                "cache_check", success=True, details="缓存未命中"
+                "cache_check", success=True, details="Cache miss"
             )
 
     except Exception as e:
-        _progress_logger.log_error("缓存检查失败", e)
+        _progress_logger.log_error("Cache check failed", e)
         import traceback
 
         traceback.print_exc()
@@ -770,28 +770,28 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
     Decompose user question into optimized sub-questions.
     This node has search tools bound to help understand research context.
     """
-    # 启动工作流（在第一个节点执行时）
+    # Start workflow (when first node executes)
     if not _progress_logger.workflow_start_time:
         _progress_logger.start_workflow()
 
-    _progress_logger.start_stage("query_decomposition", "将用户问题分解为优化的子查询")
+    _progress_logger.start_stage("query_decomposition", "Decompose user question into optimized sub-queries")
 
     if not state.original_question:
-        _progress_logger.log_warning("没有原始问题，跳过查询分解")
+        _progress_logger.log_warning("No original question, skipping query decomposition")
         _progress_logger.end_stage(
-            "query_decomposition", success=True, details="跳过（无输入）"
+            "query_decomposition", success=True, details="Skipped (no input)"
         )
         return state
 
-    _progress_logger.log_info(f"原始问题: {state.original_question[:150]}...")
+    _progress_logger.log_info(f"Original question: {state.original_question[:150]}...")
 
     llm = _get_llm_with_callback(state, "bioinformatics")
     if not llm:
-        _progress_logger.log_warning("LLM 不可用，使用原始问题")
+        _progress_logger.log_warning("LLM unavailable, using original question")
         state.optimized_questions = [state.original_question]
         state.optimized_question = state.original_question
         _progress_logger.end_stage(
-            "query_decomposition", success=True, details="降级处理（无 LLM）"
+            "query_decomposition", success=True, details="Fallback (no LLM)"
         )
         return state
 
@@ -827,7 +827,7 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
         # Bind search tools to LLM for understanding research context
         llm_with_tools = llm.bind_tools([web_search, knowledge_search])
 
-        # 记录 LLM 调用
+        # Log LLM call
         llm_info = {
             "model": getattr(llm, "model", getattr(llm, "model_name", "unknown")),
             "temperature": getattr(llm, "temperature", "N/A"),
@@ -854,7 +854,7 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
             if hasattr(response, "tool_calls") and response.tool_calls:
                 tool_iterations += 1
                 _progress_logger.log_info(
-                    f"  [TOOL] LLM 请求工具调用 (迭代 {tool_iterations}/{max_tool_iterations})"
+                    f"  [TOOL] LLM requested tool call (iteration {tool_iterations}/{max_tool_iterations})"
                 )
 
                 # Add AI message with tool calls to conversation
@@ -867,7 +867,7 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
                     tool_id = tool_call.get("id", "")
 
                     _progress_logger.log_info(
-                        f"    - 执行工具: {tool_name}({tool_args})"
+                        f"    - Execute tool: {tool_name}({tool_args})"
                     )
 
                     # Execute tool
@@ -888,7 +888,7 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
         _progress_logger.log_llm_end(elapsed, len(str(response)) if response else 0)
 
         if tool_iterations > 0:
-            _progress_logger.log_info(f"  [STAT] 工具调用总次数: {tool_iterations}")
+            _progress_logger.log_info(f"  [STAT] Total tool calls: {tool_iterations}")
 
         # Parse the response to extract queries
         response_content = (
@@ -916,7 +916,7 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
                     state.optimized_questions = [state.original_question]
         except Exception as parse_error:
             _progress_logger.log_warning(
-                f"JSON 解析失败，尝试 structured_output: {parse_error}"
+                f"JSON parsing failed, trying structured_output: {parse_error}"
             )
             # Fallback: use structured output
             structured_llm = llm.with_structured_output(QueryExpansion)
@@ -935,23 +935,23 @@ def query_decomposition_node(state: ImmunityState) -> ImmunityState:
 
         state.optimized_question = "; ".join(state.optimized_questions)
 
-        # 输出分解结果
-        _progress_logger.log_info(f"生成的子查询数量: {len(state.optimized_questions)}")
+        # Output decomposition results
+        _progress_logger.log_info(f"Generated sub-queries count: {len(state.optimized_questions)}")
         for i, q in enumerate(state.optimized_questions, 1):
-            _progress_logger.log_info(f"  子查询 {i}: {q[:80]}...")
+            _progress_logger.log_info(f"  Sub-query {i}: {q[:80]}...")
 
         _progress_logger.end_stage(
             "query_decomposition",
             success=True,
-            details=f"生成 {len(state.optimized_questions)} 个优化查询",
+            details=f"Generated {len(state.optimized_questions)} optimized queries",
         )
 
     except Exception as e:
-        _progress_logger.log_error("查询分解失败", e)
+        _progress_logger.log_error("Query decomposition failed", e)
         state.optimized_questions = [state.original_question]
         state.optimized_question = state.original_question
         _progress_logger.end_stage(
-            "query_decomposition", success=False, details="降级使用原始问题"
+            "query_decomposition", success=False, details="Fallback using original question"
         )
 
     return state
@@ -973,21 +973,21 @@ def retrieval_node(state: ImmunityState) -> ImmunityState:
     - Stage 3: Deep research analysis
     - Stage 5: Plan generation (citation references)
     """
-    _progress_logger.start_stage("retrieval", "并行执行三种检索方法")
+    _progress_logger.start_stage("retrieval", "Parallel execution of three retrieval methods")
 
     if not state.optimized_questions:
-        _progress_logger.log_warning("没有优化查询，跳过检索")
-        _progress_logger.end_stage("retrieval", success=True, details="跳过（无查询）")
+        _progress_logger.log_warning("No optimized queries, skipping retrieval")
+        _progress_logger.end_stage("retrieval", success=True, details="Skipped (no queries)")
         return state
 
     try:
         from .retrieval_tools import parallel_retrieval_sync
 
-        _progress_logger.log_info("执行三种检索方法：")
-        _progress_logger.log_info("  1. Qdrant 向量数据库检索")
-        _progress_logger.log_info("  2. Tavily API 网页搜索")
-        _progress_logger.log_info("  3. Web 多源检索")
-        _progress_logger.log_info(f"检索查询数量: {len(state.optimized_questions)}")
+        _progress_logger.log_info("Executing three retrieval methods:")
+        _progress_logger.log_info("  1. Qdrant vector database retrieval")
+        _progress_logger.log_info("  2. Tavily API web search")
+        _progress_logger.log_info("  3. Web multi-source retrieval")
+        _progress_logger.log_info(f"Retrieval queries count: {len(state.optimized_questions)}")
 
         start_time = time.perf_counter()
 
@@ -1024,10 +1024,10 @@ Main Citations (Top 10):
 {chr(10).join([f"{i + 1}. {cite.get('author', 'N/A')} et al. ({cite.get('year', 'N/A')}). {cite.get('title', 'N/A')}. *{cite.get('journal', 'N/A')}*" + (f" DOI: {cite.get('doi', '')}" if cite.get("doi") else "") for i, cite in enumerate(state.citations[:10])])}
 """
 
-        _progress_logger.log_info(f"检索完成，耗时: {elapsed:.2f} 秒")
-        _progress_logger.log_info(f"  - 检索文档数: {len(state.retrieval_docs)}")
-        _progress_logger.log_info(f"  - 引用数: {len(state.citations)}")
-        _progress_logger.log_info(f"  - 上下文长度: {len(state.context)} 字符")
+        _progress_logger.log_info(f"Retrieval completed, time: {elapsed:.2f} seconds")
+        _progress_logger.log_info(f"  - Retrieved docs count: {len(state.retrieval_docs)}")
+        _progress_logger.log_info(f"  - Citations count: {len(state.citations)}")
+        _progress_logger.log_info(f"  - Context length: {len(state.context)} characters")
 
         # Save retrieval report
         report_path = _save_report(
@@ -1044,11 +1044,11 @@ Main Citations (Top 10):
         _progress_logger.end_stage(
             "retrieval",
             success=True,
-            details=f"文档: {len(state.retrieval_docs)}, 引用: {len(state.citations)}, 耗时: {elapsed:.1f}s",
+            details=f"Docs: {len(state.retrieval_docs)}, Citations: {len(state.citations)}, time: {elapsed:.1f}s",
         )
 
     except Exception as e:
-        _progress_logger.log_error("检索失败", e)
+        _progress_logger.log_error("Retrieval failed", e)
         import traceback
 
         traceback.print_exc()
@@ -1057,7 +1057,7 @@ Main Citations (Top 10):
         state.retrieval_docs = []
         state.citations = []
         _progress_logger.end_stage(
-            "retrieval", success=False, details="检索出错，使用空上下文"
+            "retrieval", success=False, details="Retrieval error, using empty context"
         )
 
     return state
@@ -1073,12 +1073,12 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
     Uses the deep_research subgraph to conduct in-depth analysis of research questions.
     The deep_research subgraph provides multi-step research with web search and synthesis.
     """
-    _progress_logger.start_stage("deep_research", "使用 deep_research 子图进行多步分析")
+    _progress_logger.start_stage("deep_research", "Multi-step analysis using deep_research subgraph")
 
     if not state.original_question:
-        _progress_logger.log_warning("没有原始问题，跳过深度研究")
+        _progress_logger.log_warning("No original question, skipping deep research")
         _progress_logger.end_stage(
-            "deep_research", success=True, details="跳过（无输入）"
+            "deep_research", success=True, details="Skipped (no input)"
         )
         return state
 
@@ -1089,23 +1089,23 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
         # Add retrieval context if available
         if state.context:
             research_question = f"""
-研究主题: {state.original_question}
+Research Topic: {state.original_question}
 
-已检索的背景资料:
+Retrieved background materials:
 {state.context[:4000]}
 
-请基于以上背景资料，深入研究并回答上述问题。
+Please conduct in-depth research and answer the above question based on the background materials.
 """
 
         # Add optimized queries if available
         if state.optimized_questions:
             sub_queries = "\n".join([f"- {q}" for q in state.optimized_questions[:5]])
-            research_question += f"\n\n重点关注以下子问题:\n{sub_queries}"
+            research_question += f"\n\nFocus on the following sub-questions:\n{sub_queries}"
 
-        _progress_logger.log_info(f"研究问题: {state.original_question[:100]}...")
-        _progress_logger.log_info("使用 deep_research 子图进行多步分析...")
+        _progress_logger.log_info(f"Research question: {state.original_question[:100]}...")
+        _progress_logger.log_info("Multi-step analysis using deep_research subgraph...")
         _progress_logger.log_info(
-            "配置: max_iterations=3, max_concurrent=2, max_tool_calls=6"
+            "Config: max_iterations=3, max_concurrent=2, max_tool_calls=6"
         )
 
         # Get deep_research subgraph configuration
@@ -1126,13 +1126,13 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
                 deep_researcher_builder,
             )
 
-            _progress_logger.log_info("正在编译 deep_research 子图...")
+            _progress_logger.log_info("Compiling deep_research subgraph...")
 
             # Compile with memory checkpointing
             graph = deep_researcher_builder.compile(checkpointer=MemorySaver())
 
             _progress_logger.log_info(
-                "开始执行 deep_research 子图（可能需要较长时间）..."
+                "Starting deep_research subgraph execution (may take a while)..."
             )
 
             return await graph.ainvoke(research_input, dr_config)
@@ -1174,7 +1174,7 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
             try:
                 loop = asyncio.get_running_loop()
                 # If we're already in an async context, we need to run in a separate thread
-                _progress_logger.log_info("检测到运行中的事件循环，使用线程池执行...")
+                _progress_logger.log_info("Detected running event loop, using thread pool...")
 
                 with concurrent.futures.ThreadPoolExecutor(
                     max_workers=1, thread_name_prefix="deep_research_"
@@ -1185,18 +1185,18 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
                     result = future.result(timeout=1800)  # 30 minute timeout
             except RuntimeError:
                 # No running loop, safe to use our cleanup function
-                _progress_logger.log_info("使用新事件循环执行...")
+                _progress_logger.log_info("Using new event loop...")
                 result = run_with_proper_cleanup(run_deep_research_async)
 
         except concurrent.futures.TimeoutError:
             elapsed = time.perf_counter() - start_time
             _progress_logger.log_warning(
-                f"deep_research 子图执行超时 ({elapsed:.1f}秒)，使用降级方案"
+                f"deep_research subgraph execution timeout ({elapsed:.1f}seconds)，Using fallback"
             )
             result = None
         except Exception as e:
             elapsed = time.perf_counter() - start_time
-            _progress_logger.log_error(f"deep_research 子图执行失败: {e}", e)
+            _progress_logger.log_error(f"deep_research subgraph execution failed: {e}", e)
             result = None
 
         elapsed = time.perf_counter() - start_time
@@ -1204,7 +1204,7 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
         # Handle case where deep_research failed or timed out
         if result is None:
             _progress_logger.log_warning(
-                "deep_research 未返回结果，使用检索上下文作为研究摘要"
+                "deep_research returned no results, using retrieval context as research summary"
             )
             # Fallback: use retrieval context as research summary
             if state.context:
@@ -1217,14 +1217,14 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
 """
                 state.research_confidence = 40.0
             else:
-                state.research_summary = "深度研究未能完成，请基于原始问题进行分析。"
+                state.research_summary = "Deep research could not be completed. Please analyze based on the original question."
                 state.research_confidence = 20.0
             _progress_logger.end_stage(
-                "deep_research", success=True, details="使用降级方案"
+                "deep_research", success=True, details="Using fallback"
             )
             return state
 
-        _progress_logger.log_info(f"deep_research 子图执行完成，耗时: {elapsed:.2f} 秒")
+        _progress_logger.log_info(f"deep_research subgraph execution completed，time: {elapsed:.2f} seconds")
 
         # Extract results from deep_research subgraph
         final_report = result.get("final_report", "")
@@ -1257,11 +1257,11 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
             # Set confidence based on results
             state.research_confidence = 80.0 if final_report else 50.0
 
-            _progress_logger.log_info(f"深度研究完成:")
-            _progress_logger.log_info(f"  - 最终报告长度: {len(final_report)} 字符")
-            _progress_logger.log_info(f"  - 研究简报长度: {len(research_brief)} 字符")
-            _progress_logger.log_info(f"  - 笔记数量: {len(notes)}")
-            _progress_logger.log_info(f"  - 置信度: {state.research_confidence:.1f}%")
+            _progress_logger.log_info(f"Deep research completed:")
+            _progress_logger.log_info(f"  - Final report length: {len(final_report)} characters")
+            _progress_logger.log_info(f"  - Research brief length: {len(research_brief)} characters")
+            _progress_logger.log_info(f"  - Notes count: {len(notes)}")
+            _progress_logger.log_info(f"  - Confidence: {state.research_confidence:.1f}%")
 
             # Save research report
             report_path = _save_report(
@@ -1277,10 +1277,10 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
             _progress_logger.end_stage(
                 "deep_research",
                 success=True,
-                details=f"报告: {len(final_report)}字符, 笔记: {len(notes)}, 耗时: {elapsed:.1f}s",
+                details=f"Report: {len(final_report)}characters, Notes: {len(notes)}, time: {elapsed:.1f}s",
             )
         else:
-            _progress_logger.log_warning("深度研究返回空结果，使用降级方案")
+            _progress_logger.log_warning("Deep research returned empty results, using fallback")
             # Fallback to simple context-based research
             state.research_summary = f"""
 <research_findings>
@@ -1297,11 +1297,11 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
 """
             state.research_confidence = 50.0
             _progress_logger.end_stage(
-                "deep_research", success=True, details="降级使用检索上下文"
+                "deep_research", success=True, details="Fallback using retrieval context"
             )
 
     except Exception as e:
-        _progress_logger.log_error("深度研究失败", e)
+        _progress_logger.log_error("Deep research failed", e)
         import traceback
 
         traceback.print_exc()
@@ -1324,7 +1324,7 @@ def deep_research_node(state: ImmunityState) -> ImmunityState:
 """
         state.research_confidence = 40.0
         _progress_logger.end_stage(
-            "deep_research", success=False, details="使用上下文降级方案"
+            "deep_research", success=False, details="Using context fallback"
         )
 
     return state
@@ -1340,21 +1340,21 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
     Generate testable hypotheses based on research results
     """
     _progress_logger.start_stage(
-        "hypothesis_generation", "基于研究结果生成可测试的假设"
+        "hypothesis_generation", "Generate testable hypotheses based on research results"
     )
 
     if not state.research_summary:
-        _progress_logger.log_warning("没有研究结果，跳过假设生成")
+        _progress_logger.log_warning("No research results, skipping hypothesis generation")
         _progress_logger.end_stage(
-            "hypothesis_generation", success=True, details="跳过（无研究结果）"
+            "hypothesis_generation", success=True, details="Skipped (no research results)"
         )
         return state
 
     llm = _get_llm_with_callback(state, "bioinformatics")
     if not llm:
-        _progress_logger.log_warning("LLM 不可用，跳过假设生成")
+        _progress_logger.log_warning("LLM unavailable, skipping hypothesis generation")
         _progress_logger.end_stage(
-            "hypothesis_generation", success=True, details="跳过（无 LLM）"
+            "hypothesis_generation", success=True, details="Skipped (no LLM)"
         )
         return state
 
@@ -1397,9 +1397,9 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
             "context_len": len(context),
             "question_block_len": len(question),
         }
-        _progress_logger.log_info(f"Prompt 统计: {prompt_stats}")
+        _progress_logger.log_info(f"Prompt stats: {prompt_stats}")
 
-        # 记录 LLM 调用
+        # Log LLM call
         _progress_logger.log_llm_start(llm_info, len(hypothesis_prompt))
 
         # Directly invoke LLM, then parse JSON
@@ -1414,7 +1414,7 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
             elapsed = time.perf_counter() - start_time
             _progress_logger.log_llm_end(elapsed, 0, success=False)
             raise
-        # [DEBUG] 详细的响应调试
+        # [DEBUG] Detailed response debugging
         _progress_logger.log_info(f"[DEBUG] Response type: {type(response).__name__}")
         _progress_logger.log_info(
             f"[DEBUG] Response attributes: {dir(response)[:10]}..."
@@ -1426,7 +1426,7 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
             f"[DEBUG] Has 'additional_kwargs': {hasattr(response, 'additional_kwargs')}"
         )
 
-        # [CRITICAL] 检查是否有reasoning_content（原生thinking模式）
+        # [CRITICAL] Check for reasoning_content (native thinking mode)
         if hasattr(response, "additional_kwargs"):
             additional_kwargs = response.additional_kwargs
             _progress_logger.log_info(
@@ -1477,7 +1477,7 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
             response.content if hasattr(response, "content") else str(response)
         )
 
-        # [CRITICAL] 如果content是list（多模态响应），需要特殊处理
+        # [CRITICAL] If content is a list (multimodal response), special handling needed
         if isinstance(response_content, list):
             _progress_logger.log_info(
                 f"[DEBUG] Detected list response, extracting text..."
@@ -1498,13 +1498,13 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
                 f"[DEBUG] Extracted text preview: {response_content[:300]}"
             )
 
-        # [VALIDATION] 检查响应是否为空
+        # [VALIDATION] Check if response is empty
         if (
             not response_content
             or not isinstance(response_content, str)
             or not response_content.strip()
         ):
-            _progress_logger.log_error("LLM 返回空响应或无效响应")
+            _progress_logger.log_error("LLM returned empty or invalid response")
             _progress_logger.log_error(
                 f"Response content type: {type(response_content).__name__}"
             )
@@ -1512,14 +1512,14 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
                 f"Response content value: {repr(response_content)}"
             )
             _progress_logger.end_stage(
-                "hypothesis_generation", success=False, details="LLM 返回空响应"
+                "hypothesis_generation", success=False, details="LLM returned empty response"
             )
             return state
 
-        # 使用健壮的 JSON 提取工具
+        # Use robust JSON extraction tool
         from utils.json_extractor import extract_json_from_llm_response
 
-        # 首先尝试使用 JsonOutputParser
+        # First try JsonOutputParser
         hypothesis_data = None
         try:
             parsed = output_parser.parse(response_content)
@@ -1527,10 +1527,10 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
                 hypothesis_data = parsed
         except Exception as e:
             _progress_logger.log_warning(
-                f"JsonOutputParser 解析失败，尝试使用健壮提取: {e}"
+                f"JsonOutputParser parsing failed, trying robust extraction: {e}"
             )
 
-        # 如果 JsonOutputParser 失败，使用健壮的提取函数
+        # If JsonOutputParser fails, use robust extraction function
         if hypothesis_data is None or not isinstance(hypothesis_data, dict):
             hypothesis_data = extract_json_from_llm_response(
                 response_content, default={}, log_errors=True
@@ -1538,7 +1538,7 @@ def hypothesis_generation_node(state: ImmunityState) -> ImmunityState:
 
             if not hypothesis_data:
                 _progress_logger.log_warning(
-                    f"JSON 提取失败，响应内容预览: {response_content[:200] if response_content else '空响应'}"
+                    f"JSON extraction failed, response content preview: {response_content[:200] if response_content else 'empty response'}"
                 )
 
         if hypothesis_data and hypothesis_data.get("statement"):
@@ -1593,13 +1593,13 @@ Scientific Rationale:
 </hypothesis_findings>
 """
 
-            _progress_logger.log_info(f"假设生成完成:")
+            _progress_logger.log_info(f"Hypothesis generation completed:")
             _progress_logger.log_info(
-                f"  - 假设: {hypothesis_data.get('statement', 'Not specified')[:100]}..."
+                f"  - Hypothesis: {hypothesis_data.get('statement', 'Not specified')[:100]}..."
             )
-            _progress_logger.log_info(f"  - 置信度: {state.hypothesis_confidence:.1f}%")
+            _progress_logger.log_info(f"  - Confidence: {state.hypothesis_confidence:.1f}%")
             _progress_logger.log_info(
-                f"  - 创新水平: {hypothesis_data.get('innovation_level', 'moderate')}"
+                f"  - Innovation level: {hypothesis_data.get('innovation_level', 'moderate')}"
             )
 
             # Save hypothesis report
@@ -1616,16 +1616,16 @@ Scientific Rationale:
             _progress_logger.end_stage(
                 "hypothesis_generation",
                 success=True,
-                details=f"置信度: {state.hypothesis_confidence:.0f}%, 预测: {len(predictions)}",
+                details=f"Confidence: {state.hypothesis_confidence:.0f}%, Predictions: {len(predictions)}",
             )
         else:
-            _progress_logger.log_warning("无法解析假设结果")
+            _progress_logger.log_warning("Unable to parse hypothesis results")
             _progress_logger.end_stage(
-                "hypothesis_generation", success=False, details="JSON 解析失败"
+                "hypothesis_generation", success=False, details="JSON parsing failed"
             )
 
     except Exception as e:
-        _progress_logger.log_error("假设生成失败", e)
+        _progress_logger.log_error("Hypothesis generation failed", e)
         import traceback
 
         traceback.print_exc()
@@ -1678,12 +1678,12 @@ def planning_node(state: ImmunityState) -> ImmunityState:
     Generate executable experimental plan based on research results and hypotheses.
     This node has search tools bound to help LLM find latest experimental methods.
     """
-    _progress_logger.start_stage("planning", "基于研究结果和假设生成可执行实验计划")
+    _progress_logger.start_stage("planning", "Generate executable experimental plan based on research results and hypotheses")
 
     llm = _get_llm_with_callback(state, "bioinformatics")
     if not llm:
-        _progress_logger.log_warning("LLM 不可用，使用简单计划生成")
-        _progress_logger.end_stage("planning", success=True, details="降级使用简单计划")
+        _progress_logger.log_warning("LLM unavailable, using simple plan generation")
+        _progress_logger.end_stage("planning", success=True, details="Fallback using simple plan")
         return _generate_simple_plan(state)
 
     try:
@@ -1753,9 +1753,9 @@ def planning_node(state: ImmunityState) -> ImmunityState:
             "citations_json_len": len(citations_json),
             "tools_info_len": len(tools_info),
         }
-        _progress_logger.log_info(f"Prompt 统计: {prompt_stats}")
+        _progress_logger.log_info(f"Prompt stats: {prompt_stats}")
 
-        # 记录 LLM 调用
+        # Log LLM call
         _progress_logger.log_llm_start(llm_info, len(planning_prompt))
 
         start_time = time.perf_counter()
@@ -1776,7 +1776,7 @@ def planning_node(state: ImmunityState) -> ImmunityState:
             if hasattr(response, "tool_calls") and response.tool_calls:
                 tool_iterations += 1
                 _progress_logger.log_info(
-                    f"  [TOOL] LLM 请求工具调用 (迭代 {tool_iterations}/{max_tool_iterations})"
+                    f"  [TOOL] LLM requested tool call (iteration {tool_iterations}/{max_tool_iterations})"
                 )
 
                 # Add AI message with tool calls to conversation
@@ -1789,7 +1789,7 @@ def planning_node(state: ImmunityState) -> ImmunityState:
                     tool_id = tool_call.get("id", "")
 
                     _progress_logger.log_info(
-                        f"    - 执行工具: {tool_name}({tool_args})"
+                        f"    - Execute tool: {tool_name}({tool_args})"
                     )
 
                     # Execute tool
@@ -1812,7 +1812,7 @@ def planning_node(state: ImmunityState) -> ImmunityState:
         )
 
         if tool_iterations > 0:
-            _progress_logger.log_info(f"  [STAT] 工具调用总次数: {tool_iterations}")
+            _progress_logger.log_info(f"  [STAT] Total tool calls: {tool_iterations}")
 
         plan_content = (
             response.content.strip() if hasattr(response, "content") else str(response)
@@ -1822,8 +1822,8 @@ def planning_node(state: ImmunityState) -> ImmunityState:
         state.research_informed_plan = plan_content
         state.generated_plan = plan_content
 
-        _progress_logger.log_info(f"计划生成完成:")
-        _progress_logger.log_info(f"  - 计划长度: {len(plan_content)} 字符")
+        _progress_logger.log_info(f"Plan generation completed:")
+        _progress_logger.log_info(f"  - Plan length: {len(plan_content)} characters")
 
         # Save plan report
         report_path = _save_report(
@@ -1839,17 +1839,17 @@ def planning_node(state: ImmunityState) -> ImmunityState:
         _progress_logger.end_stage(
             "planning",
             success=True,
-            details=f"计划长度: {len(plan_content)} 字符, 耗时: {elapsed:.1f}s",
+            details=f"Plan length: {len(plan_content)} characters, time: {elapsed:.1f}s",
         )
 
     except Exception as e:
-        _progress_logger.log_error("计划生成失败", e)
+        _progress_logger.log_error("Plan generation failed", e)
         import traceback
 
         traceback.print_exc()
         # Fallback solution
         _progress_logger.end_stage(
-            "planning", success=False, details="降级使用简单计划"
+            "planning", success=False, details="Fallback using simple plan"
         )
         return _generate_simple_plan(state)
 
@@ -1886,17 +1886,17 @@ def evaluation_node(state: ImmunityState) -> ImmunityState:
 
     Evaluate the scientific validity and feasibility of the experimental plan
     """
-    _progress_logger.start_stage("evaluation", "评估实验计划的科学性和可行性")
+    _progress_logger.start_stage("evaluation", "Evaluate scientific validity and feasibility of experimental plan")
 
     if not state.final_enhanced_plan:
-        _progress_logger.log_warning("没有计划可评估")
+        _progress_logger.log_warning("No plan to evaluate")
         state.final_evaluation = "No plan generated, cannot evaluate"
-        _progress_logger.end_stage("evaluation", success=True, details="跳过（无计划）")
+        _progress_logger.end_stage("evaluation", success=True, details="Skipped (no plan)")
         return state
 
     # If user-provided plan, skip evaluation
     if state.is_user_provided_plan:
-        _progress_logger.log_info("用户提供的计划，跳过自动评估")
+        _progress_logger.log_info("User-provided plan, skipping automatic evaluation")
         state.final_evaluation = f"""User-provided execution plan:
 
 {state.final_enhanced_plan}
@@ -1914,15 +1914,15 @@ Evaluation Note: This plan was directly provided by the user, automatic evaluati
             session_id=state.session_id,
         )
         _progress_logger.end_stage(
-            "evaluation", success=True, details="跳过（用户计划）"
+            "evaluation", success=True, details="Skipped (user plan)"
         )
         return state
 
     llm = _get_llm_with_callback(state, "bioinformatics")
     if not llm:
-        _progress_logger.log_warning("LLM 不可用，跳过评估")
+        _progress_logger.log_warning("LLM unavailable, skipping evaluation")
         state.final_evaluation = "LLM unavailable, cannot perform evaluation"
-        _progress_logger.end_stage("evaluation", success=True, details="跳过（无 LLM）")
+        _progress_logger.end_stage("evaluation", success=True, details="Skipped (no LLM)")
         return state
 
     try:
@@ -1955,8 +1955,8 @@ Evaluation Note: This plan was directly provided by the user, automatic evaluati
 
         state.final_evaluation = evaluation_content
 
-        _progress_logger.log_info(f"评估完成:")
-        _progress_logger.log_info(f"  - 评估报告长度: {len(evaluation_content)} 字符")
+        _progress_logger.log_info(f"Evaluation completed:")
+        _progress_logger.log_info(f"  - Evaluation report length: {len(evaluation_content)} characters")
 
         # Save evaluation report
         full_evaluation = evaluation_content + "\n\n" + state.original_question
@@ -1973,11 +1973,11 @@ Evaluation Note: This plan was directly provided by the user, automatic evaluati
         _progress_logger.end_stage(
             "evaluation",
             success=True,
-            details=f"报告长度: {len(evaluation_content)} 字符, 耗时: {elapsed:.1f}s",
+            details=f"Report length: {len(evaluation_content)} characters, time: {elapsed:.1f}s",
         )
 
     except Exception as e:
-        _progress_logger.log_error("评估失败", e)
+        _progress_logger.log_error("Evaluation failed", e)
         import traceback
 
         traceback.print_exc()
@@ -2000,37 +2000,37 @@ def immunity_input_mapper(global_state: GlobalState) -> ImmunityState:
     Returns:
         Immunity subgraph state
     """
-    # sandbox_data_dir 是沙盒服务器路径（如 /data/sessions/{session_id}）
-    # sandbox_dir 是本地沙盒目录（如 D:/path/to/sandbox）
+    # sandbox_data_dir is sandbox server path (e.g., /data/sessions/{session_id})
+    # sandbox_dir is local sandbox directory (e.g., D:/path/to/sandbox)
     sandbox_data_dir = global_state.sandbox_data_dir or ""
     local_sandbox_dir = global_state.sandbox_dir or ""
 
-    # [DEBUG] 检查 global_state 中的 progress_callback
+    # [DEBUG] Check progress_callback in global_state
     has_progress_callback = global_state.session_id
     has_session_id = hasattr(global_state, "session_id") and global_state.session_id
-    print(f"[Immunity] immunity_input_mapper 状态检查:")
+    print(f"[Immunity] immunity_input_mapper state check:")
     print(f"  - global_state.progress_callback: {has_progress_callback}")
     print(f"  - global_state.session_id: {has_session_id}")
-    print(f"  - global_state.get_llm 方法存在: {hasattr(global_state, 'get_llm')}")
+    print(f"  - global_state.get_llm method exists: {hasattr(global_state, 'get_llm')}")
 
     immunity_state = ImmunityState(
         original_question=global_state.user_input,
         subtasks=global_state.subtasks,
         parallel_task_groups=global_state.parallel_task_groups,
-        sandbox_dir=sandbox_data_dir,  # 主路径：沙盒服务器路径
-        local_sandbox_dir=local_sandbox_dir,  # 回退路径：本地路径
+        sandbox_dir=sandbox_data_dir,  # Primary path: sandbox server path
+        local_sandbox_dir=local_sandbox_dir,  # Fallback path: local path
         parent_state=global_state,
         # [FIX] Do NOT pass progress_callback - it cannot be serialized by LangGraph.
         # The callback is retrieved dynamically from global registry via session_id in get_llm().
         session_id=global_state.session_id,
-        # Mem0 缓存相关字段初始化
+        # Mem0 cache-related field initialization
         cache_hit=False,
         skip_immunity_stages=False,
         cache_input_hash="",
     )
 
-    # [DEBUG] 检查 immunity_state 创建后的状态
-    print(f"[Immunity] ImmunityState 创建后:")
+    # [DEBUG] Check immunity_state after creation
+    print(f"[Immunity] ImmunityState after creation:")
     print(f"  - immunity_state.session_id: {immunity_state.session_id}")
     print(f"  - immunity_state.parent_state: {immunity_state.parent_state is not None}")
 
@@ -2116,29 +2116,29 @@ def immunity_output_mapper(
 
     global_state.execution_plan = execution_plan
 
-    # 使用进度记录器输出完成信息
-    _progress_logger.log_info(f"Immunity 子图完成:")
-    _progress_logger.log_info(f"  - 优化查询数: {len(optimized_questions)}")
-    _progress_logger.log_info(f"  - 研究置信度: {research_confidence:.1f}%")
-    _progress_logger.log_info(f"  - 假设置信度: {hypothesis_confidence:.1f}%")
+    # Use progress logger to output completion info
+    _progress_logger.log_info(f"Immunity subgraph completed:")
+    _progress_logger.log_info(f"  - Optimized queries count: {len(optimized_questions)}")
+    _progress_logger.log_info(f"  - Research confidence: {research_confidence:.1f}%")
+    _progress_logger.log_info(f"  - Hypothesis confidence: {hypothesis_confidence:.1f}%")
     _progress_logger.log_info(
-        f"  - 计划文档长度: {len(final_enhanced_plan or '')} 字符"
+        f"  - Plan document length: {len(final_enhanced_plan or '')} characters"
     )
 
-    # [HOT] 推送生成的文件内容到前端（通过SSE）
+    # [HOT] Push generated file content to frontend (via SSE)
     if global_state.session_id:
         try:
-            # 获取session_id和沙盒目录
+            # Get session_id and sandbox directory
             session_id = getattr(global_state, "session_id", None)
             sandbox_dir = getattr(global_state, "sandbox_dir", None)
 
             if session_id and sandbox_dir:
-                # 推送执行计划
+                # Push execution plan
                 if final_enhanced_plan or execution_plan:
                     plan_content = final_enhanced_plan or execution_plan
                     global_get_progress_callback_by_session(state.session_id)(
                         event_type="file_content",
-                        message=f"📄 实验计划生成完成",
+                        message=f"📄 Experimental plan generation completed",
                         details={
                             "file_type": "execution_plan",
                             "file_name": "planning_report.md",
@@ -2148,14 +2148,14 @@ def immunity_output_mapper(
                         },
                     )
                     _progress_logger.log_info(
-                        f"  [SUCCESS] 已推送实验计划到前端 ({len(plan_content)} 字符)"
+                        f"  [SUCCESS] Pushed experimental plan to frontend ({len(plan_content)} characters)"
                     )
 
-                # 推送研究报告（如果有）
+                # Push research report (if available)
                 if research_summary:
                     global_get_progress_callback_by_session(state.session_id)(
                         event_type="file_content",
-                        message=f"📚 研究报告已生成",
+                        message=f"📚 Research report generated",
                         details={
                             "file_type": "research_report",
                             "file_name": "research_report.md",
@@ -2165,14 +2165,14 @@ def immunity_output_mapper(
                         },
                     )
                     _progress_logger.log_info(
-                        f"  [SUCCESS] 已推送研究报告到前端 ({len(research_summary)} 字符)"
+                        f"  [SUCCESS] Pushed research report to frontend ({len(research_summary)} characters)"
                     )
 
-                # 推送假设生成报告（如果有）
+                # Push hypothesis report (if available)
                 if hypothesis_summary:
                     global_get_progress_callback_by_session(state.session_id)(
                         event_type="file_content",
-                        message=f"🧬 假设生成报告已生成",
+                        message=f"🧬 Hypothesis report generated",
                         details={
                             "file_type": "hypothesis_report",
                             "file_name": "hypothesis_report.md",
@@ -2182,14 +2182,14 @@ def immunity_output_mapper(
                         },
                     )
                     _progress_logger.log_info(
-                        f"  [SUCCESS] 已推送假设报告到前端 ({len(hypothesis_summary)} 字符)"
+                        f"  [SUCCESS] Pushed hypothesis report to frontend ({len(hypothesis_summary)} characters)"
                     )
 
-                # 推送评估报告（如果有）
+                # Push evaluation report (if available)
                 if final_evaluation:
                     global_get_progress_callback_by_session(state.session_id)(
                         event_type="file_content",
-                        message=f"[STAT] 评估报告已生成",
+                        message=f"[STAT] Evaluation report generated",
                         details={
                             "file_type": "evaluation_report",
                             "file_name": "evaluation_report.md",
@@ -2199,16 +2199,16 @@ def immunity_output_mapper(
                         },
                     )
                     _progress_logger.log_info(
-                        f"  [SUCCESS] 已推送评估报告到前端 ({len(final_evaluation)} 字符)"
+                        f"  [SUCCESS] Pushed evaluation report to frontend ({len(final_evaluation)} characters)"
                     )
 
         except Exception as e:
-            _progress_logger.log_warning(f"推送文件内容到前端失败: {e}")
+            _progress_logger.log_warning(f"Failed to push file content to frontend: {e}")
             import traceback
 
             traceback.print_exc()
 
-    # 结束工作流
+    # End workflow
     _progress_logger.end_workflow(success=True)
 
     return global_state
@@ -2219,11 +2219,11 @@ def immunity_output_mapper(
 
 def _should_skip_stages(state: ImmunityState) -> str:
     """
-    条件路由：判断是否跳过后续阶段
+    Conditional routing: determine whether to skip subsequent stages
 
     Returns:
-        "skip_to_planning": 跳过中间阶段，直接到 planning（用于缓存命中）
-        "continue_retrieval": 继续执行 retrieval 阶段
+        "skip_to_planning": Skip intermediate stages, go directly to planning (for cache hit)
+        "continue_retrieval": Continue executing retrieval stage
     """
     if state.skip_immunity_stages or state.cache_hit:
         return "skip_to_planning"
@@ -2232,11 +2232,11 @@ def _should_skip_stages(state: ImmunityState) -> str:
 
 def _should_skip_to_evaluation(state: ImmunityState) -> str:
     """
-    条件路由：判断是否跳过到 evaluation（缓存命中时跳过 planning）
+    Conditional routing: determine whether to skip to evaluation (skip planning on cache hit)
 
     Returns:
-        "skip_to_evaluation": 跳过 planning，直接到 evaluation
-        "continue_planning": 继续执行 planning 阶段
+        "skip_to_evaluation": Skip planning, go directly to evaluation
+        "continue_planning": Continue executing planning stage
     """
     if state.skip_immunity_stages or state.cache_hit:
         return "skip_to_evaluation"
@@ -2250,7 +2250,7 @@ def build_immunity_subgraph():
     Complete workflow:
     Cache Check → Query Decomposition → Retrieval → Deep Research → Hypothesis Generation → Planning ⭐ → Evaluation
 
-    如果缓存命中，则跳过中间阶段直接使用缓存结果
+    If cache hit, skip intermediate stages and use cached results directly
 
     Returns:
         Compiled subgraph
@@ -2267,28 +2267,28 @@ def build_immunity_subgraph():
     graph.add_node("evaluation", evaluation_node)  # Stage 6
 
     # Define flow rules
-    graph.add_edge(START, "cache_check")  # 首先检查缓存
+    graph.add_edge(START, "cache_check")  # Check cache first
     graph.add_edge(
         "cache_check", "query_decomposition"
-    )  # 无论缓存是否命中，都执行 query_decomposition（用于记录）
+    )  # Always execute query_decomposition regardless of cache hit (for logging)
 
-    # 条件路由：query_decomposition 后决定是否跳过中间阶段
+    # Conditional routing: after query_decomposition decide whether to skip intermediate stages
     graph.add_conditional_edges(
         "query_decomposition",
         _should_skip_stages,
         {
-            "skip_to_planning": "planning",  # 缓存命中，跳过中间阶段
-            "continue_retrieval": "retrieval",  # 正常流程
+            "skip_to_planning": "planning",  # Cache hit, skip intermediate stages
+            "continue_retrieval": "retrieval",  # Normal flow
         },
     )
 
-    # 正常流程边
+    # Normal flow edges
     graph.add_edge("retrieval", "deep_research")
     graph.add_edge("deep_research", "hypothesis_generation")
     graph.add_edge("hypothesis_generation", "planning")
 
-    # 条件路由：planning 后决定是否跳过到 evaluation
-    # 注意：即使缓存命中，我们也执行 planning 节点（用于生成最终计划）
+    # Conditional routing: after planning decide whether to skip to evaluation
+    # Note: Even on cache hit, we execute the planning node (to generate final plan)
     graph.add_edge("planning", "evaluation")
     graph.add_edge("evaluation", END)
 

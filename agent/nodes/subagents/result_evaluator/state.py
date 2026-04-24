@@ -1,13 +1,13 @@
 """
 Result Evaluator Subgraph State Definition
 
-用于总结执行结果并生成最终报告的状态定义
+State definition for summarizing execution results and generating final reports
 
-增强功能：
-1. 收集完整的分析流程信息（deep research, hypothesis, execution plan, task list）
-2. 分析 task list 的推导依据
-3. 收集并分析工具输出
-4. 生成类似学术论文格式的分析报告
+Enhanced features:
+1. Collect complete analysis pipeline information (deep research, hypothesis, execution plan, task list)
+2. Analyze task list derivation basis
+3. Collect and analyze tool outputs
+4. Generate academic paper style analysis reports
 """
 
 from typing import Dict, List, Any, Optional, Callable
@@ -15,82 +15,96 @@ from pydantic import BaseModel, Field, ConfigDict
 
 
 class TaskResultSummary(BaseModel):
-    """单个任务的执行结果摘要"""
+    """Summary of a single task's execution result"""
 
-    task_id: str = Field(description="任务ID")
-    task_type: str = Field(default="", description="任务类型")
-    status: str = Field(default="", description="任务状态")
-    content: str = Field(default="", description="任务内容")
-    error: Optional[str] = Field(default=None, description="错误信息")
-    output: Optional[Any] = Field(default=None, description="输出结果")
+    task_id: str = Field(description="Task ID")
+    task_type: str = Field(default="", description="Task type")
+    status: str = Field(default="", description="Task status")
+    content: str = Field(default="", description="Task content")
+    error: Optional[str] = Field(default=None, description="Error message")
+    output: Optional[Any] = Field(default=None, description="Output result")
     output_files: List[str] = Field(
-        default_factory=list, description="输出文件路径列表"
+        default_factory=list, description="Output file path list"
     )
-    execution_time: Optional[float] = Field(default=None, description="执行时间(秒)")
+    execution_time: Optional[float] = Field(
+        default=None, description="Execution time (seconds)"
+    )
 
 
 class DeepResearchInfo(BaseModel):
-    """深度研究信息"""
+    """Deep research information"""
 
-    research_summary: str = Field(default="", description="研究摘要")
-    key_insights: List[str] = Field(default_factory=list, description="关键洞察")
-    evidence: List[str] = Field(default_factory=list, description="证据")
-    knowledge_gaps: List[str] = Field(default_factory=list, description="知识空白")
-    confidence: float = Field(default=0.0, description="研究置信度")
+    research_summary: str = Field(default="", description="Research summary")
+    key_insights: List[str] = Field(default_factory=list, description="Key insights")
+    evidence: List[str] = Field(default_factory=list, description="Evidence")
+    knowledge_gaps: List[str] = Field(
+        default_factory=list, description="Knowledge gaps"
+    )
+    confidence: float = Field(default=0.0, description="Research confidence")
 
 
 class HypothesisInfo(BaseModel):
-    """假设信息"""
+    """Hypothesis information"""
 
-    hypothesis_summary: str = Field(default="", description="假设摘要")
+    hypothesis_summary: str = Field(default="", description="Hypothesis summary")
     testable_predictions: List[str] = Field(
-        default_factory=list, description="可验证的预测"
+        default_factory=list, description="Testable predictions"
     )
-    confidence: float = Field(default=0.0, description="假设置信度")
+    confidence: float = Field(default=0.0, description="Hypothesis confidence")
 
 
 class TaskListDerivation(BaseModel):
-    """任务列表推导依据"""
+    """Task list derivation basis"""
 
-    decomposition_summary: str = Field(default="", description="任务分解摘要")
-    required_services: List[str] = Field(
-        default_factory=list, description="所需服务列表"
+    decomposition_summary: str = Field(
+        default="", description="Task decomposition summary"
     )
-    dependency_rationale: str = Field(default="", description="依赖关系依据")
+    required_services: List[str] = Field(
+        default_factory=list, description="Required services list"
+    )
+    dependency_rationale: str = Field(default="", description="Dependency rationale")
     parallel_groups: Dict[str, Any] = Field(
-        default_factory=dict, description="并行组信息"
+        default_factory=dict, description="Parallel group information"
     )
 
 
 class ToolOutputSummary(BaseModel):
-    """工具输出摘要"""
+    """Tool output summary"""
 
-    file_path: str = Field(default="", description="文件路径")
-    file_type: str = Field(default="", description="文件类型")
-    content_preview: str = Field(default="", description="内容预览")
-    key_results: List[str] = Field(default_factory=list, description="关键结果")
-    content_summary: str = Field(default="", description="LLM总结的内容摘要")
-    file_size: int = Field(default=0, description="文件大小(字节)")
-    row_count: Optional[int] = Field(default=None, description="CSV/表格文件的行数")
-    columns: List[str] = Field(default_factory=list, description="CSV文件的列名")
-    statistics: Dict[str, Any] = Field(default_factory=dict, description="文件统计信息")
+    file_path: str = Field(default="", description="File path")
+    file_type: str = Field(default="", description="File type")
+    content_preview: str = Field(default="", description="Content preview")
+    key_results: List[str] = Field(default_factory=list, description="Key results")
+    content_summary: str = Field(
+        default="", description="LLM-summarized content summary"
+    )
+    file_size: int = Field(default=0, description="File size (bytes)")
+    row_count: Optional[int] = Field(
+        default=None, description="Row count for CSV/table files"
+    )
+    columns: List[str] = Field(
+        default_factory=list, description="Column names for CSV files"
+    )
+    statistics: Dict[str, Any] = Field(
+        default_factory=dict, description="File statistics"
+    )
 
 
 class ResultEvaluatorState(BaseModel):
     """
-    Result Evaluator 子图状态
+    Result Evaluator Subgraph State
 
-    功能：
-    1. 收集所有任务的执行结果
-    2. 收集 executor 产出的文件
-    3. 结合 immunity 计划进行分析
-    4. 生成最终总结报告（txt 格式）
+    Features:
+    1. Collect execution results from all tasks
+    2. Collect files produced by executor
+    3. Analyze in combination with immunity plan
+    4. Generate final summary report (txt format)
 
-    增强功能：
-    - 收集并展示 deep research 结果
-    - 收集并展示 hypothesis
-    - 分析 task list 的推导依据
-    - 整合工具输出分析
+    Enhanced features:
+    - Collect and display deep research results
+    - Collect and display hypothesis
+    - Analyze task list derivation basis
+    - Integrate tool output analysis
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -98,100 +112,104 @@ class ResultEvaluatorState(BaseModel):
     # ========== SSE progress callback ==========
     # IMPORTANT: Do NOT store progress_callback in state - it cannot be serialized by LangGraph.
     # The callback is retrieved dynamically from the global registry via session_id in get_llm().
-    session_id: Optional[str] = Field(default=None, description="会话ID")
+    session_id: Optional[str] = Field(default=None, description="Session ID")
     # Note: exclude=True to avoid LangGraph serialization failure (circular reference to GlobalState)
     parent_state: Optional[Any] = Field(
-        default=None, exclude=True, description="父状态引用"
+        default=None, exclude=True, description="Parent state reference"
     )
 
-    # ========== 输入 ==========
-    # 用户原始输入
-    user_input: str = Field(default="", description="用户原始输入")
+    # ========== Input ==========
+    # User's original input
+    user_input: str = Field(default="", description="User's original input")
 
-    # Immunity 子图产出的执行计划
-    execution_plan: str = Field(default="", description="执行计划")
+    # Execution plan produced by Immunity subgraph
+    execution_plan: str = Field(default="", description="Execution plan")
 
-    # ========== 增强输入：分析流程信息 ==========
-    # 深度研究信息
+    # ========== Enhanced Input: Analysis Pipeline Information ==========
+    # Deep research information
     deep_research: DeepResearchInfo = Field(
-        default_factory=DeepResearchInfo, description="深度研究结果"
+        default_factory=DeepResearchInfo, description="Deep research results"
     )
 
-    # 假设信息
+    # Hypothesis information
     hypothesis: HypothesisInfo = Field(
-        default_factory=HypothesisInfo, description="生成的假设"
+        default_factory=HypothesisInfo, description="Generated hypothesis"
     )
 
-    # 任务列表推导依据
+    # Task list derivation basis
     task_list_derivation: TaskListDerivation = Field(
-        default_factory=TaskListDerivation, description="任务列表的推导依据"
+        default_factory=TaskListDerivation, description="Task list derivation basis"
     )
 
-    # 任务列表
+    # Task list
     task_results: Dict[str, TaskResultSummary] = Field(
-        default_factory=dict, description="任务执行结果，key=task_id"
+        default_factory=dict, description="Task execution results, key=task_id"
     )
 
-    # 所有任务
+    # All tasks
     all_tasks: List[TaskResultSummary] = Field(
-        default_factory=list, description="所有任务列表"
+        default_factory=list, description="All tasks list"
     )
 
-    # ========== 增强输入：工具输出 ==========
-    # Executor 产出的文件路径
+    # ========== Enhanced Input: Tool Outputs ==========
+    # File paths produced by Executor
     output_files: List[str] = Field(
-        default_factory=list, description="执行器产出的文件路径列表"
+        default_factory=list, description="File paths produced by executor"
     )
 
-    # 工具输出摘要
+    # Tool output summaries
     tool_output_summaries: List[ToolOutputSummary] = Field(
-        default_factory=list, description="工具输出摘要列表"
+        default_factory=list, description="Tool output summary list"
     )
 
-    # ========== 执行统计 ==========
-    total_tasks: int = Field(default=0, description="总任务数")
-    completed_tasks: int = Field(default=0, description="完成任务数")
-    failed_tasks: int = Field(default=0, description="失败任务数")
+    # ========== Execution Statistics ==========
+    total_tasks: int = Field(default=0, description="Total task count")
+    completed_tasks: int = Field(default=0, description="Completed task count")
+    failed_tasks: int = Field(default=0, description="Failed task count")
 
-    # ========== 分析结果 ==========
-    success_rate: float = Field(default=0.0, description="成功率")
-    error_summary: str = Field(default="", description="错误摘要")
-    key_findings: List[str] = Field(default_factory=list, description="关键发现")
-    recommendations: List[str] = Field(default_factory=list, description="建议")
+    # ========== Analysis Results ==========
+    success_rate: float = Field(default=0.0, description="Success rate")
+    error_summary: str = Field(default="", description="Error summary")
+    key_findings: List[str] = Field(default_factory=list, description="Key findings")
+    recommendations: List[str] = Field(
+        default_factory=list, description="Recommendations"
+    )
 
-    # ========== 增强分析结果 ==========
-    methodology: str = Field(default="", description="分析方法描述")
-    scientific_rationale: str = Field(default="", description="科学依据")
-    limitations: List[str] = Field(default_factory=list, description="局限性")
+    # ========== Enhanced Analysis Results ==========
+    methodology: str = Field(default="", description="Analysis method description")
+    scientific_rationale: str = Field(default="", description="Scientific rationale")
+    limitations: List[str] = Field(default_factory=list, description="Limitations")
     validation_recommendations: List[str] = Field(
-        default_factory=list, description="验证建议"
+        default_factory=list, description="Validation recommendations"
     )
 
-    # ========== 输出 ==========
-    summary_report: str = Field(default="", description="总结报告")
-    detailed_report: str = Field(default="", description="详细报告")
-    txt_report: str = Field(default="", description="TXT格式分析报告")
-    report_path: Optional[str] = Field(default=None, description="报告文件路径")
-    txt_report_path: Optional[str] = Field(default=None, description="TXT报告文件路径")
+    # ========== Output ==========
+    summary_report: str = Field(default="", description="Summary report")
+    detailed_report: str = Field(default="", description="Detailed report")
+    txt_report: str = Field(default="", description="TXT format analysis report")
+    report_path: Optional[str] = Field(default=None, description="Report file path")
+    txt_report_path: Optional[str] = Field(
+        default=None, description="TXT report file path"
+    )
 
-    # ========== 系统配置 ==========
-    sandbox_dir: str = Field(default="", description="沙盒目录")
+    # ========== System Configuration ==========
+    sandbox_dir: str = Field(default="", description="Sandbox directory")
 
     def get_llm(
         self, purpose: str = "reasoning", node_name: Optional[str] = None, **kwargs
     ) -> Optional[Any]:
         """
-        获取 LLM 实例（推荐方法）
+        Get LLM instance (recommended method)
 
-        复用父图的 get_llm 方法，如果父图不可用则使用本地 callback。
+        Reuses the parent graph's get_llm method; falls back to local callback if parent graph is unavailable.
 
         Args:
-            purpose: 模型用途，可选: "reasoning", "bioinformatics", "reasoning_advanced", "code"
-            node_name: 节点名称
-            **kwargs: 传递给 LLM 创建函数的其他参数
+            purpose: Model purpose, options: "reasoning", "bioinformatics", "reasoning_advanced", "code"
+            node_name: Node name
+            **kwargs: Additional parameters passed to LLM creation function
 
         Returns:
-            LLM 实例，如果创建失败则返回 None
+            LLM instance, or None if creation fails
         """
         if self.parent_state and hasattr(self.parent_state, "get_llm"):
             return self.parent_state.get_llm(

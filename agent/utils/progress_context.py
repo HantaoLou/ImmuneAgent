@@ -1,13 +1,12 @@
 """
 Progress Callback Context Manager
 
-提供全局的progress_callback上下文，让所有LLM调用都能自动获取callback
+Provides a global progress_callback context so all LLM calls can automatically access the callback
 """
 
 from typing import Optional, Callable
 from contextvars import ContextVar
 
-# 使用ContextVar存储当前线程的progress_callback
 _current_progress_callback: ContextVar[Optional[Callable]] = ContextVar(
     "progress_callback", default=None
 )
@@ -15,29 +14,29 @@ _current_progress_callback: ContextVar[Optional[Callable]] = ContextVar(
 
 def set_progress_callback(callback: Optional[Callable]) -> None:
     """
-    设置当前上下文的progress_callback
+    Set the progress_callback for the current context
 
     Args:
-        callback: progress回调函数
+        callback: Progress callback function
     """
     _current_progress_callback.set(callback)
 
 
 def get_progress_callback() -> Optional[Callable]:
     """
-    获取当前上下文的progress_callback
+    Get the progress_callback for the current context
 
     Returns:
-        当前的progress_callback，如果未设置则返回None
+        Current progress_callback, or None if not set
     """
     return _current_progress_callback.get()
 
 
 class ProgressCallbackContext:
     """
-    Progress Callback 上下文管理器
+    Progress Callback Context Manager
 
-    使用方式：
+    Usage:
     ```python
     with ProgressCallbackContext(state.progress_callback):
         llm = create_reasoning_llm()

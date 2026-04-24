@@ -1,2 +1,2 @@
-"""Subagents 模块"""
+"""Subagents module"""
 

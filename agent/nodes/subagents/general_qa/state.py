@@ -56,7 +56,7 @@ class GeneralQAState(BaseModel):
     )
     category_specific_constraints: Optional[List[str]] = Field(
         default=None,
-        description="Category-specific constraints for solving this type of question (e.g., '必须完成数值推导' for Calculation, '适配最新临床指南' for ClinicalDecision)",
+        description="Category-specific constraints for solving this type of question (e.g., 'Must complete numerical derivation' for Calculation, 'Adapt to latest clinical guidelines' for ClinicalDecision)",
     )
     data_completeness_label: Optional[str] = Field(
         default=None,
@@ -87,19 +87,19 @@ class GeneralQAState(BaseModel):
         description="Tool usage requirements: {'query_go_term': 'YES|NO', 'query_knowledge_graph': 'YES|NO'}",
     )
 
-    # ========== Structured Three-Dimensional Information (通用结构化三维度) ==========
-    # 核心优化：结构化三维度+通用子字段，全领域适配，不绑定任何领域词
+    # ========== Structured Three-Dimensional Information (General structured three dimensions) ==========
+    # Core optimization: Structured three dimensions + universal sub-fields, full domain adaptation, no domain-specific terms
     structured_subject: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Subject (主体) - 结构化信息: type (主体类型), attribute (主体属性)",
+        description="Subject (Subject) - Structured info: type (Subject type), attribute (Subject attributes)",
     )
     structured_condition: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Condition (条件) - 结构化信息: type (条件类型), key_features (关键特征)",
+        description="Condition (Condition) - Structured info: type (Condition type), key_features (Key features)",
     )
     structured_goal: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Goal (目标) - 结构化信息: type (目标类型), constraint (目标约束)",
+        description="Goal (Goal) - Structured info: type (Goal type), constraint (Goal constraints)",
     )
 
     # ========== Domain Enhancement (N0 optimization) ==========
@@ -130,7 +130,7 @@ class GeneralQAState(BaseModel):
         description="Structured conditions dictionary extracted from question",
     )
 
-    # ========== Semantic Condition Extraction (NEW: 条件语义结构化) ==========
+    # ========== Semantic Condition Extraction (NEW: Condition Semantic Structuring) ==========
     semantic_conditions: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Semantic/formal representation of problem conditions for Critic verification. Contains: randomness (type: independent_per_sample/uniform), imputation (method: reference_genome, assumption: ancestral_allele), data_constraints (list of specific constraints), statistics_affected (which statistics are affected by conditions)",
@@ -151,7 +151,7 @@ class GeneralQAState(BaseModel):
     )
     category_specific_solution_steps: Optional[List[str]] = Field(
         default=None,
-        description="Category-specific solution steps template (e.g., for Calculation: ['提取计算参数', '确定公式', '计算数值', '对比临界值', '得出结论'])",
+        description="Category-specific solution steps template (e.g., for Calculation: ['Extract calculation parameters', 'Determine formula', 'Calculate values', 'Compare threshold values', 'Draw conclusion'])",
     )
     retrieval_sub_questions: Optional[List[str]] = Field(
         default=None,
@@ -159,7 +159,7 @@ class GeneralQAState(BaseModel):
     )
     critical_constraints: Optional[List[str]] = Field(
         default=None,
-        description="Critical constraints that significantly affect the answer (e.g., 'k4影响极大', '理想条件下')",
+        description="Critical constraints that significantly affect the answer (e.g., 'k4 has major impact', 'under ideal conditions')",
     )
     key_constraints: Optional[List[str]] = Field(
         default=None,
@@ -294,10 +294,10 @@ class GeneralQAState(BaseModel):
     )
     fact_verification_result: Optional[str] = Field(
         default=None,
-        description="Fact verification result: '结论与事实一致'/'结论与事实不一致' (from fact_verification step)",
+        description="Fact verification result: 'Conclusion consistent with facts'/'Conclusion inconsistent with facts' (from fact_verification step)",
     )
 
-    # ========== Enhancement: Self-Consistency 多路径推理 ==========
+    # ========== Enhancement: Self-Consistency Multi-path reasoning ==========
     inference_paths: Optional[List[Dict[str, Any]]] = Field(
         default=None,
         description="Multiple inference paths generated with different temperatures",
@@ -307,7 +307,7 @@ class GeneralQAState(BaseModel):
         description="Self-consistency voting result: {consensus_answer, consensus_ratio, confidence_level, answer_votes}",
     )
 
-    # ========== Enhancement: Chain-of-Thought 显式推理链 ==========
+    # ========== Enhancement: Chain-of-Thought Explicit reasoning chain ==========
     structured_inference_steps: Optional[List[Dict[str, Any]]] = Field(
         default=None,
         description="Structured inference steps with premise, operation, conclusion, and dependencies",
@@ -543,7 +543,7 @@ class GeneralQAState(BaseModel):
     def get_llm(
         self, purpose: str = "reasoning", node_name: Optional[str] = None, **kwargs
     ) -> Optional[Any]:
-        # [FIX] 优先使用 parent_state.get_llm()（会通过 session_id 从 registry 获取）
+        # [FIX] Prefer parent_state.get_llm() (retrieves callback from registry via session_id)
         if self.parent_state and hasattr(self.parent_state, "get_llm"):
             return self.parent_state.get_llm(
                 purpose=purpose, node_name=node_name, **kwargs
@@ -569,7 +569,7 @@ class GeneralQAState(BaseModel):
 
                 progress_callback = pt_module.get_progress_callback(self.session_id)
             except (ImportError, AttributeError) as e:
-                print(f"[GeneralQAState.get_llm] 获取 callback 失败: {e}")
+                print(f"[GeneralQAState.get_llm] Failed to get callback: {e}")
 
         from agent.utils.llm_factory import create_llm_with_thinking
 

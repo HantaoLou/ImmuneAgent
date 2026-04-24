@@ -1,8 +1,8 @@
 """
-Immunity Agent 子图
+Immunity Agent Subgraph
 
-主要功能：产出可执行的实验计划
-参考实现：antibody_gen/agent/usecases/immunity
+Main function: Produce executable experimental plans
+Reference implementation: antibody_gen/agent/usecases/immunity
 """
 
 from .graph import (
