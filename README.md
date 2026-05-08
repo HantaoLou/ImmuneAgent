@@ -1,4 +1,4 @@
-# Antibody Generation and Immune Analysis System
+# Agent for Immunology research and antibody discovery
 
 A comprehensive computational platform for B cell function analysis and antibody structural analysis, integrating knowledge base retrieval, IgBLAST V(D)J analysis, MetaBCR prediction, lineage analysis, and AlphaFold3 structure prediction.
 
