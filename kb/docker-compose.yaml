@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:  
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant-server
+    # 端口映射：6333用于HTTP API，6334用于GRPC
+    deploy:
+      resources:
+        limits:
+          cpus: 16
+          memory: 24G
+    ports:
+      - "${QDRANT_HTTP_PORT}:${QDRANT_HTTP_PORT}"
+      - "${QDRANT_GRPC_PORT}:${QDRANT_GRPC_PORT}"
+    volumes:
+      - /data_new/wyl/qdrant_data:/qdrant/storage
+    networks:
+      - qdrant_net
+    environment:
+      - QDRANT_ALLOW_RECOVERY=true
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+networks:
+  qdrant_net:
+    name: qdrant_network
+    driver: bridge
