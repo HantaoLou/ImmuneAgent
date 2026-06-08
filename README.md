@@ -128,6 +128,11 @@ set OPENAI_API_KEY=your-api-key-here
 3. Create a new API Key on the API Keys page
 4. Copy the API Key to your environment variables
 
+## Install Opencode as coding agent
+1. Download the opencode dev from github
+2. Cp the opencode dev folder to the /ImmuneAgent/agent/ dir;
+3. check the opencode server or cli setup following the guidance 
+
 ## Quick Start
 
 ```python
