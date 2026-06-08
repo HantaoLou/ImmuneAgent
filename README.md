@@ -2,15 +2,8 @@
 
 ## Project Overview
 
-Immune Agent is an intelligent agent system built on LangGraph, designed specifically for bioinformatics-related tasks. The system supports task classification, task decomposition, parallel execution, and more.
+Immune Agent is an intelligent agent system built on LangGraph, designed specifically for immunological tasks including therapeutic BCR/TCR discovery, vaccine development and mechanism insights through multidisciplinary reasoning. The system supports scientific experimental plan generation, task execution, parallel subagents orchestration, and more.
 
-## Features
-
-- 🤖 **Multi-LLM Support**: Supports various large language models including Qwen (Tongyi Qianwen), Anthropic Claude, OpenAI GPT, and more
-- 📊 **Task Classification**: Automatically identifies user task types (general Q&A, execution plans, immunology tasks, etc.)
-- 🔄 **State Management**: LangGraph-based state graph management with state persistence support
-- 🧩 **Modular Design**: Modular sub-graph design with Supervisor, Executor, Parallel, and other components
-- 📁 **File Management**: Automatic handling of uploaded files with sandbox directory management
 
 ## Installation
 
