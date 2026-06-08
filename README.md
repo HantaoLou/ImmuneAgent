@@ -4,6 +4,7 @@
 
 Immune Agent is an intelligent agent system built on LangGraph, designed specifically for immunological tasks including therapeutic BCR/TCR discovery, vaccine development and mechanism insights through multidisciplinary reasoning. The system supports scientific experimental plan generation, task execution, parallel subagents orchestration, and more.
 
+<img width="2066" height="1895" alt="Figure1-nm" src="https://github.com/user-attachments/assets/2aedac77-9bdf-4f71-ba8b-1b6bbc9dd3b9" />
 
 ## Installation
 
