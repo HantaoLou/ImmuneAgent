@@ -1,4 +1,4 @@
-# Immune Agent - Bioinformatics Intelligent Agent System
+# Immune Agent - multidisciplinary reasoning system for immunological tasks
 
 ## Project Overview
 
